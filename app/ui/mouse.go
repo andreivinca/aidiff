@@ -407,6 +407,9 @@ func (m Model) clickTree(y int) (tea.Model, tea.Cmd) {
 	if !m.tree.SelectByVisibleRow(row) {
 		return m, nil
 	}
+	if m.selectedDirectory() != "" {
+		return m.toggleSelectedDirectory()
+	}
 	m.clearPendingJumps()
 	return m.loadSelectedIfChanged()
 }

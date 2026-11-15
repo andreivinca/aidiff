@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	// timeout for OSC queries.
-	OSCTimeout = 5 * time.Second
+	// aidiff local patch: do not stall startup in terminals that ignore OSC queries.
+	// Bubble Tea probes the background during package initialization, before main.
+	OSCTimeout = 150 * time.Millisecond
 )
 
 // ColorProfile returns the supported color profile:

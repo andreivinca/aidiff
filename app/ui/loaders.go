@@ -61,6 +61,15 @@ func (m Model) loadFiles() tea.Cmd {
 				entries = m.mergeUntrackedEntries(entries, ut, renames)
 			}
 		}
+		// Collapsing a folder hides its files without invalidating their review marks.
+		for path := range reviewed {
+			for _, entry := range entries {
+				if entry.IsDir && !entry.Expanded && strings.HasPrefix(path, entry.Path+"/") {
+					delete(reviewed, path)
+					break
+				}
+			}
+		}
 		fingerprints, fingerprintWarnings := m.loadReviewedFingerprints(entries, reviewed)
 		warnings = append(warnings, fingerprintWarnings...)
 		return filesLoadedMsg{
@@ -480,10 +489,13 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	if m.tree.UnreviewedFilterActive() {
 		m.tree.RefreshUnreviewedFilter()
 	}
-	if m.file.name != "" {
+	if m.file.name != "" && m.selectedDirectory() == "" {
 		m.tree.SelectByPath(m.file.name)
 	}
 	m.file.singleFile = m.tree.TotalFiles() == 1
+	if _, lazy := m.diffRenderer.(interface{ ToggleDirectory(string) }); lazy {
+		m.file.singleFile = false
+	}
 	if len(entries) == 0 {
 		m.file.name = ""
 		m.file.oldName = ""

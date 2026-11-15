@@ -237,6 +237,7 @@ func (p *Pane) onSubagent(id uint64, a t3client.Subagent) {
 			a.Result = previous.Result
 		}
 		p.subagents[a.ID] = a
+		p.activityCounts.valid = false
 		p.gen++
 	}
 	p.mu.Unlock()
@@ -247,6 +248,7 @@ func (p *Pane) onProviderThread(id uint64, th t3client.ProviderThread) {
 	p.mu.Lock()
 	if id == p.subID {
 		p.providers[th.ID] = th
+		p.activityCounts.valid = false
 		p.gen++
 	}
 	p.mu.Unlock()

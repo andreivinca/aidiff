@@ -210,3 +210,23 @@ func TestWatcher_CloseStops(t *testing.T) {
 	r.write(t, "src/a.txt", "x")
 	r.assertQuiet(t, "after close")
 }
+
+func TestShallowWatchFollowsOpenedDirectories(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "deep"), 0700))
+	w, err := New(Config{Root: root, Shallow: true})
+	require.NoError(t, err)
+	defer w.Close()
+	assert.ElementsMatch(t, []string{root}, w.fsw.WatchList())
+	w.SetDirectories([]string{root, src})
+	assert.ElementsMatch(t, []string{root, src}, w.fsw.WatchList())
+	r := &repo{root: root, w: w}
+	r.write(t, "src/file", "hello")
+	paths, _ := r.next(t)
+	assert.Contains(t, paths, "src/file")
+	w.SetDirectories([]string{root})
+	assert.ElementsMatch(t, []string{root}, w.fsw.WatchList())
+	r.write(t, "src/file", "changed")
+	r.assertQuiet(t, "collapsed folder must no longer be watched")
+}

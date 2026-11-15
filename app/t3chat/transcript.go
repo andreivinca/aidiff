@@ -62,7 +62,8 @@ func (p *Pane) renderLocked(showCursor bool) string {
 		gapH = 1
 	}
 	footer := p.composerRowsLocked(w, max(1, h-headerH-gapH-1), showCursor)
-	bodyH := max(0, h-headerH-gapH-len(footer))
+	pending := p.pendingRowsLocked(w, min(6, max(0, h-headerH-gapH-len(footer)-1)))
+	bodyH := max(0, h-headerH-gapH-len(footer)-len(pending))
 	p.bodyH = bodyH
 
 	rows := make([]string, 0, h)
@@ -83,8 +84,9 @@ func (p *Pane) renderLocked(showCursor bool) string {
 		}
 		rows = append(rows, lines[start:end]...)
 	}
+	rows = append(rows, pending...)
 	if gapH > 0 {
-		rows = append(rows, "")
+		rows = append(rows, p.styles.muted.Render(ansi.Truncate(inset+p.activityStatusLocked(), w, "…")))
 	}
 	rows = append(rows, footer...)
 	for len(rows) < h {
@@ -150,6 +152,11 @@ func (p *Pane) stateLocked() string {
 // held.
 func (p *Pane) transcriptLocked(w int) []string {
 	var out []string
+	queued := p.queuedMessagesLocked()
+	queuedIDs := make(map[string]bool, len(queued))
+	for _, m := range queued {
+		queuedIDs[m.id] = true
+	}
 	var work []t3client.TurnItem
 	flush := func() {
 		if len(work) == 0 {
@@ -165,6 +172,9 @@ func (p *Pane) transcriptLocked(w int) []string {
 		work = nil
 	}
 	for _, it := range p.items {
+		if it.Type == "user_message" && queuedIDs[it.MessageID] {
+			continue
+		}
 		if it.Type == "checkpoint" { // T3's own turn markers carry nothing to show
 			continue
 		}

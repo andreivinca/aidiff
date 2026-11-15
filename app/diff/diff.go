@@ -100,16 +100,21 @@ const (
 
 // FileEntry represents a file with its change status from a VCS diff.
 type FileEntry struct {
-	Path    string     // file path relative to repo root
-	OldPath string     // rename origin, empty for non-renames
-	Status  FileStatus // file change status, empty for non-git renderers
+	IsDir    bool       // unloaded or expanded directory in a lazy folder browser
+	Expanded bool       // directory children are visible
+	Path     string     // file path relative to repo root
+	OldPath  string     // rename origin, empty for non-renames
+	Status   FileStatus // file change status, empty for non-git renderers
 }
 
 // FileEntryPaths extracts just the paths from a slice of FileEntry.
 func FileEntryPaths(entries []FileEntry) []string {
-	paths := make([]string, len(entries))
-	for i, e := range entries {
-		paths[i] = e.Path
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir {
+			continue
+		}
+		paths = append(paths, e.Path)
 	}
 	return paths
 }
