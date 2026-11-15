@@ -21,8 +21,11 @@ type command struct {
 	name    string
 	aliases []string
 	args    string // argument placeholder shown in the popup; "" when the command takes none
-	desc    string
-	run     func(p *Pane, arg string) // with mu held
+	// optionalArg lets the bare command run on enter even though it accepts
+	// an argument, e.g. /effort shows the current level and sets a new one.
+	optionalArg bool
+	desc        string
+	run         func(p *Pane, arg string) // with mu held
 	// complete lists argument suggestions for what was typed after the name;
 	// nil when the command takes none or any text.
 	complete func(p *Pane, prefix string) []suggestion
@@ -48,6 +51,7 @@ var commands = []command{
 	{name: "/answer", args: "<n> | 1,3 | <text>", desc: "answer the agent's question (/1…/9 pick an option)", run: (*Pane).answerLocked},
 	{name: "/dismiss", desc: "drop the agent's question", run: (*Pane).dismissCmd},
 	{name: "/model", args: "<model>", desc: "switch the thread's model", run: (*Pane).modelCmd, complete: (*Pane).modelSuggestions},
+	{name: "/effort", args: "[level]", optionalArg: true, desc: "show or change reasoning effort", run: (*Pane).effortCmd, complete: (*Pane).effortSuggestions},
 	{name: "/plan", desc: "plan mode: the agent proposes before it acts", run: setInteraction("plan")},
 	{name: "/build", aliases: []string{"/default"}, desc: "build mode: the agent acts", run: setInteraction("default")},
 	{name: "/mode", args: "<runtime-mode>", desc: "what the agent may do on its own", run: (*Pane).modeCmd, complete: (*Pane).modeSuggestions},
@@ -227,7 +231,7 @@ func (p *Pane) applySuggestionLocked(enter bool) bool {
 		}
 	}
 	if word, _, hasArg := strings.Cut(typed, " "); enter && !hasArg {
-		if c := findCommand(strings.ToLower(word)); c != nil && c.args == "" {
+		if c := findCommand(strings.ToLower(word)); c != nil && (c.args == "" || c.optionalArg) {
 			p.submitLocked() // an exact command or alias runs, whatever else matches
 			return true
 		}

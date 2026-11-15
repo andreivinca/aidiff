@@ -1,6 +1,11 @@
 package t3client
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // ModelCapabilities contains the server-reported option defaults.
 type ModelCapabilities struct {
@@ -8,9 +13,11 @@ type ModelCapabilities struct {
 }
 
 type ModelOptionDescriptor struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	CurrentValue json.RawMessage `json:"currentValue"`
+	ID                   string             `json:"id"`
+	Type                 string             `json:"type"`
+	CurrentValue         json.RawMessage    `json:"currentValue"`
+	Options              []ModelOptionValue `json:"options"`
+	PromptInjectedValues []string           `json:"promptInjectedValues"`
 }
 
 // Effort resolves an explicit selection before the model's reported default.
@@ -31,7 +38,7 @@ func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 	} else {
 		_ = json.Unmarshal(m.Options, &values)
 	}
-	ids := []string{"reasoningEffort", "effort", "reasoning", "variant", "reasoning_effort", "thinking_level"}
+	ids := effortIDs
 	for _, id := range ids {
 		var value string
 		if json.Unmarshal(values[id], &value) == nil && value != "" {
@@ -47,4 +54,78 @@ func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 		}
 	}
 	return ""
+}
+
+var effortIDs = []string{"reasoningEffort", "effort", "reasoning", "variant", "reasoning_effort", "thinking_level"}
+
+type ModelOptionValue struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// EffortOption returns the model's supported reasoning selector.
+func (c ModelCapabilities) EffortOption() (ModelOptionDescriptor, bool) {
+	for _, id := range effortIDs {
+		for _, d := range c.OptionDescriptors {
+			if d.ID == id && d.Type == "select" {
+				return d, true
+			}
+		}
+	}
+	return ModelOptionDescriptor{}, false
+}
+
+// SelectableValues excludes options that T3 implements by modifying a prompt.
+func (d ModelOptionDescriptor) SelectableValues() []ModelOptionValue {
+	var out []ModelOptionValue
+	for _, o := range d.Options {
+		if !slices.Contains(d.PromptInjectedValues, o.ID) {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// WithEffort changes only the effort option, preserving all other model settings.
+func (m ModelSelection) WithEffort(d ModelOptionDescriptor, level string) (ModelSelection, error) {
+	value := ""
+	for _, o := range d.SelectableValues() {
+		if strings.EqualFold(o.ID, level) {
+			value = o.ID
+			break
+		}
+	}
+	if value == "" {
+		return m, fmt.Errorf("unsupported effort %q", level)
+	}
+	type option struct {
+		ID    string          `json:"id"`
+		Value json.RawMessage `json:"value"`
+	}
+	var options []option
+	if len(m.Options) > 0 && string(m.Options) != "null" {
+		if err := json.Unmarshal(m.Options, &options); err != nil {
+			var legacy map[string]json.RawMessage
+			if err := json.Unmarshal(m.Options, &legacy); err != nil {
+				return m, fmt.Errorf("read model options: %w", err)
+			}
+			var keys []string
+			for id := range legacy {
+				keys = append(keys, id)
+			}
+			slices.Sort(keys)
+			for _, id := range keys {
+				options = append(options, option{ID: id, Value: legacy[id]})
+			}
+		}
+	}
+	options = slices.DeleteFunc(options, func(o option) bool { return o.ID == d.ID })
+	encoded, _ := json.Marshal(value)
+	options = append(options, option{ID: d.ID, Value: encoded})
+	data, err := json.Marshal(options)
+	if err != nil {
+		return m, fmt.Errorf("encode model options: %w", err)
+	}
+	m.Options = data
+	return m, nil
 }
