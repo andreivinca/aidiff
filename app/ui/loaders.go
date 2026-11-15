@@ -647,6 +647,15 @@ func (m *Model) placeCursorAfterLoad(msg fileLoadedMsg) {
 		}
 	}
 
+	// a RefreshMsg reload puts the cursor back on its line (refresh.go)
+	if a := m.refresh; a != nil {
+		m.refresh = nil
+		if a.seq == msg.seq {
+			m.applyRefreshAnchor(a)
+			return
+		}
+	}
+
 	// handle pending compact-toggle anchor: restore the cursor to where it was
 	// before the toggle instead of resetting to the top. seq ties the anchor to
 	// this exact reload, so a stale anchor from a superseded load is dropped.

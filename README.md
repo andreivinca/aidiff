@@ -1,3 +1,19 @@
+# aidiff
+
+**aidiff** is a fork of [revdiff](https://github.com/umputun/revdiff) by Umputun, built for reviewing changes while an AI agent (e.g. Claude Code) works in the same window:
+
+- **Terminals on the right**: `--terminal` opens one at startup; `Ctrl+P` → *Open Terminal* adds more, side by side. A terminal's panel closes when its program exits.
+- **Live refresh**: the diff updates by itself when files change, using the OS's file-change notifications (no polling). It keeps the selected file, the cursor line and your annotations.
+- **Command palette** (`Ctrl+P`), **resizable panels** (drag the dividers), `Ctrl+]` to cycle focus, `Ctrl+Q` to quit with confirmation.
+
+```bash
+cd your-repo && aidiff --terminal
+```
+
+Everything below is revdiff's own documentation, which still applies. revdiff is MIT-licensed; see [LICENSE](LICENSE).
+
+---
+
 # <img src="site/assets/logo.png" alt="" width="28">&nbsp;revdiff &nbsp;<a href="https://github.com/umputun/revdiff/actions/workflows/ci.yml"><img src="https://github.com/umputun/revdiff/actions/workflows/ci.yml/badge.svg" alt="build"></a> <a href="https://coveralls.io/github/umputun/revdiff?branch=master"><img src="https://coveralls.io/repos/github/umputun/revdiff/badge.svg?branch=master" alt="Coverage Status"></a> <a href="https://goreportcard.com/report/github.com/umputun/revdiff"><img src="https://goreportcard.com/badge/github.com/umputun/revdiff" alt="Go Report Card"></a>
 
 TUI for reviewing diffs, files, and documents with inline annotations. Outputs structured annotations to stdout on quit, making it easy to pipe results into AI agents, scripts, or other tools.

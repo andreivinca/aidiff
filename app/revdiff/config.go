@@ -44,6 +44,10 @@ type options struct {
 	AnnotationMarker      string   `long:"annotation-marker" ini-name:"annotation-marker" env:"REVDIFF_ANNOTATION_MARKER" default:"💬" description:"prefix shown before annotation lines"`
 	ExitCodeOnAnnotations bool     `long:"exit-code-on-annotations" ini-name:"exit-code-on-annotations" env:"REVDIFF_EXIT_CODE_ON_ANNOTATIONS" description:"exit 10 when annotations are produced"`
 	VimMotion             bool     `long:"vim-motion" ini-name:"vim-motion" env:"REVDIFF_VIM_MOTION" description:"enable vim-style motion preset (counts, gg, G, zz/zt/zb, ZZ/ZQ)"`
+	NoWatch               bool     `long:"no-watch" ini-name:"no-watch" env:"REVDIFF_NO_WATCH" description:"do not refresh when files change"`
+	Terminal              bool     `long:"terminal" ini-name:"terminal" env:"REVDIFF_TERMINAL" description:"open a terminal pane on the right"`
+	TerminalWidth         int      `long:"terminal-width" ini-name:"terminal-width" env:"REVDIFF_TERMINAL_WIDTH" default:"45" description:"terminal pane width in percent"`
+	TerminalCommand       string   `long:"terminal-command" ini-name:"terminal-command" env:"REVDIFF_TERMINAL_COMMAND" description:"command to run in the terminal pane (default: $SHELL)"`
 	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"catppuccin-macchiato" description:"chroma style for syntax highlighting"`
 	AllFiles              bool     `long:"all-files" short:"A" no-ini:"true" description:"browse all tracked files, not just diffs (git and jj only)"`
 	CompareOld            string   `long:"compare-old" no-ini:"true" description:"compare mode: old file path (use with --compare-new)"`

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,6 +21,8 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/termpane"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -288,11 +291,29 @@ func run(opts options) (int, error) {
 		return 0, fmt.Errorf("create model: %w", err)
 	}
 
-	p := tea.NewProgram(model, programOptions...)
+	// always wrapped: ctrl+p can open terminals even when none start open
+	root := splitview.New(model, splitview.Config{
+		WidthPercent: opts.TerminalWidth,
+		OpenOnStart:  opts.Terminal,
+		Start: func(width, height int) (splitview.Terminal, error) {
+			return termpane.Start(strings.Fields(opts.TerminalCommand), "", width, height)
+		},
+		RefreshMsg: ui.RefreshMsg{},
+	})
+
+	p := tea.NewProgram(root, programOptions...)
+	if !opts.NoWatch && vcsType == diff.VCSGit {
+		stopWatch := watchRepo(workDir, p)
+		defer stopWatch()
+	}
 	guard := &shutdownGuard{}
 	stop := guard.watch(p)
 	defer stop()
 	finalModel, runErr := p.Run()
+	if split, ok := finalModel.(splitview.Model); ok {
+		split.Close()
+		finalModel = split.Inner()
+	}
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()

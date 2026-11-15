@@ -616,6 +616,7 @@ type Model struct {
 	keys        keyState          // chord-pending state and transient hint for leader-chord keybindings
 	vim         vimState          // count accumulator, pending letter leader, and transient hint for vim-motion preset
 	wheel       wheelState        // diff-pane mouse wheel coalescing (debounced render via wheelDebounceMsg)
+	refresh     *refreshAnchor    // cursor to restore after a RefreshMsg reload (refresh.go)
 
 	ready        bool   // true after first WindowSizeMsg
 	filesLoaded  bool   // true after the first filesLoadedMsg is handled (keeps the loading view pinned until real data arrives)
@@ -1044,6 +1045,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePostFlushFinished(msg)
 	case wheelDebounceMsg:
 		return m.handleWheelDebounce(msg)
+	case RefreshMsg:
+		return m.handleRefresh()
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).
