@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,7 +19,6 @@ import (
 	"github.com/umputun/revdiff/app/fsutil"
 	"github.com/umputun/revdiff/app/keymap"
 	"github.com/umputun/revdiff/app/splitview"
-	"github.com/umputun/revdiff/app/termpane"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 )
@@ -187,11 +185,9 @@ func run(opts options) (int, error) {
 	root := splitview.New(model, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
 		OpenOnStart:  opts.Terminal,
-		Start: func(width, height int) (splitview.Terminal, error) {
-			return termpane.Start(strings.Fields(opts.TerminalCommand), "", width, height)
-		},
-		RefreshMsg: ui.RefreshMsg{},
-		Commands:   t3p.commands,
+		Start:        t3p.startTerminal, // on the T3 session's machine when it is reached over ssh
+		RefreshMsg:   ui.RefreshMsg{},
+		Commands:     t3p.commands,
 	})
 
 	p := tea.NewProgram(root, programOptions...)

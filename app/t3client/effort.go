@@ -21,11 +21,39 @@ type ModelOptionDescriptor struct {
 }
 
 // Effort resolves an explicit selection before the model's reported default.
+// When the model's capabilities are known, only its own effort option counts,
+// so a value left over from another provider's model is not shown. The default
+// is the descriptor's currentValue (Codex) or its isDefault option (Claude).
 // Older servers may serialize selections as an object instead of an array.
 func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 	if m == nil {
 		return ""
 	}
+	values := m.optionValues()
+	explicit := func(id string) string {
+		var value string
+		if json.Unmarshal(values[id], &value) == nil {
+			return value
+		}
+		return ""
+	}
+	if d, ok := capabilities.EffortOption(); ok {
+		if v := explicit(d.ID); v != "" {
+			return v
+		}
+		return d.defaultValue()
+	}
+	for _, id := range effortIDs {
+		if v := explicit(id); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// optionValues reads the selection's options by id, from the array form or
+// the older object form.
+func (m *ModelSelection) optionValues() map[string]json.RawMessage {
 	values := map[string]json.RawMessage{}
 	var options []struct {
 		ID    string          `json:"id"`
@@ -35,22 +63,21 @@ func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 		for _, o := range options {
 			values[o.ID] = o.Value
 		}
-	} else {
-		_ = json.Unmarshal(m.Options, &values)
+		return values
 	}
-	ids := effortIDs
-	for _, id := range ids {
-		var value string
-		if json.Unmarshal(values[id], &value) == nil && value != "" {
-			return value
-		}
+	_ = json.Unmarshal(m.Options, &values)
+	return values
+}
+
+// defaultValue is the level the model runs with when none is chosen.
+func (d ModelOptionDescriptor) defaultValue() string {
+	var value string
+	if json.Unmarshal(d.CurrentValue, &value) == nil && value != "" {
+		return value
 	}
-	for _, id := range ids {
-		for _, d := range capabilities.OptionDescriptors {
-			var value string
-			if d.ID == id && d.Type == "select" && json.Unmarshal(d.CurrentValue, &value) == nil && value != "" {
-				return value
-			}
+	for _, o := range d.Options {
+		if o.IsDefault {
+			return o.ID
 		}
 	}
 	return ""
@@ -59,8 +86,9 @@ func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 var effortIDs = []string{"reasoningEffort", "effort", "reasoning", "variant", "reasoning_effort", "thinking_level"}
 
 type ModelOptionValue struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	IsDefault bool   `json:"isDefault"`
 }
 
 // EffortOption returns the model's supported reasoning selector.

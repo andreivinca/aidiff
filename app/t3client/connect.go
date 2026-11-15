@@ -299,6 +299,16 @@ func freePort(ctx context.Context) (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// SSHHost is the SSH host the session tunnels through, empty for a local or
+// HTTP session.
+func (s *Session) SSHHost() string {
+	host, ok := strings.CutPrefix(s.Label, "ssh://")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSuffix(host, "/")
+}
+
 // MachineName identifies the connected host, preserving SSH aliases and avoiding
 // tunnel loopback addresses, credentials, and ports in the status bar.
 func (s *Session) MachineName() string {

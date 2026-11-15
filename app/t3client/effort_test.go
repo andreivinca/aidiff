@@ -9,21 +9,34 @@ import (
 )
 
 func TestModelSelectionEffort(t *testing.T) {
-	caps := ModelCapabilities{OptionDescriptors: []ModelOptionDescriptor{{ID: "reasoningEffort", Type: "select", CurrentValue: json.RawMessage(`"medium"`)}}}
-	for _, tt := range []struct{ name, options, want string }{
-		{"default", `[]`, "medium"},
-		{"codex override", `[{"id":"reasoningEffort","value":"high"}]`, "high"},
-		{"claude", `[{"id":"effort","value":"max"}]`, "max"},
-		{"legacy", `{"reasoningEffort":"low"}`, "low"},
-		{"unrelated", `[{"id":"fastMode","value":true}]`, "medium"},
-		{"missing", ``, "medium"},
+	// the shapes T3 reports: Codex names its default in currentValue, Claude
+	// marks one option isDefault
+	codex := ModelCapabilities{OptionDescriptors: []ModelOptionDescriptor{{ID: "reasoningEffort", Type: "select", CurrentValue: json.RawMessage(`"medium"`)}}}
+	claude := ModelCapabilities{OptionDescriptors: []ModelOptionDescriptor{
+		{ID: "effort", Type: "select", Options: []ModelOptionValue{{ID: "low"}, {ID: "medium", IsDefault: true}, {ID: "max"}}},
+		{ID: "fastMode", Type: "boolean"},
+	}}
+	for _, tt := range []struct {
+		name, options, want string
+		caps                ModelCapabilities
+	}{
+		{"codex default", `[]`, "medium", codex},
+		{"codex override", `[{"id":"reasoningEffort","value":"high"}]`, "high", codex},
+		{"codex legacy", `{"reasoningEffort":"low"}`, "low", codex},
+		{"codex unrelated", `[{"id":"fastMode","value":true}]`, "medium", codex},
+		{"codex missing", ``, "medium", codex},
+		{"claude override", `[{"id":"effort","value":"max"}]`, "max", claude},
+		{"claude default", `[]`, "medium", claude},
+		{"claude missing", ``, "medium", claude},
+		{"claude ignores codex leftover", `[{"id":"reasoningEffort","value":"low"}]`, "medium", claude},
+		{"no catalog yet", `[{"id":"effort","value":"max"}]`, "max", ModelCapabilities{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &ModelSelection{Options: json.RawMessage(tt.options)}
-			assert.Equal(t, tt.want, m.Effort(caps))
+			assert.Equal(t, tt.want, m.Effort(tt.caps))
 		})
 	}
-	assert.Empty(t, (*ModelSelection)(nil).Effort(caps))
+	assert.Empty(t, (*ModelSelection)(nil).Effort(codex))
 	assert.Empty(t, (&ModelSelection{}).Effort(ModelCapabilities{}))
 }
 

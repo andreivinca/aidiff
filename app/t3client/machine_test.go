@@ -20,3 +20,15 @@ func TestSessionMachineName(t *testing.T) {
 		t.Run(tt.label, func(t *testing.T) { assert.Equal(t, tt.want, (&Session{Label: tt.label}).MachineName()) })
 	}
 }
+
+func TestSessionSSHHost(t *testing.T) {
+	for label, want := range map[string]string{
+		"ssh://box":              "box",
+		"ssh://user@box/":        "user@box",
+		"local":                  "",
+		"http://127.0.0.1:3773":  "",
+		"https://t3.example.com": "",
+	} {
+		t.Run(label, func(t *testing.T) { assert.Equal(t, want, (&Session{Label: label}).SSHHost()) })
+	}
+}
