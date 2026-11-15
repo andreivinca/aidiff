@@ -1461,7 +1461,7 @@ func TestModel_ViewSeparatorOnly(t *testing.T) {
 			assert.NotContains(t, view, "││")
 			assert.NotContains(t, view, "┃", "diff content must not become a scrollbar")
 			assert.Contains(t, view, "content │ stays intact")
-			first := strings.Split(view, "\n")[0]
+			first, _, _ := strings.Cut(view, "\n")
 			if single {
 				assert.NotContains(t, first, "│")
 				assert.NotContains(t, view, "↔")
@@ -1857,9 +1857,11 @@ func TestModel_StatusBarT3Label(t *testing.T) {
 	local := ansi.Strip(m.statusBarWithMachine())
 	assert.True(t, strings.HasPrefix(local, "workstation"))
 	assert.NotContains(t, local, "T3")
-	m.t3Mode = true
+	updated, _ := m.Update(MachineIdentityMsg{Name: "remote-box", T3: true})
+	m = updated.(Model)
 	remote := ansi.Strip(m.statusBarWithMachine())
-	assert.True(t, strings.HasPrefix(remote, "workstation"))
+	assert.True(t, strings.HasPrefix(remote, "remote-box"))
 	assert.Contains(t, remote, "T3")
-	assert.Less(t, strings.Index(remote, "workstation"), strings.Index(remote, "T3"))
+	assert.NotContains(t, remote, "workstation")
+	assert.Less(t, strings.Index(remote, "remote-box"), strings.Index(remote, "T3"))
 }

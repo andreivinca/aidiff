@@ -31,6 +31,7 @@ const sendTimeout = 30 * time.Second
 // Config tunes a pane. The function fields exist for tests; nil means the
 // t3client function of the same purpose.
 type Config struct {
+	CopyText  func(context.Context, string) error
 	NoColor   bool
 	Dispatch  func(ctx context.Context, c *t3client.Conn, cmd t3client.Command) error
 	Subscribe func(ctx context.Context, c *t3client.Conn, threadID string, h t3client.ThreadEvents) error
@@ -82,11 +83,13 @@ type Pane struct {
 	busy           bool   // a send or an answer is in flight
 	note           string // the last failure or hint, shown until the next key
 	scroll         int    // lines scrolled up from the end of the transcript; 0 follows it
+	textBottom     int    // bottom of selectable transcript and queued messages
 	bodyH          int    // transcript rows at the last render, the page size
 	width          int
 	height         int
 	gen            uint64 // bumps on every visible change
 	frame          frame
+	selection      textSelection
 	subID          uint64 // the current subscription; events from older ones are dropped
 	cancel         context.CancelFunc
 
@@ -145,6 +148,7 @@ func (p *Pane) ThreadID() string {
 
 // reset clears the transcript and starts a subscription; mu must be held.
 func (p *Pane) reset(conn *t3client.Conn, threadID, title string) {
+	p.selection = textSelection{}
 	if p.cancel != nil {
 		p.cancel()
 		p.cancel = nil
@@ -375,6 +379,13 @@ func (p *Pane) QuitNote() string {
 func (p *Pane) SendText(s string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.selection.rows != nil {
+		p.selection = textSelection{}
+		p.gen++
+		if s == "\x1b" {
+			return
+		}
+	}
 	p.note = ""
 	p.gen++
 	if p.modalTextLocked(s) {
@@ -446,6 +457,7 @@ func isEnterSequence(s string) bool {
 func (p *Pane) SendKey(k uv.KeyPressEvent) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.selection = textSelection{}
 	p.note = ""
 	p.gen++
 	if p.stop.runID != "" {
@@ -491,6 +503,7 @@ func (p *Pane) SendKey(k uv.KeyPressEvent) {
 func (p *Pane) Paste(s string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.selection = textSelection{}
 	p.note = ""
 	p.gen++
 	p.activity.open = false
@@ -502,8 +515,11 @@ func (p *Pane) Paste(s string) {
 	p.inputChanged()
 }
 
-// SendMouse scrolls the transcript with the wheel.
+// SendMouse selects text or scrolls the transcript with the wheel.
 func (p *Pane) SendMouse(m vt.Mouse) {
+	if p.selectionMouse(m) {
+		return
+	}
 	ev, ok := m.(uv.MouseWheelEvent)
 	if !ok {
 		return
@@ -539,6 +555,7 @@ func (p *Pane) SendMouse(m vt.Mouse) {
 // scrollLocked moves the transcript n lines towards older output; the upper
 // bound is applied at render time. mu must be held.
 func (p *Pane) scrollLocked(n int) {
+	p.selection = textSelection{}
 	p.scroll = max(0, p.scroll+n)
 }
 
@@ -550,6 +567,7 @@ func (p *Pane) Resize(width, height int) {
 	if width == p.width && height == p.height {
 		return
 	}
+	p.selection = textSelection{}
 	p.width, p.height = width, height
 	p.gen++
 }
@@ -562,7 +580,7 @@ func (p *Pane) Render(showCursor bool) string {
 	if f := p.frame; f.valid && f.gen == p.gen && f.cursor == showCursor {
 		return f.out
 	}
-	out := p.renderLocked(showCursor)
+	out := p.selectionRenderLocked(p.renderLocked(showCursor))
 	p.frame = frame{valid: true, gen: p.gen, cursor: showCursor, out: out}
 	return out
 }

@@ -3,6 +3,8 @@ package t3chat
 import (
 	"strings"
 
+	"github.com/umputun/revdiff/app/t3client"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -83,6 +85,9 @@ func (p *Pane) composerSettingsLocked(w int) string {
 		mode, accent = "Plan", p.styles.warn
 	}
 	model, provider := p.composerModelLocked()
+	if effort := p.composerEffortLocked(); effort != "" {
+		model += " · " + effort
+	}
 	var details []string
 	if provider != "" {
 		details = append(details, provider)
@@ -260,4 +265,18 @@ func (p *Pane) suggestionRowsLocked(w, limit int) []string {
 		rows = append(rows, p.styles.composerLine(fit(row, w)))
 	}
 	return rows
+}
+
+// composerEffortLocked uses the matching provider's model defaults.
+func (p *Pane) composerEffortLocked() string {
+	var caps t3client.ModelCapabilities
+	if p.current != nil && p.catalog != nil {
+		for _, m := range p.catalog.Models {
+			if m.InstanceID == p.current.InstanceID && m.Slug == p.current.Model {
+				caps = m.Capabilities
+				break
+			}
+		}
+	}
+	return p.current.Effort(caps)
 }

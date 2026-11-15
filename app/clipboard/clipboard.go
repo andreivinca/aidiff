@@ -92,3 +92,21 @@ func output(ctx context.Context, tool string, args ...string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Write copies text to the local desktop clipboard.
+func Write(ctx context.Context, text string) error {
+	var cmd *exec.Cmd
+	switch {
+	case os.Getenv("WAYLAND_DISPLAY") != "" && has("wl-copy"):
+		cmd = exec.CommandContext(ctx, "wl-copy")
+	case os.Getenv("DISPLAY") != "" && has("xclip"):
+		cmd = exec.CommandContext(ctx, "xclip", "-selection", "clipboard")
+	default:
+		return ErrNoTool
+	}
+	cmd.Stdin = strings.NewReader(text)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("copy text: %w", err)
+	}
+	return nil
+}

@@ -275,7 +275,11 @@ func (t *t3Palette) connect(spec string) tea.Cmd {
 		t.setShellLocked(sh)
 		t.project = nil
 		t.mu.Unlock()
-		return t.projectList(s, sh)
+		picker := t.projectList(s, sh)
+		return tea.BatchMsg{
+			func() tea.Msg { return ui.MachineIdentityMsg{Name: s.MachineName(), T3: true} },
+			func() tea.Msg { return picker },
+		}
 	})
 }
 
@@ -577,7 +581,7 @@ func (t *t3Palette) openMsg(sh t3client.Shell, threadID string) tea.Msg {
 		target:   target,
 		renderer: t3client.NewRenderer(cur.session.Conn, target.Cwd, t.opts.t3SourceKind()),
 	}
-	model, err := t.deps.newModel(vcsSetup{renderer: review.renderer}, annotation.NewStore(), review.description(t.description))
+	model, err := t.deps.newModel(vcsSetup{renderer: review.renderer, machineName: review.session.MachineName()}, annotation.NewStore(), review.description(t.description))
 	if err != nil {
 		return t3Error("open thread", err)
 	}

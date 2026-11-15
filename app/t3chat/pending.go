@@ -79,6 +79,10 @@ func (p *Pane) pendingRowsLocked(w, budget int) []string {
 		return nil
 	}
 	queued := p.queuedMessagesLocked()
+	padded := budget >= 3 && len(queued) > 0
+	if padded {
+		budget -= 2
+	}
 	var rows []string
 	for _, m := range queued {
 		label := "Sent"
@@ -100,6 +104,10 @@ func (p *Pane) pendingRowsLocked(w, budget int) []string {
 		// Keep a label and the latest text, making truncation explicit.
 		label := fmt.Sprintf("%d pending message%s", len(queued), plural(len(queued)))
 		rows = append([]string{p.styles.muted.Render(ansi.Truncate(inset+label, w, "…"))}, rows[len(rows)-(budget-1):]...)
+	}
+	if padded {
+		rows = append([]string{""}, rows...)
+		rows = append(rows, "")
 	}
 	return rows
 }

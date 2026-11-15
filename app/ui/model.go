@@ -585,7 +585,7 @@ type annotationState struct {
 // Model is the top-level bubbletea model for revdiff.
 type Model struct {
 	t3Mode      bool
-	machineName string // local hostname, read once at startup
+	machineName string // hostname of the active machine
 	// injected dependencies
 	resolver      styleResolver
 	renderer      styleRenderer
@@ -712,7 +712,8 @@ type reviewStatsLoadedMsg struct {
 // NewFileTree, ParseTOC, Themes) are required and must be constructed by the caller.
 // Blamer, LoadUntracked, and Keymap are optional.
 type ModelConfig struct {
-	T3Mode bool // the current review comes from T3 Code
+	MachineName string // active host; empty uses the local hostname
+	T3Mode      bool   // the current review comes from T3 Code
 	// --- UI dependencies (required, caller-constructed) ---
 	Renderer    Renderer          // diff renderer: ChangedFiles, FileDiff
 	Store       *annotation.Store // annotation store
@@ -926,7 +927,10 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		tree.ToggleUnreviewedFilter()
 	}
 
-	machineName, _ := os.Hostname()
+	machineName := cfg.MachineName
+	if machineName == "" {
+		machineName, _ = os.Hostname()
+	}
 	return Model{
 		machineName:   style.SanitizeFilenameForDisplay(machineName),
 		t3Mode:        cfg.T3Mode,
@@ -1031,9 +1035,19 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadFiles(), m.loadCommits())
 }
 
+// MachineIdentityMsg updates the active host after connecting through the palette.
+type MachineIdentityMsg struct {
+	Name string
+	T3   bool
+}
+
 // Update handles messages and updates the model state.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case MachineIdentityMsg:
+		m.machineName = style.SanitizeFilenameForDisplay(msg.Name)
+		m.t3Mode = msg.T3
+		return m, nil
 	case tea.KeyMsg:
 		if m.inConfirmDiscard {
 			return m.handleConfirmDiscardKey(msg)

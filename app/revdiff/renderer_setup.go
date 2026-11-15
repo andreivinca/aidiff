@@ -13,6 +13,7 @@ import (
 )
 
 type vcsSetup struct {
+	machineName        string
 	renderer           ui.Renderer
 	vcsType            diff.VCSType
 	gitRoot            string // set only when VCS is git; used by history module to run git commands
@@ -43,7 +44,7 @@ func setupSource(opts options) (sourceSetup, error) {
 		if err != nil {
 			return sourceSetup{}, err
 		}
-		return sourceSetup{vcsSetup: vcsSetup{renderer: t3.renderer}, t3: t3}, nil
+		return sourceSetup{vcsSetup: vcsSetup{renderer: t3.renderer, machineName: t3.session.MachineName()}, t3: t3}, nil
 	case opts.compareAbsOld != "":
 		return sourceSetup{vcsSetup: vcsSetup{
 			renderer: diff.NewCompareReader(opts.compareAbsOld, opts.compareAbsNew),

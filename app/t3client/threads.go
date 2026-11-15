@@ -106,9 +106,10 @@ type serverConfig struct {
 		DisplayName string `json:"displayName"`
 		Enabled     bool   `json:"enabled"`
 		Models      []struct {
-			Slug      string `json:"slug"`
-			Name      string `json:"name"`
-			IsDefault bool   `json:"isDefault"`
+			Slug         string            `json:"slug"`
+			Name         string            `json:"name"`
+			IsDefault    bool              `json:"isDefault"`
+			Capabilities ModelCapabilities `json:"capabilities"`
 		} `json:"models"`
 		SlashCommands []struct {
 			Name        string `json:"name"`
@@ -125,10 +126,11 @@ type serverConfig struct {
 
 // ModelChoice is one model a thread can run with.
 type ModelChoice struct {
-	InstanceID string // the provider instance offering it
-	Provider   string // the provider's display name
-	Slug       string
-	Name       string
+	InstanceID   string // the provider instance offering it
+	Provider     string // the provider's display name
+	Slug         string
+	Name         string
+	Capabilities ModelCapabilities
 }
 
 // Selection is what choosing the model sends.
@@ -168,7 +170,7 @@ func FetchCatalog(ctx context.Context, c *Conn) (Catalog, error) {
 			name = pr.InstanceID
 		}
 		for _, m := range pr.Models {
-			cat.Models = append(cat.Models, ModelChoice{InstanceID: pr.InstanceID, Provider: name, Slug: m.Slug, Name: m.Name})
+			cat.Models = append(cat.Models, ModelChoice{InstanceID: pr.InstanceID, Provider: name, Slug: m.Slug, Name: m.Name, Capabilities: m.Capabilities})
 		}
 		for _, sc := range pr.SlashCommands {
 			cmd := ProviderCommand{InstanceID: pr.InstanceID, Name: strings.TrimPrefix(sc.Name, "/"), Description: sc.Description}

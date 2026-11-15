@@ -1,6 +1,7 @@
 package t3chat
 
 import (
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"strings"
@@ -126,4 +127,15 @@ func TestPane_ComposerBackgroundSurvivesNestedStyles(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestPaneComposerShowsEffortAfterModel(t *testing.T) {
+	snap := fixture()
+	snap.Thread.ModelSelection = &t3client.ModelSelection{InstanceID: "codex", Model: "gpt-5", Options: json.RawMessage(`[{"id":"reasoningEffort","value":"high"}]`)}
+	p, f := newTestPane(t, 100, 20, snap)
+	assert.Contains(t, view(p), "GPT-5 · high Codex")
+	f.live().Thread(t3client.Thread{ID: "th-1", ModelSelection: &t3client.ModelSelection{InstanceID: "claude", Model: "claude-sonnet-4", Options: json.RawMessage(`[{"id":"effort","value":"max"}]`)}})
+	waitUpdate(t, p)
+	assert.Contains(t, view(p), "Sonnet 4 · max Claude Code")
+	assert.NotContains(t, view(p), "high")
 }

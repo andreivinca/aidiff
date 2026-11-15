@@ -561,6 +561,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
 	rects := m.termRects()
+	if m.routeCapturedMouse(msg, rects) {
+		return m, nil
+	}
+
 	if press {
 		if sep, ok := m.dividerAt(msg.X, rects); ok {
 			m.dragging, m.dragSep = true, sep
@@ -590,6 +594,22 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil // separator columns do nothing
+}
+
+// routeCapturedMouse keeps selection drags attached to their originating pane.
+func (m Model) routeCapturedMouse(msg tea.MouseMsg, rects []rect) bool {
+	if msg.Action != tea.MouseActionMotion && msg.Action != tea.MouseActionRelease {
+		return false
+	}
+	for i, pane := range m.terms {
+		if capture, ok := pane.(interface{ MouseCaptured() bool }); ok && capture.MouseCaptured() {
+			if ev, ok := toTermMouse(msg, msg.X-m.leftW-rects[i].x, msg.Y); ok {
+				pane.SendMouse(ev)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // dragMouse follows a held pointer and commits its release position, even

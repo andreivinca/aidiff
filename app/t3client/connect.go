@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,4 +297,17 @@ func freePort(ctx context.Context) (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// MachineName identifies the connected host, preserving SSH aliases and avoiding
+// tunnel loopback addresses, credentials, and ports in the status bar.
+func (s *Session) MachineName() string {
+	if s.Label == "local" {
+		name, _ := os.Hostname()
+		return name
+	}
+	if u, err := url.Parse(s.Label); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return "remote"
 }

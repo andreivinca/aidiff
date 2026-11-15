@@ -62,9 +62,10 @@ func (p *Pane) renderLocked(showCursor bool) string {
 		gapH = 1
 	}
 	footer := p.composerRowsLocked(w, max(1, h-headerH-gapH-1), showCursor)
-	pending := p.pendingRowsLocked(w, min(6, max(0, h-headerH-gapH-len(footer)-1)))
+	pending := p.pendingRowsLocked(w, min(8, max(0, h-headerH-gapH-len(footer)-1)))
 	bodyH := max(0, h-headerH-gapH-len(footer)-len(pending))
 	p.bodyH = bodyH
+	p.textBottom = headerH + bodyH + len(pending)
 
 	rows := make([]string, 0, h)
 	if headerH > 0 {
