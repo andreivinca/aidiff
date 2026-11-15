@@ -187,6 +187,9 @@ func (m Model) handleEscKey() (tea.Model, tea.Cmd) {
 
 // handleEnterKey handles enter key based on current pane focus.
 func (m Model) handleEnterKey() (tea.Model, tea.Cmd) {
+	if m.layout.focus == paneTree && m.selectedDirectory() != "" {
+		return m.toggleSelectedDirectory()
+	}
 	switch m.layout.focus {
 	case paneTree:
 		if m.file.mdTOC != nil {

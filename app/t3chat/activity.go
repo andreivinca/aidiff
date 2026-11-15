@@ -211,17 +211,7 @@ func (p *Pane) activityDetailRows(e activityEntry, w, limit int) []string {
 
 // activityHintLocked keeps the entry point visible whenever the input is empty.
 func (p *Pane) activityHintLocked() string {
-	agents, processes := 0, 0
-	for _, e := range p.activityEntriesLocked() {
-		if !e.active() {
-			continue
-		}
-		if e.kind == "subagent" {
-			agents++
-		} else {
-			processes++
-		}
-	}
+	agents, processes := p.activeCountsLocked()
 	var counts []string
 	if agents > 0 {
 		counts = append(counts, fmt.Sprintf("%d agent%s", agents, plural(agents)))

@@ -17,6 +17,7 @@ type vcsSetup struct {
 	vcsType            diff.VCSType
 	gitRoot            string // set only when VCS is git; used by history module to run git commands
 	workDir            string
+	folder             *diff.FolderReader
 	allFiles           bool // plain folders implicitly browse all file contents
 	blamer             ui.Blamer
 	untrackedFn        func() ([]string, error)
@@ -74,7 +75,7 @@ func (s sourceSetup) watch(opts options, p *tea.Program) (stop func()) {
 	case s.vcsType == diff.VCSGit:
 		return watchRepo(s.workDir, p)
 	case s.allFiles && s.vcsType == diff.VCSNone:
-		return watchFolder(s.workDir, p)
+		return watchLazyFolder(s.folder, s.workDir, p)
 	}
 	return func() {}
 }
@@ -128,7 +129,8 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 		if err != nil {
 			return vcsSetup{}, err
 		}
-		return vcsSetup{renderer: r, workDir: workDir, allFiles: len(opts.Only) == 0}, nil
+		folder, _ := r.(*diff.FolderReader)
+		return vcsSetup{renderer: r, workDir: workDir, folder: folder, allFiles: len(opts.Only) == 0}, nil
 	}
 }
 
@@ -215,5 +217,5 @@ func makeNoVCSRenderer(opts options, cwd string) (ui.Renderer, string, error) {
 	if len(opts.Only) > 0 {
 		return diff.NewFileReader(opts.Only, cwd), cwd, nil
 	}
-	return wrapFilters(diff.NewFilesystemDirectoryReader(cwd), opts), cwd, nil
+	return diff.NewFolderReader(cwd, opts.Include, opts.Exclude), cwd, nil
 }

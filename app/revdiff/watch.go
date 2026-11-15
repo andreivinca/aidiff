@@ -32,11 +32,23 @@ func watchFolder(workDir string, p *tea.Program) (stop func()) {
 	return watchFiles(watch.Config{Root: workDir}, p)
 }
 
-func watchFiles(cfg watch.Config, p *tea.Program) (stop func()) {
+func watchLazyFolder(reader *diff.FolderReader, workDir string, p *tea.Program) func() {
+	if reader == nil {
+		return watchFolder(workDir, p)
+	}
+	return watchFilesWithReader(watch.Config{Root: workDir, Shallow: true}, p, reader)
+}
+
+func watchFiles(cfg watch.Config, p *tea.Program) func() { return watchFilesWithReader(cfg, p, nil) }
+
+func watchFilesWithReader(cfg watch.Config, p *tea.Program, reader *diff.FolderReader) (stop func()) {
 	w, err := watch.New(cfg)
 	if err != nil {
 		log.Printf("[WARN] file watching disabled: %v", err)
 		return func() {}
+	}
+	if reader != nil {
+		reader.SetDirectoryWatcher(w.SetDirectories)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -53,6 +65,9 @@ func watchFiles(cfg watch.Config, p *tea.Program) (stop func()) {
 	}()
 	return func() {
 		close(done)
+		if reader != nil {
+			reader.SetDirectoryWatcher(nil)
+		}
 		_ = w.Close()
 	}
 }

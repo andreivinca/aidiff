@@ -173,3 +173,15 @@ func TestTitleSeed(t *testing.T) {
 	assert.Equal(t, "Attached images", TitleSeed(" ", 3))
 	assert.Empty(t, TitleSeed("", 0))
 }
+
+func TestQueuedMessageEvents(t *testing.T) {
+	var got Message
+	h := ThreadEvents{Message: func(m Message) { got = m }}
+	h.dispatch("message.updated", json.RawMessage(`{"id":"m-queued","role":"user","text":"follow up"}`))
+	assert.Equal(t, Message{ID: "m-queued", Role: "user", Text: "follow up"}, got)
+	var snapshot ThreadProjection
+	require.NoError(t, json.Unmarshal([]byte(`{"messages":[{"id":"m-queued","role":"user","text":"follow up"}],"visibleTurnItems":[{"position":1,"item":{"id":"row-1","messageId":"m-queued","type":"user_message","inputIntent":"queued_turn","status":"pending"}}]}`), &snapshot))
+	require.Len(t, snapshot.Messages, 1)
+	assert.Equal(t, "m-queued", snapshot.VisibleTurnItems[0].Item.MessageID)
+	assert.Equal(t, "queued_turn", snapshot.VisibleTurnItems[0].Item.InputIntent)
+}

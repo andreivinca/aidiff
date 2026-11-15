@@ -88,11 +88,13 @@ type TurnItem struct {
 	StartedAt     string       `json:"startedAt"`
 	NativeItemRef *ProviderRef `json:"nativeItemRef"`
 
-	Text      string `json:"text"`      // user_message, assistant_message, reasoning
-	Streaming bool   `json:"streaming"` // assistant_message, reasoning, proposed_plan
-	Markdown  string `json:"markdown"`  // proposed_plan
-	Message   string `json:"message"`   // system_notice, run_interrupt_request, run_interrupt_result
-	Summary   string `json:"summary"`   // compaction
+	MessageID   string `json:"messageId"`
+	InputIntent string `json:"inputIntent"`
+	Text        string `json:"text"`      // user_message, assistant_message, reasoning
+	Streaming   bool   `json:"streaming"` // assistant_message, reasoning, proposed_plan
+	Markdown    string `json:"markdown"`  // proposed_plan
+	Message     string `json:"message"`   // system_notice, run_interrupt_request, run_interrupt_result
+	Summary     string `json:"summary"`   // compaction
 
 	Input         json.RawMessage `json:"input"`  // command_execution: the command; dynamic_tool: the arguments
 	Output        json.RawMessage `json:"output"` // stripped on the wire when large
@@ -169,8 +171,16 @@ type ProjectedTurnItem struct {
 	Item     TurnItem `json:"item"`
 }
 
+// Message includes queued user text before T3 promotes it into the transcript.
+type Message struct {
+	ID   string `json:"id"`
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
 // ThreadProjection is the part of a thread's full state aidiff renders.
 type ThreadProjection struct {
+	Messages         []Message           `json:"messages"`
 	Thread           Thread              `json:"thread"`
 	Runs             []Run               `json:"runs"`
 	RuntimeRequests  []RuntimeRequest    `json:"runtimeRequests"`
@@ -184,6 +194,7 @@ type ThreadProjection struct {
 // connection's read goroutine and must not block. The server re-sends whole
 // entities, so a streaming reply arrives as the same item with more text.
 type ThreadEvents struct {
+	Message        func(Message)
 	Snapshot       func(ThreadProjection)
 	TurnItem       func(TurnItem)
 	Run            func(Run)
@@ -228,6 +239,11 @@ func (h ThreadEvents) dispatch(typ string, payload json.RawMessage) {
 		return
 	}
 	switch {
+	case typ == "message.updated" && h.Message != nil:
+		var m Message
+		if json.Unmarshal(payload, &m) == nil && m.ID != "" {
+			h.Message(m)
+		}
 	case typ == "turn-item.updated" && h.TurnItem != nil:
 		var t TurnItem
 		if json.Unmarshal(payload, &t) == nil && t.ID != "" {

@@ -49,7 +49,7 @@ func TestMakeNoVCSRenderer_NoOnly(t *testing.T) {
 	dir := t.TempDir()
 	renderer, workDir, err := makeNoVCSRenderer(options{}, dir)
 	require.NoError(t, err)
-	assert.IsType(t, &diff.DirectoryReader{}, renderer)
+	assert.IsType(t, &diff.FolderReader{}, renderer)
 	assert.Equal(t, dir, workDir)
 }
 
@@ -67,9 +67,9 @@ func TestSetupSource_PlainFolder(t *testing.T) {
 		opts options
 		want []diff.FileEntry
 	}{
-		{name: "default", want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src/generated/code.go"}, {Path: "src/main.go"}}},
-		{name: "explicit all files", opts: options{AllFiles: true}, want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src/generated/code.go"}, {Path: "src/main.go"}}},
-		{name: "include and exclude", opts: options{Include: []string{"src"}, Exclude: []string{"src/generated"}}, want: []diff.FileEntry{{Path: "src/main.go"}}},
+		{name: "default", want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src", IsDir: true}}},
+		{name: "explicit all files", opts: options{AllFiles: true}, want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src", IsDir: true}}},
+		{name: "include and exclude", opts: options{Include: []string{"src"}, Exclude: []string{"src/generated"}}, want: []diff.FileEntry{{Path: "src", IsDir: true}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

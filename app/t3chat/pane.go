@@ -51,6 +51,9 @@ type Pane struct {
 	threadID       string
 	title          string
 	link           string // connection state for the header; "" once the snapshot arrived
+	pending        []queuedMessage
+	messages       map[string]t3client.Message
+	activityCounts activityCounts
 	items          []t3client.TurnItem
 	index          map[string]int
 	runs           map[string]t3client.Run
@@ -148,6 +151,8 @@ func (p *Pane) reset(conn *t3client.Conn, threadID, title string) {
 	}
 	p.conn, p.threadID, p.title = conn, threadID, strings.TrimSpace(title)
 	p.items, p.index = nil, map[string]int{}
+	p.pending, p.messages = nil, map[string]t3client.Message{}
+	p.activityCounts = activityCounts{}
 	p.runs, p.requests = map[string]t3client.Run{}, map[string]t3client.RuntimeRequest{}
 	p.activityItems = map[string]t3client.TurnItem{}
 	p.subagents = map[string]t3client.Subagent{}
@@ -174,6 +179,7 @@ func (p *Pane) reset(conn *t3client.Conn, threadID, title string) {
 // closes or the connection drops.
 func (p *Pane) subscribe(ctx context.Context, id uint64, conn *t3client.Conn, threadID string) {
 	err := p.cfg.Subscribe(ctx, conn, threadID, t3client.ThreadEvents{
+		Message:        func(m t3client.Message) { p.onMessage(id, m) },
 		Snapshot:       func(pr t3client.ThreadProjection) { p.onSnapshot(id, pr) },
 		TurnItem:       func(it t3client.TurnItem) { p.onItem(id, it) },
 		Run:            func(r t3client.Run) { p.onRun(id, r) },
@@ -206,6 +212,13 @@ func (p *Pane) onSnapshot(id uint64, pr t3client.ThreadProjection) {
 	ordered := append([]t3client.ProjectedTurnItem(nil), pr.VisibleTurnItems...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Position < ordered[j].Position })
 	p.items, p.index = p.items[:0], map[string]int{}
+	p.activityCounts.valid = false
+	p.messages = map[string]t3client.Message{}
+	for _, m := range pr.Messages {
+		if m.Role == "user" {
+			p.messages[m.ID] = m
+		}
+	}
 	p.activityItems = map[string]t3client.TurnItem{}
 	for _, it := range pr.TurnItems {
 		p.activityItems[it.ID] = it
@@ -224,6 +237,9 @@ func (p *Pane) onSnapshot(id uint64, pr t3client.ThreadProjection) {
 	p.runs = map[string]t3client.Run{}
 	for _, r := range pr.Runs {
 		p.runs[r.ID] = r
+		if !r.Active() {
+			p.removePendingLocked(r.UserMessageID)
+		}
 	}
 	p.requests = map[string]t3client.RuntimeRequest{}
 	for _, r := range pr.RuntimeRequests {
@@ -253,6 +269,10 @@ func (p *Pane) onRun(id uint64, r t3client.Run) {
 	p.mu.Lock()
 	if id == p.subID {
 		p.runs[r.ID] = r
+		if !r.Active() {
+			p.removePendingLocked(r.UserMessageID)
+		}
+		p.activityCounts.valid = false
 		p.gen++
 	}
 	p.mu.Unlock()
@@ -288,6 +308,7 @@ func (p *Pane) onThread(id uint64, th t3client.Thread) {
 func (p *Pane) threadSettingsLocked(th t3client.Thread) {
 	if th.ActiveProviderThreadID != nil {
 		p.providerID = *th.ActiveProviderThreadID
+		p.activityCounts.valid = false
 	}
 	if th.ModelSelection != nil && th.ModelSelection.Model != "" {
 		p.current = th.ModelSelection
@@ -303,6 +324,12 @@ func (p *Pane) threadSettingsLocked(th t3client.Thread) {
 
 // upsertLocked replaces an item by id or appends a new one; mu must be held.
 func (p *Pane) upsertLocked(it t3client.TurnItem) {
+	if it.Type == "command_execution" || it.Type == "subagent" {
+		p.activityCounts.valid = false
+	}
+	if it.Type == "user_message" && it.MessageID != "" {
+		p.removePendingLocked(it.MessageID)
+	}
 	if previous, ok := p.activityItems[it.ID]; ok {
 		if it.PromptOmitted {
 			it.Prompt = previous.Prompt
@@ -586,17 +613,26 @@ func (p *Pane) sendMessageLocked(text string) {
 		cmd["freshContext"] = true
 		p.fresh = false
 	}
+	p.pending = append(p.pending, queuedMessage{id: messageID, text: text, sending: true, queued: p.activeRunLocked() != ""})
 	p.busy = true
 	p.input.clear()
 	p.inputChanged()
 	p.scroll = 0
 	p.images = nil
-	go p.send(p.conn, cmd, text, images)
+	go p.send(p.conn, p.subID, cmd, text, images)
 }
 
 // hasUserMessageLocked reports whether the thread already holds a message
 // of the user's; mu must be held.
 func (p *Pane) hasUserMessageLocked() bool {
+	if len(p.pending) > 0 {
+		return true
+	}
+	for _, m := range p.messages {
+		if m.Role == "user" {
+			return true
+		}
+	}
 	for _, it := range p.items {
 		if it.Type == "user_message" {
 			return true
@@ -627,7 +663,7 @@ func (p *Pane) imagesInLocked(text string) []pendingImage {
 
 // send stores the message's images, delivers it to the agent and reports
 // the outcome.
-func (p *Pane) send(conn *t3client.Conn, cmd t3client.Command, text string, images []pendingImage) {
+func (p *Pane) send(conn *t3client.Conn, subscription uint64, cmd t3client.Command, text string, images []pendingImage) {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	var err error
@@ -647,8 +683,19 @@ func (p *Pane) send(conn *t3client.Conn, cmd t3client.Command, text string, imag
 		err = p.cfg.Dispatch(ctx, conn, cmd)
 	}
 	p.mu.Lock()
+	if subscription != p.subID {
+		p.mu.Unlock()
+		return
+	}
+	messageID, _ := cmd["messageId"].(string)
+	for i := range p.pending {
+		if p.pending[i].id == messageID {
+			p.pending[i].sending = false
+		}
+	}
 	p.busy = false
 	if err != nil {
+		p.removePendingLocked(messageID)
 		p.note = "send failed: " + err.Error()
 		if p.input.text() == "" {
 			p.input.insert(text) // the user keeps what they typed, images included

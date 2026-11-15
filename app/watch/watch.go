@@ -21,6 +21,7 @@ import (
 
 // Config says what to watch.
 type Config struct {
+	Shallow bool     // watch only explicitly supplied directories
 	Root    string   // worktree root
 	GitDir  string   // absolute git directory; "" to skip
 	Ignored []string // absolute directories to skip (git-ignored trees)
@@ -62,7 +63,11 @@ func New(cfg Config) (*Watcher, error) {
 	for _, d := range cfg.Ignored {
 		w.ignored[filepath.Clean(d)] = struct{}{}
 	}
-	if err := w.addTree(cfg.Root); err != nil {
+	startWatch := w.addTree
+	if cfg.Shallow {
+		startWatch = fsw.Add
+	}
+	if err := startWatch(cfg.Root); err != nil {
 		_ = fsw.Close()
 		return nil, err
 	}
@@ -148,7 +153,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 		w.record("", true)
 		return
 	}
-	if ev.Has(fsnotify.Create) && isDir(ev.Name) {
+	if !w.cfg.Shallow && ev.Has(fsnotify.Create) && isDir(ev.Name) {
 		if w.skipNewDir(ev.Name) {
 			return
 		}
@@ -225,4 +230,18 @@ func within(path, dir string) bool {
 func isDir(path string) bool {
 	fi, err := os.Lstat(path) // Lstat: never follow symlinks into other trees
 	return err == nil && fi.IsDir()
+}
+
+// SetDirectories reconciles a shallow watch with the directories currently browsed.
+func (w *Watcher) SetDirectories(dirs []string) {
+	wanted := make(map[string]bool, len(dirs))
+	for _, dir := range dirs {
+		wanted[filepath.Clean(dir)] = true
+		_ = w.fsw.Add(dir)
+	}
+	for _, dir := range w.fsw.WatchList() {
+		if !wanted[filepath.Clean(dir)] {
+			_ = w.fsw.Remove(dir)
+		}
+	}
 }
