@@ -24,7 +24,16 @@ func watchRepo(workDir string, p *tea.Program) (stop func()) {
 	if err != nil {
 		log.Printf("[WARN] listing ignored directories: %v", err)
 	}
-	w, err := watch.New(watch.Config{Root: root, GitDir: gitDir, Ignored: ignored, IsIgnored: g.IsIgnored})
+	return watchFiles(watch.Config{Root: root, GitDir: gitDir, Ignored: ignored, IsIgnored: g.IsIgnored}, p)
+}
+
+// watchFolder refreshes a plain folder when files are created, edited, or removed.
+func watchFolder(workDir string, p *tea.Program) (stop func()) {
+	return watchFiles(watch.Config{Root: workDir}, p)
+}
+
+func watchFiles(cfg watch.Config, p *tea.Program) (stop func()) {
+	w, err := watch.New(cfg)
 	if err != nil {
 		log.Printf("[WARN] file watching disabled: %v", err)
 		return func() {}

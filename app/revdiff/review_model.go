@@ -60,6 +60,7 @@ func newReviewDeps(opts options) reviewDeps {
 // info-popup description.
 func (d reviewDeps) newModel(src vcsSetup, store *annotation.Store, description string) (ui.Model, error) {
 	opts := d.opts
+	opts.AllFiles = opts.AllFiles || src.allFiles
 	model, err := ui.NewModel(ui.ModelConfig{
 		Renderer:             src.renderer,
 		Store:                store,

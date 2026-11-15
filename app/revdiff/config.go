@@ -50,7 +50,7 @@ type options struct {
 	TerminalWidth         int      `long:"terminal-width" ini-name:"terminal-width" env:"REVDIFF_TERMINAL_WIDTH" default:"45" description:"terminal pane width in percent"`
 	TerminalCommand       string   `long:"terminal-command" ini-name:"terminal-command" env:"REVDIFF_TERMINAL_COMMAND" description:"command to run in the terminal pane (default: $SHELL)"`
 	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"catppuccin-macchiato" description:"chroma style for syntax highlighting"`
-	AllFiles              bool     `long:"all-files" short:"A" no-ini:"true" description:"browse all tracked files, not just diffs (git and jj only)"`
+	AllFiles              bool     `long:"all-files" short:"A" no-ini:"true" description:"browse all files (tracked files in git/jj; default outside a repository)"`
 	CompareOld            string   `long:"compare-old" no-ini:"true" description:"compare mode: old file path (use with --compare-new)"`
 	CompareNew            string   `long:"compare-new" no-ini:"true" description:"compare mode: new file path (use with --compare-old)"`
 	Stdin                 bool     `long:"stdin" no-ini:"true" description:"review stdin as a scratch buffer"`

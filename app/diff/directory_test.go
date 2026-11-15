@@ -9,6 +9,69 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFilesystemDirectoryReader_ChangedFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"src", "nested/.git", "nested/.hg", "nested/.jj"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, name), 0o750))
+	}
+	for _, name := range []string{"z.txt", ".hidden", "src/日本語\nfile.txt", "nested/.git/index", "nested/.hg/store", "nested/.jj/config"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("hello\n"), 0o600))
+	}
+	// A symlink to a directory stays a single entry, even if it points back to the root.
+	require.NoError(t, os.Symlink(dir, filepath.Join(dir, "loop")))
+	require.NoError(t, os.Symlink("missing.txt", filepath.Join(dir, "broken")))
+	// Linked worktrees store .git as a file rather than a directory.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "worktree"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "worktree", ".git"), []byte("gitdir: elsewhere\n"), 0o600))
+
+	dr := NewFilesystemDirectoryReader(dir)
+	files, err := dr.ChangedFiles("", false)
+	require.NoError(t, err)
+	assert.Equal(t, []FileEntry{
+		{Path: ".hidden"}, {Path: "broken"}, {Path: "loop"}, {Path: "src/日本語\nfile.txt"}, {Path: "z.txt"},
+	}, files)
+
+	lines, err := dr.FileDiff(FileDiffRequest{Path: "src/日本語\nfile.txt"})
+	require.NoError(t, err)
+	assert.Equal(t, []DiffLine{{OldNum: 1, NewNum: 1, Content: "hello", ChangeType: ChangeContext}}, lines)
+}
+
+func TestFilesystemDirectoryReader_Refresh(t *testing.T) {
+	dir := t.TempDir()
+	dr := NewFilesystemDirectoryReader(dir)
+	files, err := dr.ChangedFiles("", false)
+	require.NoError(t, err)
+	assert.Empty(t, files)
+
+	path := filepath.Join(dir, "new.txt")
+	require.NoError(t, os.WriteFile(path, []byte("first\n"), 0o600))
+	files, err = dr.ChangedFiles("", false)
+	require.NoError(t, err)
+	assert.Equal(t, []FileEntry{{Path: "new.txt"}}, files)
+	lines, err := dr.FileDiff(FileDiffRequest{Path: "new.txt"})
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	assert.Equal(t, "first", lines[0].Content)
+
+	require.NoError(t, os.WriteFile(path, []byte("updated\n"), 0o600))
+	lines, err = dr.FileDiff(FileDiffRequest{Path: "new.txt"})
+	require.NoError(t, err)
+	require.Len(t, lines, 1)
+	assert.Equal(t, "updated", lines[0].Content)
+
+	require.NoError(t, os.Remove(path))
+	files, err = dr.ChangedFiles("", false)
+	require.NoError(t, err)
+	assert.Empty(t, files)
+}
+
+func TestFilesystemDirectoryReader_MissingRoot(t *testing.T) {
+	dr := NewFilesystemDirectoryReader(filepath.Join(t.TempDir(), "missing"))
+	_, err := dr.ChangedFiles("", false)
+	require.ErrorContains(t, err, "list folder")
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestDirectoryReader_ChangedFiles(t *testing.T) {
 	dir := setupTestRepo(t)
 

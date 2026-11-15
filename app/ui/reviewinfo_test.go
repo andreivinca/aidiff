@@ -266,6 +266,7 @@ func TestReviewHeaderText(t *testing.T) {
 		{name: "stdin with name", cfg: &ReviewInfoConfig{Stdin: true, StdinName: "patch.diff"}, want: "stdin: patch.diff"},
 		{name: "stdin without name", cfg: &ReviewInfoConfig{Stdin: true}, want: "stdin scratch buffer"},
 		{name: "all-files", cfg: &ReviewInfoConfig{AllFiles: true}, want: "all tracked files"},
+		{name: "plain folder", cfg: &ReviewInfoConfig{AllFiles: true, VCS: "none"}, want: "all files"},
 		{name: "staged", cfg: &ReviewInfoConfig{Staged: true}, want: "staged changes"},
 		{name: "working tree", cfg: &ReviewInfoConfig{}, want: "working tree changes"},
 		{name: "ref range", cfg: &ReviewInfoConfig{Ref: "main..feature"}, want: "ref range: main..feature"},

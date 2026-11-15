@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestMakeGitRenderer_WithoutOnly(t *testing.T) {
 func TestMakeNoVCSRenderer_WithOnly(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	renderer, workDir, err := makeNoVCSRenderer([]string{"file.md"}, tmpDir)
+	renderer, workDir, err := makeNoVCSRenderer(options{Only: []string{"file.md"}}, tmpDir)
 	require.NoError(t, err)
 	require.NotNil(t, renderer)
 	assert.IsType(t, &diff.FileReader{}, renderer)
@@ -45,11 +46,62 @@ func TestMakeNoVCSRenderer_WithOnly(t *testing.T) {
 }
 
 func TestMakeNoVCSRenderer_NoOnly(t *testing.T) {
-	renderer, workDir, err := makeNoVCSRenderer(nil, "/tmp")
-	require.Error(t, err)
-	assert.Nil(t, renderer)
-	assert.Empty(t, workDir)
-	assert.Contains(t, err.Error(), "no git, mercurial, or jujutsu repository found")
+	dir := t.TempDir()
+	renderer, workDir, err := makeNoVCSRenderer(options{}, dir)
+	require.NoError(t, err)
+	assert.IsType(t, &diff.DirectoryReader{}, renderer)
+	assert.Equal(t, dir, workDir)
+}
+
+func TestSetupSource_PlainFolder(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	// Folder browsing does not need git or another VCS executable.
+	t.Setenv("PATH", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src", "generated"), 0o750))
+	for _, name := range []string{"readme.md", "src/main.go", "src/generated/code.go"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("hello\nworld\n"), 0o600))
+	}
+	tests := []struct {
+		name string
+		opts options
+		want []diff.FileEntry
+	}{
+		{name: "default", want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src/generated/code.go"}, {Path: "src/main.go"}}},
+		{name: "explicit all files", opts: options{AllFiles: true}, want: []diff.FileEntry{{Path: "readme.md"}, {Path: "src/generated/code.go"}, {Path: "src/main.go"}}},
+		{name: "include and exclude", opts: options{Include: []string{"src"}, Exclude: []string{"src/generated"}}, want: []diff.FileEntry{{Path: "src/main.go"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src, err := setupSource(tt.opts)
+			require.NoError(t, err)
+			defer src.close()
+			assert.Equal(t, dir, src.workDir)
+			assert.Equal(t, diff.VCSNone, src.vcsType)
+			assert.True(t, src.allFiles)
+			assert.Nil(t, src.blamer)
+			assert.Nil(t, src.commitLogger)
+			assert.Nil(t, src.untrackedFn)
+			entries, err := src.renderer.ChangedFiles("", false)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, entries)
+			lines, err := src.renderer.FileDiff(diff.FileDiffRequest{Path: "src/main.go"})
+			require.NoError(t, err)
+			assert.Equal(t, []diff.DiffLine{
+				{OldNum: 1, NewNum: 1, Content: "hello", ChangeType: diff.ChangeContext},
+				{OldNum: 2, NewNum: 2, Content: "world", ChangeType: diff.ChangeContext},
+			}, lines)
+		})
+	}
+}
+
+func TestMakeNoVCSRenderer_RequiresRepositoryForDiffs(t *testing.T) {
+	refOpts := options{}
+	refOpts.Refs.Base = "HEAD"
+	for _, opts := range []options{refOpts, {Staged: true}} {
+		_, _, err := makeNoVCSRenderer(opts, t.TempDir())
+		require.ErrorContains(t, err, "require a repository")
+	}
 }
 
 func TestMakeGitRenderer_AllFiles(t *testing.T) {

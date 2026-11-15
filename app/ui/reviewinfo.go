@@ -214,6 +214,9 @@ func (m Model) reviewHeaderText() string {
 	case cfg.Compare:
 		return "two-file diff"
 	case cfg.AllFiles:
+		if cfg.VCS == "none" {
+			return "all files"
+		}
 		return "all tracked files"
 	case cfg.Staged:
 		return "staged changes"
