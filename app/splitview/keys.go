@@ -53,7 +53,7 @@ func sendKey(t Terminal, msg tea.KeyMsg) {
 	case msg.Type >= 0 && msg.Type < 32, msg.Type == tea.KeyBackspace:
 		// C0 controls (ctrl+letter, enter, tab, esc) and DEL: the key type
 		// value is the byte itself.
-		t.SendText(alt + string(rune(msg.Type)))
+		t.SendText(alt + string(rune(msg.Type))) //nolint:gosec // 0 <= msg.Type < 32 or KeyBackspace: a byte
 	default:
 		if x, ok := xtermMods[msg.Type]; ok {
 			mod := x.mod

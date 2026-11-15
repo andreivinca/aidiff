@@ -126,12 +126,12 @@ func (hs *harness) lastInnerSize() tea.WindowSizeMsg {
 }
 
 // runPalette opens ctrl+p, types query and presses enter.
-func (hs *harness) runPalette(query string) tea.Cmd {
+func (hs *harness) runPalette(query string) {
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
 	for _, r := range query {
 		hs.key(string(r))
 	}
-	return hs.send(tea.KeyMsg{Type: tea.KeyEnter})
+	hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 }
 
 func TestSplit_LayoutSizes(t *testing.T) {
@@ -199,8 +199,12 @@ func TestSplit_OpenTwiceSideBySide(t *testing.T) {
 	assert.Equal(t, 30, hs.term(1).h)
 
 	for i, l := range strings.Split(ansi.Strip(hs.m.View()), "\n") {
-		require.Equal(t, 100, len([]rune(l)), "row %d", i)
-		assert.Equal(t, "│", string([]rune(l)[80]), "row %d has the separator after the first terminal", i)
+		require.Len(t, []rune(l), 100, "row %d", i)
+		separator := "│"
+		if i == hs.m.height/2 {
+			separator = "↔"
+		}
+		assert.Equal(t, separator, string([]rune(l)[80]), "row %d has the separator after the first terminal", i)
 	}
 
 	// typing goes to the focused (rightmost) one
@@ -291,10 +295,10 @@ func TestSplit_Palette(t *testing.T) {
 	}
 }
 
-func names(cmds []command) []string {
+func names(cmds []row) []string {
 	out := make([]string, len(cmds))
 	for i, c := range cmds {
-		out[i] = c.name
+		out[i] = c.label
 	}
 	return out
 }
@@ -582,9 +586,9 @@ func TestSplit_GuardQuitInsideBatch(t *testing.T) {
 
 func TestSplit_CursorOnlyWhenTerminalFocused(t *testing.T) {
 	hs := newHarness(t, 100, 30)
-	assert.Contains(t, hs.m.columnView(), "C")
+	assert.Contains(t, hs.m.columnView(hs.m.leftBlock()), "C")
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	assert.NotContains(t, hs.m.columnView(), "C")
+	assert.NotContains(t, hs.m.columnView(hs.m.leftBlock()), "C")
 }
 
 const (

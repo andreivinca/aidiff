@@ -13,11 +13,14 @@
 package splitview
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 )
 
@@ -60,12 +63,26 @@ type Config struct {
 	// RefreshMsg is forwarded to the wrapped model when files change (see
 	// FilesChangedMsg). Nil disables refreshing.
 	RefreshMsg tea.Msg
+	// Commands adds entries to the ctrl+p palette. It is asked again each
+	// time the palette renders, so the list can follow the program's state.
+	Commands func() []Command
 }
 
 // FilesChangedMsg tells the split that files changed on disk. It forwards
 // Config.RefreshMsg to the wrapped model, holding it while the model reports
 // (through an optional CanRefresh() bool method) that it is busy.
 type FilesChangedMsg struct{}
+
+// OpenPaneMsg adds a pane to the right column the way Open Terminal adds a
+// shell. Start receives the pane's content size. Until the window size is
+// known the request waits for it.
+type OpenPaneMsg struct {
+	Start func(width, height int) (Terminal, error)
+}
+
+// QuitNoted is a pane that tells the quit dialog what closing it means, in
+// place of the shell's "everything running in it" warning.
+type QuitNoted interface{ QuitNote() string }
 
 // Model is the root Bubble Tea model.
 type Model struct {
@@ -86,12 +103,25 @@ type Model struct {
 	weights       []float64 // each terminal's share of the terminal area, parallel to terms
 	dragging      bool      // a divider is being dragged with the mouse
 	dragSep       int       // which: dragMain, or k for the separator right of terminal k
+	dragOffset    int       // distance from the actual border when grabbing its adjacent cell
 	innerW        int       // size last sent to the wrapped model
 	innerH        int
 	opened        bool // OpenOnStart has been honored
 
 	refreshPending bool // files changed; the wrapped model has not refreshed yet
 	innerSized     bool // the wrapped model has received a size (0x0 is a valid one)
+
+	leftCache *leftCache // shared across copies; see leftBlock
+
+	pending []func(int, int) (Terminal, error) // panes requested before the window had a size
+}
+
+// leftCache holds the wrapped model's fitted view. It is dropped whenever the
+// wrapped model receives a message, so a terminal echo reuses it.
+type leftCache struct {
+	valid bool
+	w, h  int
+	lines []string
 }
 
 // termUpdateMsg reports that a terminal's screen changed or its program ended.
@@ -106,7 +136,7 @@ func New(inner tea.Model, cfg Config) Model {
 	if cfg.WidthPercent < 10 || cfg.WidthPercent > 90 {
 		cfg.WidthPercent = defaultWidthPercent
 	}
-	return Model{inner: inner, cfg: cfg, focus: focusDiff, termRatio: float64(cfg.WidthPercent) / 100}
+	return Model{inner: inner, cfg: cfg, focus: focusDiff, termRatio: float64(cfg.WidthPercent) / 100, leftCache: &leftCache{}}
 }
 
 // Inner returns the wrapped model, e.g. to read its final state after Run.
@@ -147,14 +177,29 @@ func (m Model) flushRefresh(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if seq, ok := rawSequence(msg); ok {
+		return m.forwardRaw(seq, msg)
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.cfg.OpenOnStart && !m.opened {
 			m.opened = true
-			return m.openTerminal()
+			m.pending = append([]func(int, int) (Terminal, error){m.cfg.Start}, m.pending...)
 		}
-		return m.relayout()
+		if len(m.pending) == 0 {
+			return m.relayout()
+		}
+		return m.openPending()
+	case OpenPaneMsg:
+		if msg.Start == nil {
+			return m, nil
+		}
+		if m.width == 0 {
+			m.pending = append(m.pending, msg.Start)
+			return m, nil
+		}
+		return m.openPane(msg.Start)
 	case termUpdateMsg:
 		return m.handleTermUpdate(msg)
 	case quitRequestMsg:
@@ -163,6 +208,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.confirmQuit, m.quitSel = true, cancelButton
 		return m, nil
+	case ShowPickerMsg:
+		m.flash = ""
+		m.palette = palette{open: true, mode: modePick, title: msg.Title, items: msg.Items,
+			onPick: msg.OnPick, onText: msg.OnText, textLabel: msg.TextLabel}
+		if m.palette.textLabel == "" {
+			m.palette.textLabel = "%s"
+		}
+		return m, nil
+	case ShowPromptMsg:
+		m.flash = ""
+		m.palette = palette{open: true, mode: modePrompt, title: msg.Title, placeholder: msg.Placeholder, onText: msg.OnSubmit}
+		return m, nil
+	case FlashMsg:
+		m.flash = msg.Text
+		return m, nil
+	case ReplaceInnerMsg:
+		return m.replaceInner(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -171,19 +233,73 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateInner(msg)
 }
 
+// forwardRaw hands an unnamed escape sequence to the focused pane, or to the
+// wrapped model when the diff has focus or a popup is open.
+func (m Model) forwardRaw(seq []byte, msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.focus == focusDiff || m.palette.open || m.confirmQuit {
+		return m.updateInner(msg)
+	}
+	m.terms[m.focus].SendText(string(seq))
+	return m, nil
+}
+
+// rawSequence recovers an escape sequence Bubble Tea could not name, such as
+// the CSI u form of shift+enter ("\x1b[13;2u"), so the focused pane still
+// gets it. Bubble Tea reports those as an unexported byte-slice message.
+func rawSequence(msg tea.Msg) ([]byte, bool) {
+	v := reflect.ValueOf(msg)
+	if !v.IsValid() || v.Kind() != reflect.Slice || v.Type().Elem().Kind() != reflect.Uint8 {
+		return nil, false
+	}
+	if !strings.HasSuffix(v.Type().String(), "unknownCSISequenceMsg") {
+		return nil, false
+	}
+	return v.Bytes(), true
+}
+
+// askQuit opens the quit dialog whatever is open: ctrl+q is deliberate, and
+// a confirmation costs one key. A quit the wrapped model asks for (its own
+// quit key) still goes straight through when no pane is open.
+func (m Model) askQuit() (tea.Model, tea.Cmd) {
+	m.confirmQuit, m.quitSel = true, cancelButton
+	return m, nil
+}
+
 func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.inner, cmd = m.inner.Update(msg)
+	m.dropLeftCache()
 	return m, m.guardQuit(cmd)
 }
 
-func (m Model) anyRunning() bool {
-	for _, t := range m.terms {
-		if !t.Exited() {
-			return true
-		}
+// replaceInner swaps the wrapped model. The newcomer is initialized and gets
+// the size the old one had, so it starts loading at once; a pending refresh
+// belonged to the old model and is dropped.
+func (m Model) replaceInner(msg ReplaceInnerMsg) (tea.Model, tea.Cmd) {
+	if msg.Model == nil {
+		return m, nil
 	}
-	return false
+	if msg.Retire != nil {
+		msg.Retire(m.inner)
+	}
+	m.inner = msg.Model
+	m.dropLeftCache()
+	m.innerSized = false
+	m.refreshPending = false
+	m.flash = ""
+	initCmd := m.guardQuit(m.inner.Init())
+	model, sizeCmd := m.relayout()
+	return model, tea.Batch(initCmd, sizeCmd)
+}
+
+func (m Model) anyRunning() bool {
+	return slices.ContainsFunc(m.terms, needsConfirm)
+}
+
+// needsConfirm reports whether quitting would close t: any pane still open
+// asks first, so a stray ctrl+q never drops a shell or a chat.
+func needsConfirm(t Terminal) bool {
+	return !t.Exited()
 }
 
 func (m Model) indexOf(t Terminal) int {
@@ -206,9 +322,27 @@ func (m Model) handleTermUpdate(msg termUpdateMsg) (tea.Model, tea.Cmd) {
 	return m, waitForUpdate(msg.term)
 }
 
-// openTerminal adds a terminal column at the far right and focuses it.
+// openTerminal adds a shell column at the far right and focuses it.
 func (m Model) openTerminal() (tea.Model, tea.Cmd) {
-	if m.width == 0 {
+	return m.openPane(m.cfg.Start)
+}
+
+// openPending opens the panes requested before the window had a size.
+func (m Model) openPending() (tea.Model, tea.Cmd) {
+	pending := m.pending
+	m.pending = nil
+	cmds := make([]tea.Cmd, 0, len(pending))
+	for _, start := range pending {
+		model, cmd := m.openPane(start)
+		m = model.(Model)
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// openPane adds a pane column at the far right and focuses it.
+func (m Model) openPane(start func(width, height int) (Terminal, error)) (tea.Model, tea.Cmd) {
+	if m.width == 0 || start == nil {
 		return m, nil
 	}
 	oldTerms, oldWeights := m.terms, m.weights
@@ -225,18 +359,18 @@ func (m Model) openTerminal() (tea.Model, tea.Cmd) {
 		m.weights = append(m.weights, w*float64(n-1)/float64(n))
 	}
 	m.weights = append(m.weights, 1/float64(n))
-	m.terms = append(m.terms[:len(m.terms):len(m.terms)], nil) // reserve the slot so the layout sizes it
+	m.terms = append(slices.Clip(m.terms), nil) // reserve the slot so the layout sizes it
 	m.leftW = m.leftWidth()
 	rects := m.termRects()
 	for _, r := range rects {
 		if r.w < minTermWidth {
 			m = restore()
 			m.flash = "No room for another terminal (drag the divider left to make space)"
-			return m, nil
+			return m.relayout()
 		}
 	}
 	r := rects[len(rects)-1]
-	t, err := m.cfg.Start(r.w, r.h)
+	t, err := start(r.w, r.h)
 	if err != nil {
 		m = restore()
 		m.flash = "Terminal failed to start: " + err.Error()
@@ -254,7 +388,7 @@ func (m Model) closeTerminal(i int) (tea.Model, tea.Cmd) {
 	t := m.terms[i]
 	weights := m.normWeights() // before removing, while it matches m.terms
 	m.terms = append(m.terms[:i:i], m.terms[i+1:]...)
-	m.weights = append(weights[:i:i], weights[i+1:]...) // the others share its space proportionally
+	m.weights = slices.Delete(slices.Clone(weights), i, i+1) // the others share its space proportionally
 	m.weights = m.normWeights()
 	go t.Close() // may wait up to a second for stubborn processes
 	switch {
@@ -406,7 +540,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case QuitKey:
-		return m.Update(quitRequestMsg{})
+		return m.askQuit()
 	case PaletteKey:
 		m.palette = newPalette()
 		return m, nil
@@ -423,30 +557,18 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil // modal: swallow
 	}
 	if m.dragging {
-		switch msg.Action {
-		case tea.MouseActionMotion:
-			if m.dragSep == dragMain {
-				return m.dragTo(msg.X)
-			}
-			return m.dragSepTo(m.dragSep, msg.X)
-		case tea.MouseActionRelease:
-			m.dragging = false
-		}
-		return m, nil
+		return m.dragMouse(msg)
 	}
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
-	// the main divider is the wrapped model's right border plus the column after it
-	if press && len(m.terms) > 0 && (msg.X == m.leftW-1 || msg.X == m.leftW) {
-		m.dragging, m.dragSep = true, dragMain
-		return m, nil
-	}
 	rects := m.termRects()
-	if press && msg.X > m.leftW {
-		for k := 0; k+1 < len(rects); k++ {
-			if msg.X-m.leftW == rects[k].x+rects[k].w { // separator right of terminal k
-				m.dragging, m.dragSep = true, k
-				return m, nil
+	if press {
+		if sep, ok := m.dividerAt(msg.X, rects); ok {
+			m.dragging, m.dragSep = true, sep
+			m.dragOffset = 0
+			if sep == dragMain {
+				m.dragOffset = msg.X - (m.leftW - 1)
 			}
+			return m, nil
 		}
 	}
 	if msg.X < m.leftW {
@@ -468,6 +590,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil // separator columns do nothing
+}
+
+// dragMouse follows a held pointer and commits its release position, even
+// when a terminal coalesces the last motion event. Wheel events do not end it.
+func (m Model) dragMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionMotion && msg.Action != tea.MouseActionRelease {
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionRelease {
+		m.dragging = false
+	}
+	if m.dragSep == dragMain {
+		return m.dragTo(msg.X - m.dragOffset)
+	}
+	return m.dragSepTo(m.dragSep, msg.X)
+}
+
+// dividerAt tells which divider column x is on: dragMain for the wrapped
+// model's right border and the column after it, k for the separator right of
+// terminal k.
+func (m Model) dividerAt(x int, rects []rect) (int, bool) {
+	if len(m.terms) > 0 && (x == m.leftW-1 || x == m.leftW) {
+		return dragMain, true
+	}
+	for k := 0; x > m.leftW && k+1 < len(rects); k++ {
+		if x-m.leftW == rects[k].x+rects[k].w {
+			return k, true
+		}
+	}
+	return 0, false
 }
 
 // dragTo moves the divider so the wrapped model's right border sits at column x.
@@ -518,10 +670,7 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return m.inner.View()
 	}
-	view := fitBlock(m.inner.View(), m.leftW, m.height)
-	if len(m.terms) > 0 {
-		view = lipgloss.JoinHorizontal(lipgloss.Top, view, m.columnView())
-	}
+	view := m.columnView(m.leftBlock())
 	if m.palette.open {
 		view = overlayCenter(view, m.paletteView(), m.width, m.height)
 	}
@@ -534,11 +683,32 @@ func (m Model) View() string {
 	return view
 }
 
-// columnView renders the terminals side by side with a vertical line between
-// neighbors.
-func (m Model) columnView() string {
+// leftBlock is the wrapped model's view fitted to its column, one line per
+// row. It is cached until the wrapped model receives a message or the column
+// changes size, so a terminal echo does not re-render the diff.
+func (m Model) leftBlock() []string {
+	c := m.leftCache
+	if c == nil {
+		c = &leftCache{} // a Model built without New caches nothing
+	}
+	if !c.valid || c.w != m.leftW || c.h != m.height {
+		c.lines = strings.Split(fitBlock(m.inner.View(), m.leftW, m.height), "\n")
+		c.valid, c.w, c.h = true, m.leftW, m.height
+	}
+	return c.lines
+}
+
+// dropLeftCache forgets the fitted view once the wrapped model has changed.
+func (m Model) dropLeftCache() {
+	if m.leftCache != nil {
+		m.leftCache.valid = false
+	}
+}
+
+// columnView renders the wrapped model's lines and the terminals side by
+// side, with a vertical line between neighbors.
+func (m Model) columnView(left []string) string {
 	rects := m.termRects()
-	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("│")
 	blocks := make([][]string, len(rects))
 	for i, r := range rects {
 		showCursor := m.focus == i && !m.palette.open
@@ -547,15 +717,35 @@ func (m Model) columnView() string {
 	rows := make([]string, m.height)
 	for y := range rows {
 		var b strings.Builder
+		if len(rects) > 0 && y == m.height/2 && y < m.height-1 {
+			// The wrapped review owns its layout; decorate its existing right
+			// border's grip, preserving its scrollbar and status row.
+			b.WriteString(ansi.Cut(left[y], 0, max(0, m.leftW-1)))
+			b.WriteString(m.resizeGrip(y, dragMain))
+		} else {
+			b.WriteString(left[y])
+		}
 		for i := range blocks {
 			if i > 0 {
-				b.WriteString(sep)
+				b.WriteString(m.resizeGrip(y, i-1))
 			}
 			b.WriteString(blocks[i][y])
 		}
 		rows[y] = b.String()
 	}
 	return strings.Join(rows, "\n")
+}
+
+// resizeGrip marks each wrapper-owned divider and highlights a grabbed one.
+func (m Model) resizeGrip(y, divider int) string {
+	glyph, color := "│", "8"
+	if y == m.height/2 {
+		glyph = "↔"
+	}
+	if m.dragging && m.dragSep == divider {
+		color = "12"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(glyph)
 }
 
 func replaceLastLine(view, text string, width int) string {

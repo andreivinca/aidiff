@@ -9,6 +9,7 @@ package watch
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -47,7 +48,7 @@ type Watcher struct {
 func New(cfg Config) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fsnotify: %w", err)
 	}
 	w := &Watcher{
 		cfg:     cfg,
@@ -69,7 +70,7 @@ func New(cfg Config) (*Watcher, error) {
 		// the git dir itself (HEAD, index) and branch refs, not objects/ or logs/
 		if err := fsw.Add(cfg.GitDir); err != nil {
 			_ = fsw.Close()
-			return nil, err
+			return nil, fmt.Errorf("watch %s: %w", cfg.GitDir, err)
 		}
 		_ = w.addTree(filepath.Join(cfg.GitDir, "refs", "heads"))
 	}
@@ -105,7 +106,10 @@ func (w *Watcher) Close() error {
 	close(w.done)
 	err := w.fsw.Close()
 	<-w.exited
-	return err
+	if err != nil {
+		return fmt.Errorf("close watcher: %w", err)
+	}
+	return nil
 }
 
 func (w *Watcher) loop() {
@@ -172,7 +176,7 @@ func (w *Watcher) record(path string, meta bool) {
 
 // addTree watches dir and every directory below it that is not skipped.
 func (w *Watcher) addTree(dir string) error {
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == dir {
 				return err
@@ -186,10 +190,14 @@ func (w *Watcher) addTree(dir string) error {
 			return filepath.SkipDir
 		}
 		if addErr := w.fsw.Add(path); addErr != nil && path == dir {
-			return addErr
+			return fmt.Errorf("watch %s: %w", path, addErr)
 		}
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", dir, err)
+	}
+	return nil
 }
 
 // skipKnown skips .git directories and the trees git ignored at startup.

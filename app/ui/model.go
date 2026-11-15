@@ -345,6 +345,8 @@ type layoutState struct {
 	width      int            // terminal width
 	height     int            // terminal height
 	treeWidth  int            // current tree pane width in columns
+	treeShare  float64        // tree width as a share of the window once the user dragged the divider; 0 = use the configured ratio
+	treeDrag   bool           // the tree/diff divider is being dragged with the mouse
 	scrollX    int            // horizontal scroll offset for diff pane
 }
 
@@ -1392,7 +1394,7 @@ func (m *Model) toggleTreePane() {
 		m.layout.focus = paneDiff
 		m.layout.viewport.Width = m.layout.width - 2
 	} else {
-		m.layout.treeWidth = max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
+		m.layout.treeWidth = m.fitTreeWidth()
 		m.layout.viewport.Width = m.layout.width - m.layout.treeWidth - 4
 	}
 	m.layout.viewport.Height = m.paneHeight() - 1
@@ -1558,7 +1560,7 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	} else {
 		// adjust tree width based on ratio (N out of 10 units);
 		// applies to multi-file mode and single-file markdown with TOC
-		m.layout.treeWidth = max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
+		m.layout.treeWidth = m.fitTreeWidth()
 		diffWidth = m.layout.width - m.layout.treeWidth - 4 // borders
 	}
 	diffHeight := m.paneHeight() - 1 // pane height minus diff header
@@ -1630,4 +1632,38 @@ func resolveCommitLogSource(explicit commitLogSource, renderer Renderer) commitL
 		return cl
 	}
 	return nil
+}
+
+// minDiffWidth is the narrowest the diff content gets when the tree pane is dragged wider.
+const minDiffWidth = 20
+
+// fitTreeWidth is the tree pane's width for the current window: the share the
+// user last dragged it to, else the configured ratio (N of 10 units).
+func (m Model) fitTreeWidth() int {
+	if m.layout.treeShare > 0 {
+		return m.clampTreeWidth(int(float64(m.layout.width)*m.layout.treeShare + 0.5))
+	}
+	return max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
+}
+
+// clampTreeWidth keeps a tree width between minTreeWidth and what leaves the
+// diff its minimum, borders included.
+func (m Model) clampTreeWidth(w int) int {
+	return max(minTreeWidth, min(w, m.layout.width-4-minDiffWidth))
+}
+
+// dragTreeTo moves the tree/diff divider so the tree's right border sits at
+// column x, and remembers the share for later resizes.
+func (m Model) dragTreeTo(x int) Model {
+	if m.layout.width < minTreeWidth+4+minDiffWidth {
+		return m
+	}
+	w := m.clampTreeWidth(x - 1)
+	if w == m.layout.treeWidth {
+		return m
+	}
+	m.layout.treeWidth = w
+	m.layout.treeShare = float64(w) / float64(m.layout.width)
+	m.layout.viewport.Width = m.layout.width - w - 4
+	return m
 }

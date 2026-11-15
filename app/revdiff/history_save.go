@@ -12,6 +12,7 @@ type histReq struct {
 	gitRoot     string
 	workDir     string
 	files       []string
+	t3          bool // the reviewed tree lives on a T3 host
 }
 
 // saveHistory auto-saves review annotations and relevant diffs as a safety net.
@@ -31,6 +32,9 @@ func saveHistory(r histReq) {
 	}
 	if r.opts.Stdin {
 		histPath = "stdin"
+	}
+	if r.t3 {
+		histPath = "t3"
 	}
 	history.New(r.opts.HistoryDir).Save(history.Params{
 		Annotations:    r.annotations,

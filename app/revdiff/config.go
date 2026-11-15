@@ -46,6 +46,7 @@ type options struct {
 	VimMotion             bool     `long:"vim-motion" ini-name:"vim-motion" env:"REVDIFF_VIM_MOTION" description:"enable vim-style motion preset (counts, gg, G, zz/zt/zb, ZZ/ZQ)"`
 	NoWatch               bool     `long:"no-watch" ini-name:"no-watch" env:"REVDIFF_NO_WATCH" description:"do not refresh when files change"`
 	Terminal              bool     `long:"terminal" ini-name:"terminal" env:"REVDIFF_TERMINAL" description:"open a terminal pane on the right"`
+	NoChat                bool     `long:"no-chat" ini-name:"no-chat" env:"REVDIFF_NO_CHAT" description:"do not open the T3 Code chat pane with a thread"`
 	TerminalWidth         int      `long:"terminal-width" ini-name:"terminal-width" env:"REVDIFF_TERMINAL_WIDTH" default:"45" description:"terminal pane width in percent"`
 	TerminalCommand       string   `long:"terminal-command" ini-name:"terminal-command" env:"REVDIFF_TERMINAL_COMMAND" description:"command to run in the terminal pane (default: $SHELL)"`
 	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"catppuccin-macchiato" description:"chroma style for syntax highlighting"`
@@ -53,6 +54,12 @@ type options struct {
 	CompareOld            string   `long:"compare-old" no-ini:"true" description:"compare mode: old file path (use with --compare-new)"`
 	CompareNew            string   `long:"compare-new" no-ini:"true" description:"compare mode: new file path (use with --compare-old)"`
 	Stdin                 bool     `long:"stdin" no-ini:"true" description:"review stdin as a scratch buffer"`
+	T3                    string   `long:"t3" no-ini:"true" description:"review a T3 Code thread on a server: local, ssh://host or http(s)://host:port"`
+	T3Thread              string   `long:"t3-thread" no-ini:"true" description:"T3 thread id or id prefix (default: most recently updated thread)"`
+	T3Source              string   `long:"t3-source" ini-name:"t3-source" env:"REVDIFF_T3_SOURCE" choice:"branch" choice:"uncommitted" default:"branch" description:"T3 changes to review"`
+	T3Pair                string   `long:"t3-pair" no-ini:"true" description:"pair with a T3 server using the link or code from t3 pair"`
+	T3Token               string   `long:"t3-token" env:"REVDIFF_T3_TOKEN" no-ini:"true" description:"T3 bearer access token"`
+	T3Threads             bool     `long:"t3-threads" no-ini:"true" description:"list the T3 server's threads and exit"`
 	StdinName             string   `long:"stdin-name" no-ini:"true" description:"synthetic file name for stdin content"`
 	Annotations           string   `long:"annotations" no-ini:"true" description:"preload annotations from a markdown file written by -o (round-trip)"`
 	Description           string   `long:"description" no-ini:"true" description:"prose context shown in the info popup (markdown; use shell multiline quoting or --description-file for multiple lines)"`
@@ -181,6 +188,10 @@ func parseArgs(args []string) (options, error) {
 	opts.PostFlushCommand = strings.TrimSpace(opts.PostFlushCommand)
 
 	if err := validateStdinFlags(opts); err != nil {
+		return options{}, err
+	}
+
+	if err := validateT3Flags(opts); err != nil {
 		return options{}, err
 	}
 

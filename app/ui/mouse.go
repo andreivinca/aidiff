@@ -171,6 +171,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleOverlayMouse(msg)
 	}
 
+	if mm, ok := m.treeDividerMouse(msg); ok {
+		return mm, nil
+	}
+
 	// reload, output, compact-mode, editor and reviewed hints persist for exactly
 	// one render cycle; any mouse event that reaches this point dismisses them,
 	// mirroring handleKey.
@@ -538,4 +542,24 @@ func (m Model) clickDiff(y int) (tea.Model, tea.Cmd) {
 	m.syncViewportToCursor()
 	m.syncTOCActiveSection()
 	return m, nil
+}
+
+// treeDividerMouse handles the tree/diff divider: a press on the tree's right
+// border starts a drag, motion moves it, anything else ends it. ok reports
+// whether the event was the divider's.
+func (m Model) treeDividerMouse(msg tea.MouseMsg) (Model, bool) {
+	if m.layout.treeDrag {
+		if msg.Action == tea.MouseActionMotion {
+			return m.dragTreeTo(msg.X), true
+		}
+		m.layout.treeDrag = false
+		return m, true
+	}
+	onBorder := !m.treePaneHidden() && msg.X == m.layout.treeWidth+1 &&
+		msg.Y > 0 && msg.Y < m.layout.height-m.statusBarHeight()-1
+	if onBorder && msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		m.layout.treeDrag = true
+		return m, true
+	}
+	return m, false
 }

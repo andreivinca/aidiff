@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/ui"
@@ -18,6 +21,67 @@ type vcsSetup struct {
 	untrackedFn        func() ([]string, error)
 	untrackedRenamesFn func([]string) ([]diff.FileEntry, error) // git-only; pairs untracked renames with their origin
 	commitLogger       diff.CommitLogger                        // VCS-backed commit log source; nil when VCS lacks the capability
+}
+
+// sourceSetup is where the reviewed diff comes from: a local VCS, a compare
+// pair, stdin, or a T3 Code server. Fields beyond vcsSetup are set only by
+// the source that needs them.
+type sourceSetup struct {
+	vcsSetup
+	tty *os.File  // stdin mode: the terminal to read keys from
+	t3  *t3Review // T3 mode: the live server session
+}
+
+// setupSource picks the diff source for this run. T3 mode connects here,
+// before the alt screen opens, so SSH and auth failures print plainly.
+func setupSource(opts options) (sourceSetup, error) {
+	switch {
+	case opts.t3Mode():
+		t3, err := setupT3Review(opts)
+		if err != nil {
+			return sourceSetup{}, err
+		}
+		return sourceSetup{vcsSetup: vcsSetup{renderer: t3.renderer}, t3: t3}, nil
+	case opts.compareAbsOld != "":
+		return sourceSetup{vcsSetup: vcsSetup{
+			renderer: diff.NewCompareReader(opts.compareAbsOld, opts.compareAbsNew),
+			workDir:  filepath.Dir(opts.compareAbsNew),
+		}}, nil
+	case opts.Stdin:
+		r, tty, err := prepareStdinMode(opts, os.Stdin)
+		if err != nil {
+			return sourceSetup{}, err
+		}
+		return sourceSetup{vcsSetup: vcsSetup{renderer: r}, tty: tty}, nil
+	}
+	setup, err := setupVCSRenderer(opts)
+	if err != nil {
+		return sourceSetup{}, err
+	}
+	setup.untrackedFn = filterUntracked(setup.untrackedFn, opts.Include, opts.Exclude)
+	return sourceSetup{vcsSetup: setup}, nil
+}
+
+// watch starts live refresh for the source and returns its stop function:
+// file watching for git, run tracking for a T3 thread.
+func (s sourceSetup) watch(opts options, p *tea.Program) (stop func()) {
+	switch {
+	case opts.NoWatch:
+		return func() {}
+	case s.t3 != nil:
+		return s.t3.watch(p)
+	case s.vcsType == diff.VCSGit:
+		return watchRepo(s.workDir, p)
+	}
+	return func() {}
+}
+
+// close releases what the source holds open. A T3 session is not closed
+// here: the palette adopts it and closes whichever session is live at exit.
+func (s sourceSetup) close() {
+	if s.tty != nil {
+		_ = s.tty.Close()
+	}
 }
 
 // setupVCSRenderer detects the VCS and creates the appropriate renderer, blamer, and untracked function.

@@ -28,7 +28,7 @@ func newRepo(t *testing.T, isIgnored func(string) bool) *repo {
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
 	for _, d := range []string{"src/deep", "node_modules/pkg", ".git/refs/heads"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o750))
 	}
 	w, err := New(Config{
 		Root:      root,
@@ -43,7 +43,7 @@ func newRepo(t *testing.T, isIgnored func(string) bool) *repo {
 
 func (r *repo) write(t *testing.T, rel, content string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(r.root, rel), []byte(content), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.root, rel), []byte(content), 0o600))
 }
 
 // next waits for changes and collects everything until events stop for a
@@ -147,7 +147,7 @@ func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
 	r.assertQuiet(t, "ignored at startup")
 
 	// a directory created later is checked once with the VCS
-	require.NoError(t, os.Mkdir(filepath.Join(r.root, "dist"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(r.root, "dist"), 0o750))
 	r.assertQuiet(t, "the ignored dir's own creation is not a change")
 	r.write(t, "dist/bundle.js", "x")
 	r.assertQuiet(t, "files inside a newly created ignored dir")
@@ -158,7 +158,7 @@ func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
 
 func TestWatcher_WatchesNewDirectories(t *testing.T) {
 	r := newRepo(t, func(string) bool { return false })
-	require.NoError(t, os.Mkdir(filepath.Join(r.root, "newpkg"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(r.root, "newpkg"), 0o750))
 	paths, _ := r.next(t)
 	assert.Contains(t, paths, "newpkg")
 
@@ -170,28 +170,28 @@ func TestWatcher_WatchesNewDirectories(t *testing.T) {
 func TestWatcher_GitStateIsMeta(t *testing.T) {
 	r := newRepo(t, nil)
 
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index.lock"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index.lock"), []byte("x"), 0o600))
 	r.assertQuiet(t, "lock files are ignored")
 
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index"), []byte("x"), 0o600))
 	paths, meta := r.next(t)
 	assert.True(t, meta, "staging (index) is a git state change")
 	assert.Empty(t, paths, ".git paths are not reported as worktree files")
 
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "main"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "main"), []byte("x"), 0o600))
 	_, meta = r.next(t)
 	assert.True(t, meta, "a commit moves a branch ref")
 
-	require.NoError(t, os.Mkdir(filepath.Join(r.gitDir, "refs", "heads", "feature"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(r.gitDir, "refs", "heads", "feature"), 0o750))
 	_, _ = r.next(t)
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "feature", "x"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "feature", "x"), []byte("x"), 0o600))
 	_, meta = r.next(t)
 	assert.True(t, meta, "refs in new branch namespaces are watched too")
 
-	require.NoError(t, os.MkdirAll(filepath.Join(r.gitDir, "objects", "ab"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "cd"), []byte("x"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(r.gitDir, "objects", "ab"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "cd"), []byte("x"), 0o600))
 	_, _ = r.next(t) // creating objects/ at the top of .git is itself an event
-	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "ef"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "ef"), []byte("x"), 0o600))
 	r.assertQuiet(t, "object writes are not watched")
 }
 
@@ -199,7 +199,7 @@ func TestWatcher_IgnoresChmod(t *testing.T) {
 	r := newRepo(t, nil)
 	r.write(t, "src/a.txt", "x")
 	_, _ = r.next(t)
-	require.NoError(t, os.Chmod(filepath.Join(r.root, "src/a.txt"), 0o600))
+	require.NoError(t, os.Chmod(filepath.Join(r.root, "src", "a.txt"), 0o600))
 	r.assertQuiet(t, "permission-only change")
 }
 

@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.1.0
+	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
 	github.com/dlclark/regexp2/v2 v2.13.0
 	github.com/fsnotify/fsnotify v1.10.1

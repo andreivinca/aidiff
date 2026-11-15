@@ -31,8 +31,8 @@ func (g *Git) IgnoredDirs(root string) ([]string, error) {
 	}
 	var dirs []string
 	for entry := range strings.SplitSeq(out, "\x00") {
-		if strings.HasSuffix(entry, "/") {
-			dirs = append(dirs, filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(entry, "/"))))
+		if d, ok := strings.CutSuffix(entry, "/"); ok {
+			dirs = append(dirs, filepath.Join(root, filepath.FromSlash(d)))
 		}
 	}
 	return dirs, nil

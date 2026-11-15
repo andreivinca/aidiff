@@ -1831,3 +1831,36 @@ func TestToggleMouse_KeyThroughUpdate(t *testing.T) {
 		})
 	}
 }
+
+func TestModel_dragTreeDivider(t *testing.T) {
+	m := testModel([]string{"a.go", "b.go"}, nil)
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = mm.(Model)
+	require.False(t, m.treePaneHidden())
+	border := m.layout.treeWidth + 1
+	was := m.layout.treeWidth
+
+	mouse := func(x int, action tea.MouseAction) {
+		next, _ := m.Update(tea.MouseMsg(tea.MouseEvent{X: x, Y: 5, Button: tea.MouseButtonLeft, Action: action}))
+		m = next.(Model)
+	}
+	mouse(border, tea.MouseActionPress)
+	assert.True(t, m.layout.treeDrag, "a press on the tree's right border starts the drag")
+	mouse(border+10, tea.MouseActionMotion)
+	assert.Equal(t, was+10, m.layout.treeWidth, "motion moves the divider")
+	assert.Equal(t, 120-m.layout.treeWidth-4, m.layout.viewport.Width)
+	mouse(5, tea.MouseActionMotion)
+	assert.Equal(t, minTreeWidth, m.layout.treeWidth, "the tree keeps its minimum")
+	mouse(300, tea.MouseActionMotion)
+	assert.Equal(t, 120-4-minDiffWidth, m.layout.treeWidth, "the diff keeps its minimum")
+	mouse(300, tea.MouseActionRelease)
+	assert.False(t, m.layout.treeDrag)
+
+	mm, _ = m.Update(tea.WindowSizeMsg{Width: 240, Height: 40})
+	m = mm.(Model)
+	assert.InDelta(t, float64(120-4-minDiffWidth)/120, m.layout.treeShare, 0.5/120)
+	assert.Equal(t, int(float64(240)*m.layout.treeShare+0.5), m.layout.treeWidth, "a resize keeps the dragged share")
+
+	mouse(border, tea.MouseActionPress) // not on the border any more: an ordinary click
+	assert.False(t, m.layout.treeDrag)
+}

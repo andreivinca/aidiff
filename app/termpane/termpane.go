@@ -5,6 +5,7 @@ package termpane
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,9 @@ import (
 )
 
 // frameInterval caps how often the pane asks the UI to redraw while the
-// child is producing output. Bubble Tea renders at most 60fps anyway.
+// child is producing output. The first change after a quiet spell is
+// reported at once (a keystroke echo must not wait for a tick); only
+// follow-ups within the same frame are held back and coalesced.
 const frameInterval = 16 * time.Millisecond
 
 // scrollbackLines is how many lines that scrolled off the top are kept.
@@ -41,8 +44,16 @@ type Pane struct {
 	ptmx *os.File
 	cmd  *exec.Cmd
 
+	// screenGen counts screen changes (output, resize) and frame is the last
+	// Render result; both guarded by mu. Render reuses the frame while the
+	// screen is unchanged, so redraws caused by anything but this pane (a key
+	// press before its echo, the diff pane) skip the cell-by-cell rebuild.
+	screenGen uint64
+	frame     renderedFrame
+
 	dirty      atomic.Bool
 	exited     atomic.Bool
+	kick       chan struct{} // wakes notifyLoop after dirty is set
 	updates    chan struct{}
 	done       chan struct{}
 	readerDone chan struct{} // closed when readOutput stops writing to emu
@@ -62,7 +73,7 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 	}
 	width, height = max(width, 1), max(height, 1)
 
-	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // user-chosen command, run on purpose
+	cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // user-chosen command, run on purpose; it lives until Close
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 
@@ -78,6 +89,7 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 		emu:        emu,
 		ptmx:       ptmx,
 		cmd:        cmd,
+		kick:       make(chan struct{}, 1),
 		updates:    make(chan struct{}, 1),
 		done:       make(chan struct{}),
 		readerDone: make(chan struct{}),
@@ -88,7 +100,7 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 	go func() {
 		_ = cmd.Wait()
 		p.exited.Store(true)
-		p.dirty.Store(true)
+		p.markDirty()
 	}()
 	return p, nil
 }
@@ -102,12 +114,13 @@ func (p *Pane) readOutput() {
 		if n > 0 {
 			p.mu.Lock()
 			_, _ = p.emu.Write(buf[:n])
+			p.screenGen++
 			p.mu.Unlock()
-			p.dirty.Store(true)
+			p.markDirty()
 		}
 		if err != nil {
 			p.exited.Store(true)
-			p.dirty.Store(true)
+			p.markDirty()
 			return
 		}
 	}
@@ -118,26 +131,47 @@ func (p *Pane) readOutput() {
 func (p *Pane) forwardInput() {
 	_, err := io.Copy(p.ptmx, p.emu)
 	if err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
-		p.dirty.Store(true)
+		p.markDirty()
 	}
 }
 
-// notifyLoop turns bursts of output into at most one update per frame.
+// markDirty records a screen change and wakes notifyLoop.
+func (p *Pane) markDirty() {
+	p.dirty.Store(true)
+	select {
+	case p.kick <- struct{}{}:
+	default: // a wake-up is already pending
+	}
+}
+
+// notifyLoop turns bursts of output into at most one update per frame. It
+// sleeps until woken, so an idle pane costs nothing, and reports a change
+// immediately unless an update already went out less than a frame ago.
 func (p *Pane) notifyLoop() {
-	t := time.NewTicker(frameInterval)
-	defer t.Stop()
+	var last time.Time
 	for {
 		select {
 		case <-p.done:
 			return
-		case <-t.C:
-			if p.dirty.Swap(false) {
-				select {
-				case p.updates <- struct{}{}:
-				default: // an update is already queued
-				}
+		case <-p.kick:
+		}
+		if wait := frameInterval - time.Since(last); wait > 0 {
+			t := time.NewTimer(wait)
+			select {
+			case <-p.done:
+				t.Stop()
+				return
+			case <-t.C:
 			}
 		}
+		if !p.dirty.Swap(false) {
+			continue // already reported by a previous pass
+		}
+		select {
+		case p.updates <- struct{}{}:
+		default: // an update is already queued
+		}
+		last = time.Now()
 	}
 }
 
@@ -185,8 +219,17 @@ func (p *Pane) Resize(width, height int) {
 		return
 	}
 	p.emu.Resize(width, height)
+	p.screenGen++
 	_ = pty.Setsize(p.ptmx, &pty.Winsize{Rows: uint16(height), Cols: uint16(width)}) //nolint:gosec // small positive ints
-	p.dirty.Store(true)
+	p.markDirty()
+}
+
+// renderedFrame is a Render result and what it was built from.
+type renderedFrame struct {
+	valid      bool
+	gen        uint64
+	drawCursor bool
+	out        string
 }
 
 // Render returns exactly height lines of exactly width cells. When showCursor
@@ -194,11 +237,22 @@ func (p *Pane) Resize(width, height int) {
 func (p *Pane) Render(showCursor bool) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	drawCursor := showCursor && !p.emu.CursorHidden() && !p.Exited()
+	if f := p.frame; f.valid && f.gen == p.screenGen && f.drawCursor == drawCursor {
+		return f.out
+	}
+	out := p.renderLocked(drawCursor)
+	p.frame = renderedFrame{valid: true, gen: p.screenGen, drawCursor: drawCursor, out: out}
+	return out
+}
+
+// renderLocked builds the frame from the emulator cells; mu must be held.
+func (p *Pane) renderLocked(drawCursor bool) string {
 	w, h := p.emu.Width(), p.emu.Height()
 	cur := p.emu.CursorPosition()
-	drawCursor := showCursor && !p.emu.CursorHidden() && !p.Exited()
 
 	var b strings.Builder
+	b.Grow(h * (w + 16))
 	line := make(uv.Line, w)
 	for y := range h {
 		for x := range w {

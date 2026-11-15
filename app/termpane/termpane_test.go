@@ -105,9 +105,9 @@ func TestPane_CloseLeavesNoProcessBehind(t *testing.T) {
 
 	screen := waitFor(t, p, "PID=")
 	var pid int
-	for _, f := range strings.Fields(screen) {
-		if strings.HasPrefix(f, "PID=") {
-			pid, err = strconv.Atoi(strings.TrimPrefix(f, "PID="))
+	for f := range strings.FieldsSeq(screen) {
+		if v, ok := strings.CutPrefix(f, "PID="); ok {
+			pid, err = strconv.Atoi(v)
 			require.NoError(t, err)
 		}
 	}
@@ -134,4 +134,72 @@ func alive(pid int) bool {
 	end := bytes.LastIndexByte(stat, ')')
 	fields := strings.Fields(string(stat[end+1:]))
 	return len(fields) > 0 && fields[0] != "Z"
+}
+
+// notifyOnly builds a Pane with just the notification plumbing running.
+func notifyOnly(t *testing.T) *Pane {
+	t.Helper()
+	p := &Pane{kick: make(chan struct{}, 1), updates: make(chan struct{}, 1), done: make(chan struct{})}
+	go p.notifyLoop()
+	t.Cleanup(func() { close(p.done) })
+	return p
+}
+
+func TestPane_NotifyReportsFirstChangeAtOnce(t *testing.T) {
+	p := notifyOnly(t)
+
+	select {
+	case <-p.Updates():
+		t.Fatal("an unchanged pane must not ask for a redraw")
+	case <-time.After(3 * frameInterval):
+	}
+
+	// after a quiet spell a change (a keystroke echo) must not wait for a tick
+	start := time.Now()
+	p.markDirty()
+	select {
+	case <-p.Updates():
+	case <-time.After(time.Second):
+		t.Fatal("no update after a change")
+	}
+	assert.Less(t, time.Since(start), frameInterval, "the first change after idle is reported without waiting a frame")
+}
+
+func TestPane_NotifyCoalescesBursts(t *testing.T) {
+	p := notifyOnly(t)
+
+	p.markDirty()
+	<-p.Updates()
+	first := time.Now()
+
+	// a burst right after an update is held to the next frame and merged
+	for range 5 {
+		p.markDirty()
+	}
+	select {
+	case <-p.Updates():
+	case <-time.After(time.Second):
+		t.Fatal("burst never reported")
+	}
+	assert.GreaterOrEqual(t, time.Since(first), frameInterval, "updates are at most one per frame")
+
+	select {
+	case <-p.Updates():
+		t.Fatal("a burst must collapse into one update")
+	case <-time.After(3 * frameInterval):
+	}
+}
+
+func TestPane_RenderReusesUnchangedFrame(t *testing.T) {
+	p, err := Start([]string{"sh", "-c", `printf 'one'; read x; printf ' two'; sleep 5`}, t.TempDir(), 20, 3)
+	require.NoError(t, err)
+	defer p.Close()
+
+	waitFor(t, p, "one")
+	a, b := p.Render(true), p.Render(true)
+	assert.Equal(t, a, b)
+	assert.NotEqual(t, a, p.Render(false), "cursor visibility is part of the cached frame")
+
+	p.SendText("\r")
+	waitFor(t, p, "two") // output invalidates the cached frame
 }

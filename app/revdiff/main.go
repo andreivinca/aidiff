@@ -18,17 +18,11 @@ import (
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/fsutil"
-	"github.com/umputun/revdiff/app/handoff"
-	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/termpane"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
-	"github.com/umputun/revdiff/app/ui/overlay"
-	"github.com/umputun/revdiff/app/ui/sidepane"
-	"github.com/umputun/revdiff/app/ui/style"
-	"github.com/umputun/revdiff/app/ui/worddiff"
 )
 
 var revision = "unknown"
@@ -90,6 +84,14 @@ func main() {
 		os.Exit(0)
 	}
 
+	if opts.T3Threads {
+		if err := listT3Threads(opts, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	code, err := run(opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -123,22 +125,12 @@ func run(opts options) (int, error) {
 	}
 
 	store := annotation.NewStore()
-	hl := highlight.New(opts.ChromaStyle, !opts.NoColors)
-	km := keymap.LoadOrDefault(resolveKeysPath(opts))
+	deps := newReviewDeps(opts)
 
-	var (
-		renderer           ui.Renderer
-		workDir            string
-		gitRoot            string
-		blamer             ui.Blamer
-		untrackedFn        func() ([]string, error)
-		untrackedRenamesFn func([]string) ([]diff.FileEntry, error)
-		commitLogger       diff.CommitLogger
-		vcsType            diff.VCSType
-		err                error
-	)
-
-	programOptions := []tea.ProgramOption{tea.WithAltScreen(), tea.WithoutSignalHandler()}
+	// 120fps (Bubble Tea's cap) halves the wait between a frame being ready and
+	// it reaching the screen: up to 8ms instead of 16ms per terminal-pane echo.
+	// Idle ticks are free (the renderer skips an unchanged frame).
+	programOptions := []tea.ProgramOption{tea.WithAltScreen(), tea.WithoutSignalHandler(), tea.WithFPS(120)}
 	tuiOut, err := (tuiOutput{
 		stdout:     os.Stdout,
 		isTerminal: term.IsTerminal,
@@ -163,135 +155,35 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 
-	switch {
-	case opts.compareAbsOld != "":
-		renderer = diff.NewCompareReader(opts.compareAbsOld, opts.compareAbsNew)
-		workDir = filepath.Dir(opts.compareAbsNew)
-	case opts.Stdin:
-		var tty *os.File
-		renderer, tty, err = prepareStdinMode(opts, os.Stdin)
-		if err != nil {
-			return 0, err
-		}
-		defer tty.Close()
-		programOptions = append(programOptions, tea.WithInput(tty))
-	default:
-		var setup vcsSetup
-		setup, err = setupVCSRenderer(opts)
-		if err != nil {
-			return 0, err
-		}
-		renderer = setup.renderer
-		gitRoot = setup.gitRoot
-		workDir = setup.workDir
-		blamer = setup.blamer
-		untrackedFn = filterUntracked(setup.untrackedFn, opts.Include, opts.Exclude)
-		untrackedRenamesFn = setup.untrackedRenamesFn
-		commitLogger = setup.commitLogger
-		vcsType = setup.vcsType
+	src, err := setupSource(opts)
+	if err != nil {
+		return 0, err
+	}
+	defer src.close()
+	if src.tty != nil {
+		programOptions = append(programOptions, tea.WithInput(src.tty))
+	}
+	reviewDescription := description
+	if src.t3 != nil {
+		reviewDescription = src.t3.description(description)
 	}
 
 	if opts.Annotations != "" {
-		if perr := preloadAnnotations(opts.Annotations, store, renderer, opts.ref(), opts.Staged, untrackedFn, untrackedRenamesFn, workDir, os.Stderr); perr != nil {
+		if perr := preloadAnnotations(opts.Annotations, store, src.renderer, opts.ref(), opts.Staged,
+			src.untrackedFn, src.untrackedRenamesFn, src.workDir, os.Stderr); perr != nil {
 			return 0, perr
 		}
 	}
 	preloaded := store.Count() > 0
 
-	// construct the three style types per D15: Resolver first, Renderer from Resolver, SGR is zero-value
-	styleColors := optsToStyleColors(opts)
-	var res style.Resolver
-	if opts.NoColors {
-		res = style.PlainResolver()
-	} else {
-		res = style.NewResolver(styleColors)
-	}
-
-	themesDir := defaultThemesDir()
-	configPath := resolveFlagPath(os.Args[1:], "config", "REVDIFF_CONFIG", defaultConfigPath)
-	themes := &themeCatalog{
-		catalog:    theme.NewCatalog(themesDir),
-		configPath: configPath,
-	}
-
-	// Configure the optional post-flush handoff separately from theme settings.
-	var postFlushHook ui.PostFlushHook
-	if hook := handoff.New(opts.PostFlushCommand); hook != nil {
-		postFlushHook = hook
-	}
-
-	model, err := ui.NewModel(ui.ModelConfig{
-		Renderer:             renderer,
-		Store:                store,
-		Highlighter:          hl,
-		StyleResolver:        res,
-		StyleRenderer:        style.NewRenderer(res),
-		SGR:                  style.SGR{},
-		WordDiffer:           worddiff.New(),
-		Overlay:              overlay.NewManager(),
-		Themes:               themes,
-		Blamer:               blamer,
-		LoadUntracked:        untrackedFn,
-		LoadUntrackedRenames: untrackedRenamesFn,
-		Keymap:               km,
-		PostFlushHook:        postFlushHook,
-		CommitLog:            commitLogger,
-		CommitsApplicable:    commitsApplicable(opts, commitLogger),
-		ReloadApplicable:     reloadApplicable(opts),
-		CompactApplicable:    compactApplicable(opts, renderer),
-		NoColors:             opts.NoColors,
-		MouseTracking:        !opts.NoMouse,
-		NoStatusBar:          opts.NoStatusBar,
-		NoConfirmDiscard:     opts.NoConfirmDiscard,
-		NoConfirmReload:      opts.NoConfirmReload,
-		NoTree:               opts.NoTree,
-		Wrap:                 opts.Wrap,
-		WrapIndent:           opts.WrapIndent,
-		PageOverlap:          opts.PageOverlap,
-		Collapsed:            opts.Collapsed,
-		Compact:              opts.Compact,
-		CompactContext:       opts.CompactContext,
-		CrossFileHunks:       opts.CrossFileHunks,
-		CrossFileMotion:      opts.CrossFileMotion,
-		StopAtAnnotations:    opts.StopAtAnnotations,
-		StartAtChange:        opts.StartAtChange,
-		LineNumbers:          opts.LineNumbers,
-		ShowBlame:            opts.Blame,
-		ShowUntracked:        opts.startupUntracked(),
-		WordDiff:             opts.WordDiff,
-		FilterUnreviewed:     opts.FilterUnreviewed,
-		VimMotion:            opts.VimMotion,
-		ReviewInfo: reviewInfoFromOptions(opts, reviewInfoInputs{
-			workDir:     workDir,
-			vcsType:     vcsType,
-			description: description,
-		}),
-		TabWidth:         opts.TabWidth,
-		Ref:              opts.ref(),
-		Staged:           opts.Staged,
-		TreeWidthRatio:   opts.TreeWidth,
-		Only:             opts.Only,
-		WorkDir:          workDir,
-		SourceEditor:     sourceEditorPolicy(opts, workDir),
-		ActiveThemeName:  themes.catalog.ActiveName(opts.Theme),
-		AnnotationMarker: opts.AnnotationMarker,
-		OutputPath:       opts.Output,
-		NewFileTree: func(entries []diff.FileEntry) ui.FileTreeComponent {
-			return sidepane.NewFileTree(entries)
-		},
-		ParseTOC: func(lines []diff.DiffLine, filename string) ui.TOCComponent {
-			toc := sidepane.ParseTOC(lines, filename)
-			if toc == nil {
-				return nil // collapse typed-nil *TOC into truly nil interface
-			}
-			return toc
-		},
-	})
+	model, err := deps.newModel(src.vcsSetup, store, reviewDescription)
 	if err != nil {
-		return 0, fmt.Errorf("create model: %w", err)
+		return 0, err
 	}
 
-	// always wrapped: ctrl+p can open terminals even when none start open
+	// always wrapped: ctrl+p can open terminals even when none start open,
+	// and the T3 Code commands live there too
+	t3p := newT3Palette(opts, deps, description, src)
 	root := splitview.New(model, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
 		OpenOnStart:  opts.Terminal,
@@ -299,12 +191,14 @@ func run(opts options) (int, error) {
 			return termpane.Start(strings.Fields(opts.TerminalCommand), "", width, height)
 		},
 		RefreshMsg: ui.RefreshMsg{},
+		Commands:   t3p.commands,
 	})
 
 	p := tea.NewProgram(root, programOptions...)
-	if !opts.NoWatch && vcsType == diff.VCSGit {
-		stopWatch := watchRepo(workDir, p)
-		defer stopWatch()
+	t3p.start(p, src.watch(opts, p))
+	defer t3p.close()
+	if !opts.NoChat && src.t3 != nil && src.t3.target.Thread != nil {
+		go p.Send(t3p.openChatMsg()) // the split holds the request until the window has a size
 	}
 	guard := &shutdownGuard{}
 	stop := guard.watch(p)
@@ -329,6 +223,7 @@ func run(opts options) (int, error) {
 	// EIO that races the guard's QuitMsg — so the history safety net must run
 	// whenever the model is available and the exit was graceful or signaled.
 	if m, ok := finalModel.(ui.Model); ok && (runErr == nil || signaled) {
+		hist := t3p.history() // the review on screen may not be the one the run opened
 		return finalize(finalizeReq{
 			opts:        opts,
 			annotations: m.Store().FormatOutput(),
@@ -336,8 +231,9 @@ func run(opts options) (int, error) {
 			discarded:   m.Discarded(),
 			preloaded:   preloaded,
 			flushed:     m.OutputFlushed(),
-			gitRoot:     gitRoot,
-			workDir:     workDir,
+			gitRoot:     hist.gitRoot,
+			workDir:     hist.workDir,
+			t3:          hist.t3,
 			signaled:    signaled,
 			loadErr:     m.LoadError(),
 			stdout:      os.Stdout,
@@ -377,6 +273,7 @@ type finalizeReq struct {
 	flushed     bool
 	gitRoot     string
 	workDir     string
+	t3          bool // the reviewed tree lives on a T3 host
 	signaled    bool
 	loadErr     error
 	stdout      io.Writer
@@ -411,7 +308,7 @@ func finalize(r finalizeReq) (int, error) {
 		}
 		return writeAnnotationOutput(annotationOutputReq{opts: r.opts, output: "", stdout: r.stdout})
 	}
-	saveHistory(histReq{opts: r.opts, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files})
+	saveHistory(histReq{opts: r.opts, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files, t3: r.t3})
 	if r.signaled {
 		return 0, nil
 	}
