@@ -1,6 +1,9 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/umputun/revdiff/app/keymap"
+)
 
 // toggleSelectedDirectory schedules a shallow folder reload, retaining the tree cursor.
 func (m Model) toggleSelectedDirectory(expanded ...bool) (tea.Model, tea.Cmd) {
@@ -29,4 +32,20 @@ func (m Model) selectedDirectory() string {
 		return tree.SelectedDirectory()
 	}
 	return ""
+}
+
+// handleDirectoryAction opens or closes the selected folder.
+func (m Model) handleDirectoryAction(action keymap.Action) (tea.Model, tea.Cmd) {
+	switch action {
+	case keymap.ActionScrollRight:
+		return m.toggleSelectedDirectory(true)
+	case keymap.ActionScrollLeft:
+		return m.toggleSelectedDirectory(false)
+	default:
+		return m.toggleSelectedDirectory()
+	}
+}
+
+func (m Model) isDirectoryAction(action keymap.Action) bool {
+	return action == keymap.ActionConfirm || action == keymap.ActionScrollRight || action == keymap.ActionScrollLeft
 }

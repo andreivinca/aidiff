@@ -235,7 +235,7 @@ func SubscribeThread(ctx context.Context, c *Conn, threadID string, h ThreadEven
 
 // dispatch decodes one domain event for the handler that wants it.
 func (h ThreadEvents) dispatch(typ string, payload json.RawMessage) {
-	if h.dispatchActivity(typ, payload) {
+	if h.dispatchActivity(typ, payload) || h.dispatchRuntime(typ, payload) {
 		return
 	}
 	switch {
@@ -248,16 +248,6 @@ func (h ThreadEvents) dispatch(typ string, payload json.RawMessage) {
 		var t TurnItem
 		if json.Unmarshal(payload, &t) == nil && t.ID != "" {
 			h.TurnItem(t)
-		}
-	case (typ == "run.created" || typ == "run.updated") && h.Run != nil:
-		var r Run
-		if json.Unmarshal(payload, &r) == nil && r.ID != "" {
-			h.Run(r)
-		}
-	case typ == "runtime-request.updated" && h.Request != nil:
-		var r RuntimeRequest
-		if json.Unmarshal(payload, &r) == nil && r.ID != "" {
-			h.Request(r)
 		}
 	case strings.HasPrefix(typ, "thread.") && h.Thread != nil:
 		var t Thread
@@ -325,4 +315,23 @@ func ModelSelectionCommand(threadID string, m ModelSelection) Command {
 // auto-accept-edits, auto or full-access.
 func RuntimeModeCommand(threadID, mode string) Command {
 	return Command{"type": "thread.runtime-mode.set", "threadId": threadID, "runtimeMode": mode}
+}
+
+// dispatchRuntime routes run and approval updates.
+func (h ThreadEvents) dispatchRuntime(typ string, payload json.RawMessage) bool {
+	switch {
+	case (typ == "run.created" || typ == "run.updated") && h.Run != nil:
+		var r Run
+		if json.Unmarshal(payload, &r) == nil && r.ID != "" {
+			h.Run(r)
+		}
+	case typ == "runtime-request.updated" && h.Request != nil:
+		var r RuntimeRequest
+		if json.Unmarshal(payload, &r) == nil && r.ID != "" {
+			h.Request(r)
+		}
+	default:
+		return false
+	}
+	return true
 }

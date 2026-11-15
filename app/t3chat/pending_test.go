@@ -29,7 +29,7 @@ func TestPanePendingSendVisibleBeforeAcknowledgement(t *testing.T) {
 	assert.Contains(t, view(p), "Sending…")
 	assert.Contains(t, view(p), "also check the tests")
 	// Assistant updates and scrollback must not push the user's pending card away.
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		f.live().TurnItem(t3client.TurnItem{ID: fmt.Sprint("reply-", i), Type: "assistant_message", Text: "Still working"})
 	}
 	p.mu.Lock()
@@ -66,7 +66,7 @@ func TestPaneQueuedMessagesSurviveSnapshotAndStart(t *testing.T) {
 
 func TestPanePendingFailureAndIdenticalMessages(t *testing.T) {
 	p, f := newTestPane(t, 80, 25, fixture())
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		p.SendText("same message\r")
 		nextCommand(t, f)
 		waitUpdate(t, p)
@@ -126,14 +126,14 @@ func TestPaneCancelledQueueClearsPendingCard(t *testing.T) {
 	snap.Runs = append(snap.Runs, t3client.Run{ID: "qr", Ordinal: 3, Status: "queued", UserMessageID: "q"})
 	p, f := newTestPane(t, 80, 20, snap)
 	assert.Contains(t, view(p), "queued request")
-	f.live().Run(t3client.Run{ID: "qr", Ordinal: 3, Status: "cancelled", UserMessageID: "q"})
+	f.live().Run(t3client.Run{ID: "qr", Ordinal: 3, Status: "cancelled", UserMessageID: "q"}) //nolint:misspell // exercise the server status spelling
 	assert.NotContains(t, view(p), "queued request")
 }
 
 func TestPaneSameTextAcknowledgesOnlyMatchingMessage(t *testing.T) {
 	p, f := newTestPane(t, 80, 25, fixture())
-	var cmds []t3client.Command
-	for i := 0; i < 2; i++ {
+	cmds := make([]t3client.Command, 0, 2)
+	for range 2 {
 		p.SendText("identical\r")
 		cmds = append(cmds, nextCommand(t, f))
 		waitUpdate(t, p)

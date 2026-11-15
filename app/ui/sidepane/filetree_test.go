@@ -1037,8 +1037,8 @@ func TestNewFileTree_Nil(t *testing.T) {
 }
 
 func TestLazyFolderStartsAboveFilesAndPreservesSelection(t *testing.T) {
-	var entries []diff.FileEntry
-	for i := 0; i < 40; i++ {
+	entries := make([]diff.FileEntry, 0, 41)
+	for i := range 40 {
 		entries = append(entries, diff.FileEntry{Path: fmt.Sprintf("folder-%02d", i), IsDir: true})
 	}
 	entries = append(entries, diff.FileEntry{Path: "readme.txt"})

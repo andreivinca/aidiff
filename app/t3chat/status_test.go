@@ -24,7 +24,7 @@ func TestPaneStatusWaitingAndNoExtraRequests(t *testing.T) {
 	p, f := newTestPane(t, 100, 20, activityFixture())
 	f.live().Request(t3client.RuntimeRequest{ID: "approval", Status: "pending"})
 	assert.Contains(t, view(p), "Waiting for you · 1 subagent · 2 processes")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		p.SendText("x")
 		view(p)
 	}

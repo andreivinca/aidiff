@@ -15,8 +15,8 @@ import (
 
 func TestLazyFolderEnterAndCollapse(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(root, "src"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "src/only.go"), []byte("hello"), 0600))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "src"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "src", "only.go"), []byte("hello"), 0o600))
 	reader := diff.NewFolderReader(root, nil, nil)
 	m := testModel(nil, nil)
 	m.diffRenderer = reader
@@ -49,8 +49,8 @@ func TestLazyFolderEnterAndCollapse(t *testing.T) {
 
 func TestLazyFolderCollapseKeepsReviewedMarks(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(root, "src"), 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "src/file"), []byte("hello"), 0600))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "src"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "src", "file"), []byte("hello"), 0o600))
 	reader := diff.NewFolderReader(root, nil, nil)
 	reader.SetDirectory("src", true)
 	entries, err := reader.ChangedFiles("", false)

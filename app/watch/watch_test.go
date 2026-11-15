@@ -214,7 +214,7 @@ func TestWatcher_CloseStops(t *testing.T) {
 func TestShallowWatchFollowsOpenedDirectories(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
-	require.NoError(t, os.MkdirAll(filepath.Join(src, "deep"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "deep"), 0o700))
 	w, err := New(Config{Root: root, Shallow: true})
 	require.NoError(t, err)
 	defer w.Close()

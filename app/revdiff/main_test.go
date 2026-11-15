@@ -687,10 +687,11 @@ func holdMainTestFIFOWriter(path string) (*os.File, error) {
 // reach the app without termenv's upstream five-second wait.
 func TestStartupSilentTerminal(t *testing.T) {
 	if os.Getenv("AIDIFF_SILENT_TERMINAL_HELPER") == "1" {
-		fmt.Fprintln(os.Stdout, "silent-terminal-ready")
+		_, err := fmt.Fprintln(os.Stdout, "silent-terminal-ready")
+		require.NoError(t, err)
 		return
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestStartupSilentTerminal$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStartupSilentTerminal$") //nolint:gosec // rerun this test binary with a fixed test selector
 	cmd.Env = mergeEnv(map[string]string{"AIDIFF_SILENT_TERMINAL_HELPER": "1", "TERM": "xterm-256color", "TMUX": "", "TERM_PROGRAM": "", "COLORFGBG": ""})
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 30, Cols: 100})
 	require.NoError(t, err)
