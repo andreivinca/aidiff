@@ -717,9 +717,9 @@ func (m Model) columnView(left []string) string {
 	rows := make([]string, m.height)
 	for y := range rows {
 		var b strings.Builder
-		if len(rects) > 0 && y == m.height/2 && y < m.height-1 {
-			// The wrapped review owns its layout; decorate its existing right
-			// border's grip, preserving its scrollbar and status row.
+		if len(rects) > 0 && y < m.height-1 {
+			// Draw our own separator in the review's right margin; its
+			// content no longer has a border. Preserve the status row.
 			b.WriteString(ansi.Cut(left[y], 0, max(0, m.leftW-1)))
 			b.WriteString(m.resizeGrip(y, dragMain))
 		} else {

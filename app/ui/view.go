@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/keymap"
@@ -60,7 +61,7 @@ func (m Model) View() string {
 			Width(diffPaneW).
 			Height(ph).
 			Render(diffContent)
-		mainView = m.applyScrollbar(diffPane)
+		mainView = diffPane
 
 	case m.file.singleFile && m.file.mdTOC != nil:
 		// single-file markdown with TOC: two-pane layout with TOC in left pane
@@ -79,7 +80,7 @@ func (m Model) View() string {
 		return mainView
 	}
 
-	status := m.resolver.Style(style.StyleKeyStatusBar).Width(m.layout.width).Render(m.statusBarText())
+	status := m.resolver.Style(style.StyleKeyStatusBar).Width(m.layout.width).Render(m.statusBarWithMachine())
 	return lipgloss.JoinVertical(lipgloss.Left, mainView, status)
 }
 
@@ -105,14 +106,27 @@ func (m Model) renderTwoPaneLayout(leftContent, diffContent string, leftScroll s
 		Height(ph).
 		Render(leftContent)
 	leftPane = m.applyNavigationScrollbar(leftPane, leftScroll)
+	leftPane = withDividerHandle(leftPane)
 
 	diffPane := diffStyle.
 		Width(diffPaneW).
 		Height(ph).
 		Render(diffContent)
-	diffPane = m.applyScrollbar(diffPane)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, diffPane)
+}
+
+// withDividerHandle marks the draggable separator without changing its width.
+func withDividerHandle(rendered string) string {
+	rows := strings.Split(rendered, "\n")
+	middle := len(rows) / 2
+	row := rows[middle]
+	// The separator may contain either the track or the scrollbar thumb.
+	idx := max(strings.LastIndex(row, "│"), strings.LastIndex(row, "┃"))
+	if idx >= 0 {
+		rows[middle] = row[:idx] + "↔" + row[idx+len("│"):]
+	}
+	return strings.Join(rows, "\n")
 }
 
 // truncateHeaderTitle returns the diff pane header text shortened to fit
@@ -134,6 +148,28 @@ func (m Model) truncateHeaderTitle(title string, paneW int) string {
 	}
 	// paneW >= 2: " " + truncateLeftToWidth(clean, paneW-1) fits in paneW
 	return " " + style.TruncateLeftToWidth(clean, paneW-1)
+}
+
+// statusBarWithMachine reserves space for the hostname before rendering status
+// details, including temporary hints and search input.
+func (m Model) statusBarWithMachine() string {
+	identity := m.machineName
+	if m.t3Mode {
+		if identity != "" {
+			identity += m.renderer.StatusBarSeparator()
+		}
+		identity += "T3"
+	}
+	if identity == "" {
+		return m.statusBarText()
+	}
+	available := max(m.layout.width-2, 0)
+	prefix := identity + m.renderer.StatusBarSeparator()
+	if lipgloss.Width(prefix) >= available {
+		return ansi.Truncate(identity, available, "…")
+	}
+	m.layout.width -= lipgloss.Width(prefix)
+	return prefix + ansi.Truncate(m.statusBarText(), available-lipgloss.Width(prefix), "…")
 }
 
 // transientHint returns the first non-empty transient status-bar hint. hints

@@ -9,6 +9,7 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -61,7 +62,9 @@ func newReviewDeps(opts options) reviewDeps {
 func (d reviewDeps) newModel(src vcsSetup, store *annotation.Store, description string) (ui.Model, error) {
 	opts := d.opts
 	opts.AllFiles = opts.AllFiles || src.allFiles
+	_, t3Mode := src.renderer.(*t3client.Renderer)
 	model, err := ui.NewModel(ui.ModelConfig{
+		T3Mode:               t3Mode,
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,

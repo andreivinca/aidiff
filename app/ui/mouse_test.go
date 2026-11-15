@@ -408,87 +408,27 @@ func TestModel_HandleMouse_ShiftWheelHalfPage(t *testing.T) {
 	assert.Equal(t, 10, model.nav.diffCursor, "cursor must pin to top of visible range after half-page scroll")
 }
 
-func TestModel_HandleMouse_WheelInTreeMovesTreeCursor(t *testing.T) {
-	// covers the contract introduced for the tree wheel: one entry per notch,
-	// direction follows wheel sign, magnitude ignored (so shift+wheel still
-	// moves only one entry), and boundaries clamp. exact-match assertions
-	// — not NotEqual — so a regression to multi-step (the old PageDown(3)
-	// behavior) would fail this test.
-	files := make([]string, 30)
-	diffs := make(map[string][]diff.DiffLine, 30)
+func TestModel_HandleMouse_WheelInTreeScrollsWithoutSelecting(t *testing.T) {
+	files := make([]string, 60)
 	for i := range files {
-		p := string(rune('a'+(i/10))) + string(rune('a'+(i%10))) + ".go"
-		files[i] = p
-		diffs[p] = []diff.DiffLine{{NewNum: 1, Content: p, ChangeType: diff.ChangeContext}}
+		files[i] = fmt.Sprintf("%02d.go", i)
 	}
-
-	t.Run("plain wheel-down advances exactly one entry", func(t *testing.T) {
-		m := mouseTestModel(t, files, diffs)
-		m.layout.focus = paneDiff // wheel routing is by hit zone, not focus
-		require.Equal(t, "aa.go", m.tree.SelectedFile())
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
-		model := result.(Model)
-		assert.Equal(t, "ab.go", model.tree.SelectedFile(), "single wheel-down notch must advance tree cursor by exactly one entry")
-	})
-
-	t.Run("plain wheel-up retreats exactly one entry", func(t *testing.T) {
-		m := mouseTestModel(t, files, diffs)
-		m.tree.SelectByPath("ac.go") // cursor at entry 2
-		require.Equal(t, "ac.go", m.tree.SelectedFile())
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelUp, 5, 3, false))
-		model := result.(Model)
-		assert.Equal(t, "ab.go", model.tree.SelectedFile(), "single wheel-up notch must retreat tree cursor by exactly one entry")
-	})
-
-	t.Run("shift+wheel in tree still single-step", func(t *testing.T) {
-		// shift+wheel in tree must NOT do half-page — the magnitude returned by
-		// wheelStepFor is discarded in the hitTree branch, so shift has no
-		// effect on the tree step size.
-		m := mouseTestModel(t, files, diffs)
-		require.Equal(t, "aa.go", m.tree.SelectedFile())
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, true))
-		model := result.(Model)
-		assert.Equal(t, "ab.go", model.tree.SelectedFile(), "shift+wheel in tree must still move exactly one entry")
-	})
-
-	t.Run("wheel-up at top is no-op", func(t *testing.T) {
-		m := mouseTestModel(t, files, diffs)
-		require.Equal(t, "aa.go", m.tree.SelectedFile())
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelUp, 5, 3, false))
-		model := result.(Model)
-		assert.Equal(t, "aa.go", model.tree.SelectedFile(), "wheel-up at first entry must clamp, not wrap")
-	})
-
-	t.Run("wheel-down at bottom is no-op", func(t *testing.T) {
-		m := mouseTestModel(t, files, diffs)
-		m.tree.SelectByPath(files[len(files)-1])
-		require.Equal(t, files[len(files)-1], m.tree.SelectedFile())
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
-		model := result.(Model)
-		assert.Equal(t, files[len(files)-1], model.tree.SelectedFile(), "wheel-down at last entry must clamp, not wrap")
-	})
-
-	t.Run("tree wheel does not touch diff wheelState", func(t *testing.T) {
-		// negative invariant: the hitTree branch is independent of the
-		// diff-pane debounce state. a regression that accidentally bumped
-		// wheel.gen or set wheel.renderPending in the tree path would
-		// silently extend a later diff-pane debounce.
-		m := mouseTestModel(t, files, diffs)
-		require.Equal(t, 0, m.wheel.gen)
-		require.False(t, m.wheel.renderPending)
-		require.False(t, m.wheel.tickInFlight)
-
-		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
-		model := result.(Model)
-		assert.Equal(t, 0, model.wheel.gen, "tree wheel must not bump diff wheel gen")
-		assert.False(t, model.wheel.renderPending, "tree wheel must not set diff renderPending")
-		assert.False(t, model.wheel.tickInFlight, "tree wheel must not schedule a diff debounce tick")
-	})
+	m := mouseTestModel(t, files, nil)
+	selected := m.tree.SelectedFile()
+	result, cmd := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
+	model := result.(Model)
+	assert.Nil(t, cmd)
+	assert.Equal(t, selected, model.tree.SelectedFile())
+	assert.Equal(t, wheelStep, model.tree.ScrollState().Offset)
+	model.View()
+	assert.Equal(t, wheelStep, model.tree.ScrollState().Offset)
+	result, _ = model.Update(wheelMsg(tea.MouseButtonWheelUp, 5, 3, false))
+	model = result.(Model)
+	assert.Equal(t, 0, model.tree.ScrollState().Offset)
+	assert.Equal(t, selected, model.tree.SelectedFile())
+	model.tree.Move(sidepane.MotionDown)
+	model.tree.EnsureVisible(model.treePageSize())
+	assert.Equal(t, files[1], model.tree.SelectedFile())
 }
 
 func TestModel_HandleMouse_WheelNonPressActionIgnored(t *testing.T) {

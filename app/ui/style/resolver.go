@@ -163,17 +163,32 @@ func (r Resolver) IndicatorBg(change diff.ChangeType) Color {
 	return Color(ansiColor(r.colors.DiffBg, 48))
 }
 
+// paneBorders preserves pane padding while drawing only the shared divider.
+func paneBorders() (margin, divider lipgloss.Border) {
+	margin = lipgloss.Border{
+		Top: " ", Bottom: " ", Left: " ", Right: " ",
+		TopLeft: " ", TopRight: " ", BottomLeft: " ", BottomRight: " ",
+	}
+	divider = margin
+	divider.Right = "│"
+	divider.TopRight = "│"
+	divider.BottomRight = "│"
+
+	return margin, divider
+}
+
 // buildStyles creates all lipgloss.Style values from a normalized Colors palette.
 func buildStyles(c Colors) map[StyleKey]lipgloss.Style {
 	m := make(map[StyleKey]lipgloss.Style, len(StyleKeyValues))
 	border := lipgloss.NormalBorder()
+	margin, divider := paneBorders()
 
 	// tree pane styles
 	treePane := lipgloss.NewStyle().
-		Border(border).
+		Border(divider).
 		BorderForeground(lipgloss.Color(c.Border))
 	treePaneActive := lipgloss.NewStyle().
-		Border(border).
+		Border(divider).
 		BorderForeground(lipgloss.Color(c.Accent))
 	if c.TreeBg != "" {
 		treeBg := lipgloss.Color(c.TreeBg)
@@ -185,10 +200,10 @@ func buildStyles(c Colors) map[StyleKey]lipgloss.Style {
 
 	// diff pane styles
 	diffPane := lipgloss.NewStyle().
-		Border(border).
+		Border(margin).
 		BorderForeground(lipgloss.Color(c.Border))
 	diffPaneActive := lipgloss.NewStyle().
-		Border(border).
+		Border(margin).
 		BorderForeground(lipgloss.Color(c.Accent))
 	if c.DiffBg != "" {
 		diffBg := lipgloss.Color(c.DiffBg)
@@ -335,10 +350,11 @@ func buildPlainStyles() map[StyleKey]lipgloss.Style {
 	m := make(map[StyleKey]lipgloss.Style, len(StyleKeyValues))
 	border := lipgloss.NormalBorder()
 
-	m[StyleKeyTreePane] = lipgloss.NewStyle().Border(border)
-	m[StyleKeyTreePaneActive] = lipgloss.NewStyle().Border(border)
-	m[StyleKeyDiffPane] = lipgloss.NewStyle().Border(border)
-	m[StyleKeyDiffPaneActive] = lipgloss.NewStyle().Border(border)
+	margin, divider := paneBorders()
+	m[StyleKeyTreePane] = lipgloss.NewStyle().Border(divider)
+	m[StyleKeyTreePaneActive] = lipgloss.NewStyle().Border(divider)
+	m[StyleKeyDiffPane] = lipgloss.NewStyle().Border(margin)
+	m[StyleKeyDiffPaneActive] = lipgloss.NewStyle().Border(margin)
 
 	m[StyleKeyDirEntry] = lipgloss.NewStyle().Bold(true)
 	m[StyleKeyFileEntry] = lipgloss.NewStyle()

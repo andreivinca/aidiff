@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -622,8 +621,8 @@ func TestModel_ViewSingleFileMode(t *testing.T) {
 		assert.Contains(t, stripped, "a.go")
 		assert.Contains(t, stripped, "b.go")
 
-		// multi-file mode should have adjacent pane borders from JoinHorizontal
-		assert.Contains(t, stripped, "││", "multi-file mode should have two pane borders from tree+diff join")
+		// Multi-file mode has a shared separator.
+		assert.Contains(t, stripped, "│", "multi-file mode should have a separator")
 	})
 }
 
@@ -928,8 +927,8 @@ func TestModel_ViewWithTOCPane(t *testing.T) {
 		assert.Contains(t, stripped, "Title")
 		assert.Contains(t, stripped, "Section")
 
-		// two-pane layout should have adjacent pane borders from JoinHorizontal
-		assert.Contains(t, stripped, "││", "TOC + diff layout should have two adjacent pane borders")
+		// Two-pane layout has a shared separator.
+		assert.Contains(t, stripped, "│", "TOC + diff layout should have a separator")
 	})
 
 	t.Run("non-markdown single-file without TOC renders full width", func(t *testing.T) {
@@ -965,7 +964,7 @@ func TestModel_ViewWithTOCPane(t *testing.T) {
 		stripped := ansi.Strip(view)
 		assert.Contains(t, stripped, "Title")
 		// two-pane layout present
-		assert.Contains(t, stripped, "││")
+		assert.Contains(t, stripped, "│")
 	})
 }
 
@@ -1445,240 +1444,36 @@ func TestModel_ViewNotReady(t *testing.T) {
 	assert.Equal(t, "loading...", m.View())
 }
 
-func TestModel_ViewScrollbarThumb(t *testing.T) {
-	// testModel does not dispatch a WindowSizeMsg, so viewport.Height defaults
-	// to 0; set it manually to make the scrollbar code path active.
-	const vh = 30
-	const vw = 80
-
-	t.Run("thumb appears when content scrollable", func(t *testing.T) {
-		m := testModel([]string{"a.go"}, nil)
-		m.tree = testNewFileTree([]string{"a.go"})
-		m.file.name = "a.go"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent(strings.Repeat("filler line\n", 200))
-
-		view := m.View()
-		assert.Contains(t, view, scrollbarThumbRune, "scrollbar thumb should appear when content exceeds viewport")
-	})
-
-	t.Run("no thumb when content fits", func(t *testing.T) {
-		m := testModel([]string{"a.go"}, nil)
-		m.tree = testNewFileTree([]string{"a.go"})
-		m.file.name = "a.go"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent("one\ntwo\nthree\n")
-
-		view := m.View()
-		assert.NotContains(t, view, scrollbarThumbRune, "no thumb when content fits in viewport")
-	})
-
-	t.Run("thumb appears in single-file mode", func(t *testing.T) {
-		m := testModel([]string{"main.go"}, nil)
-		m.tree = testNewFileTree([]string{"main.go"})
-		m.file.singleFile = true
-		m.layout.treeWidth = 0
-		m.file.name = "main.go"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = m.layout.width - 2
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent(strings.Repeat("filler\n", 200))
-
-		view := m.View()
-		assert.Contains(t, view, scrollbarThumbRune, "single-file mode should also show thumb")
-	})
-
-	t.Run("thumb position shifts with YOffset", func(t *testing.T) {
-		m := testModel([]string{"a.go"}, nil)
-		m.tree = testNewFileTree([]string{"a.go"})
-		m.file.name = "a.go"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		// 501 total lines, vh=30, thumbSize = 30*30/501 = 1
-		m.layout.viewport.SetContent(strings.Repeat("filler\n", 500))
-
-		collect := func(view string) []int {
-			rows := []int{}
-			for i, line := range strings.Split(view, "\n") {
-				if strings.Contains(line, scrollbarThumbRune) {
-					rows = append(rows, i)
-				}
-			}
-			return rows
-		}
-
-		m.layout.viewport.SetYOffset(0)
-		topRows := collect(m.View())
-		require.Len(t, topRows, 1, "thumb size must be 1 row")
-		assert.Equal(t, diffScrollbarFirstViewportRow, topRows[0], "yOff=0 must put thumb on first viewport row")
-
-		m.layout.viewport.SetYOffset(471) // fully scrolled (total - vh = 471)
-		bottomRows := collect(m.View())
-		require.Len(t, bottomRows, 1, "thumb size invariant under offset")
-		assert.Equal(t, diffScrollbarFirstViewportRow+vh-1, bottomRows[0], "fully-scrolled must put thumb on last viewport row")
-	})
-
-	t.Run("thumb appears with paneTree focus", func(t *testing.T) {
-		// G7: scrollbar must work regardless of which pane has focus. with
-		// paneTree focus the diff pane uses StyleKeyDiffPane (inactive border
-		// color) instead of StyleKeyDiffPaneActive (accent). lipgloss might in
-		// principle emit the inactive border via a different code path; assert
-		// the thumb still lands.
-		m := testModel([]string{"a.go"}, nil)
-		m.tree = testNewFileTree([]string{"a.go"})
-		m.file.name = "a.go"
-		m.layout.focus = paneTree
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent(strings.Repeat("filler line\n", 200))
-
-		view := m.View()
-		assert.Contains(t, view, scrollbarThumbRune, "scrollbar thumb must appear even when tree pane has focus")
-	})
-
-	t.Run("navigation tree thumb appears when file list scrollable", func(t *testing.T) {
-		files := make([]string, 1000)
-		for i := range files {
-			files[i] = fmt.Sprintf("pkg/file-%04d.go", i)
-		}
-		m := testModel(files, nil)
-		m.tree = testNewFileTree(files)
-		m.file.name = files[0]
-		m.layout.focus = paneTree
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent("diff fits\n")
-
-		rows := thumbRows(m.View())
-		require.Len(t, rows, 1, "only the navigation pane should have a thumb")
-		assert.Equal(t, navigationScrollbarFirstViewportRow, rows[0], "tree thumb starts on first content row")
-	})
-
-	t.Run("navigation tree thumb position shifts with cursor", func(t *testing.T) {
-		files := make([]string, 1000)
-		for i := range files {
-			files[i] = fmt.Sprintf("pkg/file-%04d.go", i)
-		}
-		m := testModel(files, nil)
-		m.tree = testNewFileTree(files)
-		m.tree.Move(sidepane.MotionLast)
-		m.file.name = files[0]
-		m.layout.focus = paneTree
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent("diff fits\n")
-
-		rows := thumbRows(m.View())
-		require.Len(t, rows, 1, "only the navigation pane should have a thumb")
-		assert.Equal(t, navigationScrollbarFirstViewportRow+m.paneHeight()-1, rows[0], "tree thumb reaches last content row")
-	})
-
-	t.Run("navigation tree thumb appears with paneDiff focus", func(t *testing.T) {
-		// inactive-border style emits a different ANSI envelope around the right
-		// border │ than the active style. the rune-level slice replacement must
-		// land correctly regardless of the surrounding bytes.
-		files := make([]string, 1000)
-		for i := range files {
-			files[i] = fmt.Sprintf("pkg/file-%04d.go", i)
-		}
-		m := testModel(files, nil)
-		m.tree = testNewFileTree(files)
-		m.file.name = files[0]
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent("diff fits\n")
-
-		view := m.View()
-		assert.Contains(t, view, scrollbarThumbRune, "navigation thumb must appear even when diff pane has focus")
-	})
-
-	t.Run("navigation TOC thumb appears when TOC scrollable", func(t *testing.T) {
-		lines := make([]diff.DiffLine, 1000)
-		for i := range lines {
-			lines[i] = diff.DiffLine{Content: fmt.Sprintf("# Section %04d", i), ChangeType: diff.ChangeContext, NewNum: i + 1}
-		}
-		m := testModel([]string{"plan.md"}, nil)
-		m.tree = testNewFileTree([]string{"plan.md"})
-		m.file.singleFile = true
-		m.file.mdTOC = testParseTOCFactory()(lines, "plan.md")
-		require.NotNil(t, m.file.mdTOC)
-		m.file.name = "plan.md"
-		m.layout.focus = paneTree
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent("diff fits\n")
-
-		rows := thumbRows(m.View())
-		require.Len(t, rows, 1, "only the TOC pane should have a thumb")
-		assert.Equal(t, navigationScrollbarFirstViewportRow, rows[0], "TOC thumb starts on first content row")
-	})
-
-	t.Run("thumb appears in markdown TOC layout", func(t *testing.T) {
-		// G6: single-file markdown with TOC routes through renderTwoPaneLayout
-		// (different switch arm than the file-tree default). cover that path.
-		tocLines := []diff.DiffLine{
-			{Content: "# Header 1", ChangeType: diff.ChangeContext, NewNum: 1},
-			{Content: "", ChangeType: diff.ChangeContext, NewNum: 2},
-			{Content: "## Header 2", ChangeType: diff.ChangeContext, NewNum: 3},
-		}
-		m := testModel([]string{"plan.md"}, nil)
-		m.tree = testNewFileTree([]string{"plan.md"})
-		m.file.singleFile = true
-		m.file.mdTOC = testParseTOCFactory()(tocLines, "plan.md")
-		require.NotNil(t, m.file.mdTOC, "test factory must produce a TOC")
-		m.file.name = "plan.md"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent(strings.Repeat("body\n", 200))
-
-		view := m.View()
-		assert.Contains(t, view, scrollbarThumbRune, "scrollbar must work in markdown TOC layout")
-	})
-
-	t.Run("long filename does not push thumb past viewport rows", func(t *testing.T) {
-		// C1 regression: before truncateHeaderTitle was added, lipgloss
-		// soft-wrapped a too-long header onto multiple rows, which pushed the
-		// real viewport rows past the hardcoded diffScrollbarFirstViewportRow=2
-		// offset. truncating the header guarantees the layout invariant.
-		m := testModel([]string{"a.go"}, nil)
-		m.tree = testNewFileTree([]string{"a.go"})
-		m.file.name = strings.Repeat("very/long/path/segment-", 40) + "structure.go"
-		m.layout.focus = paneDiff
-		m.layout.viewport.Width = vw
-		m.layout.viewport.Height = vh
-		m.layout.viewport.SetContent(strings.Repeat("filler\n", 200))
-		m.layout.viewport.SetYOffset(0)
-
-		view := m.View()
-		thumbRowsFound := []int{}
-		for i, line := range strings.Split(view, "\n") {
-			if strings.Contains(line, scrollbarThumbRune) {
-				thumbRowsFound = append(thumbRowsFound, i)
+func TestModel_ViewSeparatorOnly(t *testing.T) {
+	for _, single := range []bool{false, true} {
+		for _, focus := range []pane{paneTree, paneDiff} {
+			m := testModel([]string{"a.go", "b.go"}, nil)
+			m.tree = testNewFileTree([]string{"a.go", "b.go"})
+			m.file.singleFile = single
+			m.layout.focus = focus
+			m.file.name = "a.go"
+			m.layout.viewport.Width = 60
+			m.layout.viewport.Height = m.paneHeight() - 1
+			m.layout.viewport.SetContent(strings.Repeat("content │ stays intact\n", 200))
+			view := ansi.Strip(m.View())
+			assert.NotContains(t, view, "┌")
+			assert.NotContains(t, view, "└")
+			assert.NotContains(t, view, "││")
+			assert.NotContains(t, view, "┃", "diff content must not become a scrollbar")
+			assert.Contains(t, view, "content │ stays intact")
+			first := strings.Split(view, "\n")[0]
+			if single {
+				assert.NotContains(t, first, "│")
+				assert.NotContains(t, view, "↔")
+			} else {
+				assert.Equal(t, 1, strings.Count(first, "│"))
+				rows := strings.Split(view, "\n")
+				assert.Contains(t, rows[(m.paneHeight()+2)/2], "↔")
 			}
 		}
-		require.NotEmpty(t, thumbRowsFound, "thumb must appear despite long filename")
-		assert.Equal(t, diffScrollbarFirstViewportRow, thumbRowsFound[0],
-			"long filename must be truncated so thumb still starts at row %d (header stays single-line)",
-			diffScrollbarFirstViewportRow)
-
-		// header row (index 1) must contain the truncation ellipsis, proving
-		// the header was actually shortened rather than emitted whole
-		lines := strings.Split(view, "\n")
-		require.Greater(t, len(lines), 1)
-		assert.Contains(t, lines[1], "…", "long header must be truncated with ellipsis")
-	})
+	}
 }
 
-// codex iter-3 C1: crafted filenames must not break or spoof the status
-// bar layout. iter-2 added sanitizeFilenameForDisplay but only wired it
-// into the diff header; iter-3 wires it into status-bar segments too.
 func TestModel_StatusBarSanitizesFilename(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2053,4 +1848,18 @@ func TestModel_LineNumbersEndToEnd(t *testing.T) {
 	rendered = m.renderDiff()
 	stripped = ansi.Strip(rendered)
 	assert.NotContains(t, stripped, "10 10")
+}
+
+func TestModel_StatusBarT3Label(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.machineName = "workstation"
+	m.layout.width = 120
+	local := ansi.Strip(m.statusBarWithMachine())
+	assert.True(t, strings.HasPrefix(local, "workstation"))
+	assert.NotContains(t, local, "T3")
+	m.t3Mode = true
+	remote := ansi.Strip(m.statusBarWithMachine())
+	assert.True(t, strings.HasPrefix(remote, "workstation"))
+	assert.Contains(t, remote, "T3")
+	assert.Less(t, strings.Index(remote, "workstation"), strings.Index(remote, "T3"))
 }

@@ -52,6 +52,7 @@ func TestPaneQueuedMessagesSurviveSnapshotAndStart(t *testing.T) {
 	p, f := newTestPane(t, 90, 20, snap)
 	assert.Contains(t, view(p), "Queued")
 	assert.Contains(t, view(p), "Please check tests too")
+	assert.Less(t, strings.Index(view(p), "Please check tests too"), strings.Index(view(p), "Queued"), "queue status belongs below the message")
 	// A queue update from another client is visible here too.
 	f.live().Message(t3client.Message{ID: "queued-msg", Role: "user", Text: "Check the updated tests"})
 	assert.Contains(t, view(p), "Check the updated tests")

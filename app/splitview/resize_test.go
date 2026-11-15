@@ -20,6 +20,9 @@ func TestSplit_VisibleResizeGrips(t *testing.T) {
 		if y == 10 {
 			assert.Equal(t, '↔', []rune(row)[59], "the review divider has a visible grip")
 			assert.Equal(t, '↔', []rune(row)[80], "terminal dividers have the same grip")
+		} else if y < len(rows)-1 {
+			assert.Equal(t, '│', []rune(row)[59], "review divider stays visible without an inner border")
+			assert.Equal(t, '│', []rune(row)[80], "terminal divider stays visible")
 		}
 	}
 }

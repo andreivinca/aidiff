@@ -16,6 +16,7 @@ import (
 
 // FileTree manages the list of changed files grouped by directory.
 type FileTree struct {
+	manualScroll bool // keep wheel scrolling independent of selection
 	directories  []diff.FileEntry
 	lazy         bool
 	entries      []treeEntry                // flat list of directories and files for display
@@ -178,6 +179,7 @@ func (ft *FileTree) HasFile(dir Direction) bool {
 // non-page motions ignore count entirely. Missing count for page motions
 // defaults to 1 (single step), which is harmless.
 func (ft *FileTree) Move(m Motion, count ...int) {
+	ft.manualScroll = false
 	switch m {
 	case MotionUp:
 		ft.moveUp()
@@ -204,6 +206,7 @@ func (ft *FileTree) Move(m Motion, count ...int) {
 
 // StepFile moves to the next or previous file entry, wrapping around at ends.
 func (ft *FileTree) StepFile(dir Direction) {
+	ft.manualScroll = false
 	switch dir {
 	case DirectionNext:
 		ft.nextFile()
@@ -215,6 +218,7 @@ func (ft *FileTree) StepFile(dir Direction) {
 // SelectByPath sets the cursor to the file entry matching the given path.
 // returns true if the file was found and cursor moved, false otherwise.
 func (ft *FileTree) SelectByPath(path string) bool {
+	ft.manualScroll = false
 	for i, e := range ft.entries {
 		if !e.isDir && e.path == path {
 			ft.cursor = i
@@ -242,6 +246,7 @@ func (ft *FileTree) SelectByVisibleRow(row int) bool {
 
 // EnsureVisible adjusts offset so the cursor is within the visible range of given height.
 func (ft *FileTree) EnsureVisible(height int) {
+	ft.manualScroll = false
 	ensureVisible(&ft.cursor, &ft.offset, len(ft.entries), height)
 }
 
@@ -455,6 +460,12 @@ func (ft *FileTree) ReconcileReviewedPath(path, currentFingerprint string) {
 	}
 }
 
+// ScrollBy shifts the visible window without changing the selected file.
+func (ft *FileTree) ScrollBy(delta, height int) {
+	ft.offset = min(max(ft.offset+delta, 0), max(len(ft.entries)-max(height, 1), 0))
+	ft.manualScroll = true
+}
+
 // ScrollState returns the file tree's current visible window state.
 // call after Render or EnsureVisible so Offset reflects the latest cursor position.
 func (ft *FileTree) ScrollState() ScrollState {
@@ -462,7 +473,7 @@ func (ft *FileTree) ScrollState() ScrollState {
 }
 
 // Render produces the file tree display string, showing only entries visible within the given height.
-// it adjusts the internal offset so the cursor stays within the visible window.
+// It follows the cursor unless the user has scrolled the window with the mouse.
 func (ft *FileTree) Render(r FileTreeRender) string {
 	if len(ft.entries) == 0 {
 		if ft.unreviewed && len(ft.allFiles) > 0 {
@@ -471,7 +482,11 @@ func (ft *FileTree) Render(r FileTreeRender) string {
 		return "  no changed files"
 	}
 
-	ft.EnsureVisible(r.Height)
+	if ft.manualScroll {
+		ft.ScrollBy(0, r.Height)
+	} else {
+		ft.EnsureVisible(r.Height)
+	}
 	end := min(ft.offset+r.Height, len(ft.entries))
 
 	rc := renderCtx{annotatedFiles: r.Annotated, res: r.Resolver, rnd: r.Renderer}

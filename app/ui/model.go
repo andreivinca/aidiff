@@ -15,6 +15,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"reflect"
 	"strconv"
@@ -228,6 +229,8 @@ type FileTreeComponent interface {
 	SelectByVisibleRow(row int) bool
 	// EnsureVisible adjusts offset so the cursor is within the visible range.
 	EnsureVisible(height int)
+	// ScrollBy scrolls the file window without changing selection.
+	ScrollBy(delta, height int)
 	// Rebuild rebuilds the file tree from new entries in-place.
 	Rebuild(entries []diff.FileEntry)
 	// ToggleFilter toggles between showing all files and only annotated files.
@@ -581,6 +584,8 @@ type annotationState struct {
 
 // Model is the top-level bubbletea model for revdiff.
 type Model struct {
+	t3Mode      bool
+	machineName string // local hostname, read once at startup
 	// injected dependencies
 	resolver      styleResolver
 	renderer      styleRenderer
@@ -707,6 +712,7 @@ type reviewStatsLoadedMsg struct {
 // NewFileTree, ParseTOC, Themes) are required and must be constructed by the caller.
 // Blamer, LoadUntracked, and Keymap are optional.
 type ModelConfig struct {
+	T3Mode bool // the current review comes from T3 Code
 	// --- UI dependencies (required, caller-constructed) ---
 	Renderer    Renderer          // diff renderer: ChangedFiles, FileDiff
 	Store       *annotation.Store // annotation store
@@ -920,7 +926,10 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		tree.ToggleUnreviewedFilter()
 	}
 
+	machineName, _ := os.Hostname()
 	return Model{
+		machineName:   style.SanitizeFilenameForDisplay(machineName),
+		t3Mode:        cfg.T3Mode,
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,

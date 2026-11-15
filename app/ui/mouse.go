@@ -252,9 +252,7 @@ func (m Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // wheelStepFor returns the wheel scroll step for the diff pane. Plain wheel
 // scrolls by the wheelStep constant; Shift+wheel scrolls by half the
-// viewport height to match the keyboard half-page shortcut. The tree/TOC
-// path in handleWheel ignores the magnitude and uses single-step cursor
-// navigation regardless, so this only governs the diff-pane delta.
+// viewport height to match the keyboard half-page shortcut. The file tree also uses this delta; the TOC keeps single-step navigation.
 func (m Model) wheelStepFor(shift bool) int {
 	if !shift {
 		return wheelStep
@@ -303,9 +301,6 @@ func (m Model) handleWheel(zone hitZone, delta int) (tea.Model, tea.Cmd) {
 		m.wheel.tickInFlight = true
 		return m, m.wheelTick()
 	case hitTree:
-		// tree/TOC wheel = direct cursor navigation, one entry per notch.
-		// no debounce, no shift-half-page tricks (those are diff-pane things);
-		// the tree is small and cheap so single-step matches j/k semantics.
 		motion := sidepane.MotionDown
 		if delta < 0 {
 			motion = sidepane.MotionUp
@@ -316,9 +311,8 @@ func (m Model) handleWheel(zone hitZone, delta int) (tea.Model, tea.Cmd) {
 			m.syncDiffToTOCCursor()
 			return m, nil
 		}
-		m.tree.Move(motion)
-		m.clearPendingJumps()
-		return m.loadSelectedIfChanged()
+		m.tree.ScrollBy(delta, m.treePageSize())
+		return m, nil
 	case hitNone, hitStatus, hitHeader:
 		// no-op zones — wheel outside the interactive panes is ignored.
 	}
@@ -559,7 +553,7 @@ func (m Model) treeDividerMouse(msg tea.MouseMsg) (Model, bool) {
 		return m, true
 	}
 	onBorder := !m.treePaneHidden() && msg.X == m.layout.treeWidth+1 &&
-		msg.Y > 0 && msg.Y < m.layout.height-m.statusBarHeight()-1
+		msg.Y >= 0 && msg.Y < m.layout.height-m.statusBarHeight()
 	if onBorder && msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 		m.layout.treeDrag = true
 		return m, true

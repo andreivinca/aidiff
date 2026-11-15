@@ -88,13 +88,13 @@ func (p *Pane) pendingRowsLocked(w, budget int) []string {
 		if m.sending {
 			label = "Sending…"
 		}
-		rows = append(rows, p.styles.muted.Render(inset+label))
 		panel := userPanel(m.text, w, p.styles)
 		panel = panel[1 : len(panel)-1] // compact cards omit transcript padding
 		if len(panel) > 2 {
 			panel = append(panel[:1], p.styles.muted.Render(inset+"…"))
 		}
 		rows = append(rows, panel...)
+		rows = append(rows, p.styles.muted.Render(inset+label))
 	}
 	if len(rows) > budget {
 		// Keep a label and the latest text, making truncation explicit.
