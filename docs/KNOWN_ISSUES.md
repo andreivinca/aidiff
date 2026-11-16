@@ -1,6 +1,6 @@
 # Known issues and gaps
 
-These are limitations found in aidiff's own features at `v0.0.8`.
+These are limitations found in aidiff's own features at `v0.0.9`.
 
 ## Branding
 
@@ -39,4 +39,3 @@ Renaming the config directory and the env vars would break existing setups, so i
 |---|---|
 | Release pipeline | The upstream workflow was removed and nothing replaces it in the repository. |
 | CHANGELOG | Has no aidiff entries. |
-| Site version badge | Shows `0.0.4`; the latest tag is `v0.0.8`. |

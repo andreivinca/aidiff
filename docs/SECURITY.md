@@ -20,7 +20,8 @@ This document covers the security properties of aidiff's own features: T3 connec
 
 ### SSH
 - The host string is validated before use: a leading `-` and the characters whitespace, `/`, quotes, `` ` ``, `$`, `;`, `&` and `|` are rejected. `--` comes before the host on every ssh command line.
-- The tunnel binds only to `127.0.0.1` and uses `ExitOnForwardFailure=yes`, so a failed forward is noticed. It runs in its own process group and is killed when the session ends.
+- The tunnel forwards to a Unix socket in a private (0700) temp directory, not a TCP port, so no other local user or process can reach the server through it. It uses `ExitOnForwardFailure=yes`, so a failed forward is noticed. It runs in its own process group and is killed when the session ends, and the directory is removed.
+- The tunnel's ControlMaster socket lives in the same private directory, with an explicit `ControlPath`, so it never joins a master from the user's own ssh config. Only remote terminal panes use it (`ssh -S`).
 - Discovery and token minting run with `BatchMode=yes`, so ssh never waits on a hidden prompt.
 - In remote terminal panes, the `cd` directory is single-quote escaped.
 

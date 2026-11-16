@@ -1,6 +1,6 @@
 # Business requirements
 
-This document gives the problem aidiff solves, who it is for, and the business-level requirements the product meets. It was written from what the code does at `v0.0.8`. A requirement here describes behavior that exists, unless it is marked *(gap)*.
+This document gives the problem aidiff solves, who it is for, and the business-level requirements the product meets. It was written from what the code does at `v0.0.9`. A requirement here describes behavior that exists, unless it is marked *(gap)*.
 
 ## 1. Problem
 

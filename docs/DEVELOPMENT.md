@@ -73,6 +73,6 @@ Trade-off: a terminal that answers after 150 ms (a slow SSH link) answers after 
 
 ## 8. Releases
 
-- Versions are git tags (`v0.0.1` … `v0.0.8`).
+- Versions are git tags (`v0.0.1` … `v0.0.9`).
 - The upstream release workflow was removed (`a7ba920`), and aidiff releases are made separately. `.goreleaser.yml` is still upstream's: it builds a `revdiff` binary for linux and darwin on amd64 and arm64, and publishes to upstream's Homebrew tap. Don't run it as is.
-- With each release, update the version badge and `softwareVersion` in `site/index.html`. It currently says `0.0.4`, which is behind the latest tag.
+- With each release, update the version badge and `softwareVersion` in `site/index.html`.
