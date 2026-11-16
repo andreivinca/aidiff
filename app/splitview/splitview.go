@@ -108,6 +108,9 @@ func (m Model) flushRefresh(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if seq, ok := rawSequence(msg); ok {
+		if k, ok := parseModifiedKey(seq); ok {
+			return m.handleModifiedKey(k, msg)
+		}
 		return m.forwardRaw(seq, msg)
 	}
 	switch msg := msg.(type) {

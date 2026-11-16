@@ -30,7 +30,7 @@ Renaming the config directory and the env vars would break existing setups, so i
 | T3 | Remote `http://` servers are accepted, which sends the token in cleartext. |
 | Clipboard | Linux only (`wl-clipboard` / `xclip`). No macOS `pbcopy`, and no OSC 52 for SSH sessions. |
 | Live refresh | Not available for Mercurial or jj repositories, stdin, compare, or `--only` outside a repository. |
-| Split view | Shift+enter and similar keys depend on reflection over Bubble Tea's unexported `unknownCSISequenceMsg`, which can break when Bubble Tea is upgraded. |
+| Split view | Shift+enter needs a terminal that honors xterm's modifyOtherKeys (aidiff turns on level 1 at startup); others send it as a plain enter, and alt+enter or ctrl+j still insert a line break. The split reads the reports through Bubble Tea's unexported `unknownCSISequenceMsg` (`rawseq.go`); `TestRawSequence_BubbleTeaType` fails if an upgrade changes it. |
 | Platforms | No Windows build. |
 
 ## Process

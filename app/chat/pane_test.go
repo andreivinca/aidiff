@@ -104,7 +104,7 @@ func TestPane_InputAndSend(t *testing.T) {
 	assert.Contains(t, view(p), "│   hello █")
 	p.Paste("there\nagain")
 	assert.Contains(t, view(p), "\n│   again█", "a pasted line break continues on the next row")
-	p.SendText("\x1b[13;2u") // shift+enter as the terminal encodes it
+	assert.True(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyEnter, Mod: uv.ModShift}), "the pane takes shift+enter")
 	p.SendText("more")
 	assert.Contains(t, view(p), "\n│   more█", "shift+enter breaks the line")
 	p.SendText("\x7f\x7f\x7f\x7f\x7f") // back to "there\nagain"
@@ -275,4 +275,20 @@ func TestPane_QuitNote(t *testing.T) {
 	t.Cleanup(p.Close)
 	assert.Equal(t, "Closes the chat; the agent keeps working.", p.QuitNote())
 	assert.Contains(t, view(p), defaultTitle)
+}
+
+func TestPane_SendModifiedKeyTakesOnlyModifiedEnter(t *testing.T) {
+	p, _ := newTestPane(t, 60, 10, fixture())
+	assert.False(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyEnter}), "a plain enter is left to SendText")
+	assert.False(t, p.SendModifiedKey(uv.KeyPressEvent{Code: 'a', Mod: uv.ModCtrl}), "other keys are left alone")
+	p.SendText("one")
+	assert.True(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyEnter, Mod: uv.ModCtrl}), "ctrl+enter breaks the line too")
+	p.SendText("two")
+	assert.Contains(t, view(p), "\n│   two█")
+
+	p.SendText("\x15") // ctrl+u: an empty input, so ← opens the activity view
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
+	require.True(t, p.activity.open)
+	assert.False(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyEnter, Mod: uv.ModShift}),
+		"the activity view takes enter as itself")
 }

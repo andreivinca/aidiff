@@ -179,8 +179,7 @@ func run(opts options) (int, error) {
 	guard := &shutdownGuard{}
 	stop := guard.watch(p)
 	defer stop()
-	finalModel, runErr := p.Run()
-	finalModel = closeSplit(finalModel)
+	finalModel, runErr := runSplit(p, tuiOut)
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()

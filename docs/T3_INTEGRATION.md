@@ -146,7 +146,7 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | Key | Effect |
 |---|---|
 | Enter | Send; becomes "queue" while a run is active |
-| shift+enter, alt+enter, ctrl+j | New line |
+| shift+enter, ctrl+enter, alt+enter, ctrl+j | New line (shift+enter and ctrl+enter need a terminal with modifyOtherKeys) |
 | ctrl+a / ctrl+e / ctrl+u / ctrl+w | Line start / end / clear / delete word |
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, text is inserted |
 | ↑ / ↓ | Move in the slash popup, otherwise scroll |

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/splitview"
@@ -35,6 +37,16 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette) splitview.
 // guard asks before a quit closes open panes.
 func splitProgramOptions() []tea.ProgramOption {
 	return []tea.ProgramOption{tea.WithFPS(120), splitview.QuitGuard()}
+}
+
+// runSplit runs the program on out with modified-key reports on, so a chat
+// pane can tell shift+enter from enter, then closes the split's panes and
+// returns the review it wrapped, for revdiff's finalization.
+func runSplit(p *tea.Program, out io.Writer) (tea.Model, error) {
+	restoreKeys := splitview.ReportModifiedKeys(out)
+	final, err := p.Run()
+	restoreKeys()
+	return closeSplit(final), err
 }
 
 // closeSplit closes the panes of the split the program ended with and

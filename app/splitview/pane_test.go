@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,14 +56,52 @@ func TestSplit_OpenPaneMsgWaitsForSizeAndQuitAsks(t *testing.T) {
 }
 
 func TestSplit_UnnamedSequenceReachesFocusedPane(t *testing.T) {
-	shiftEnter := unknownCSIMsg(t, "\x1b[13;2u")
+	unknown := unknownCSIMsg(t, "\x1b[5;9z")
 	hs := newHarness(t, 100, 30)
-	hs.send(shiftEnter)
-	assert.Equal(t, []string{"\x1b[13;2u"}, hs.term(0).text, "shift+enter's CSI u form goes to the terminal")
+	hs.send(unknown)
+	assert.Equal(t, []string{"\x1b[5;9z"}, hs.term(0).text, "a sequence the split cannot decode goes to the terminal")
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	hs.send(shiftEnter)
-	assert.Equal(t, []string{"\x1b[13;2u"}, hs.term(0).text, "with the diff focused it does not")
-	assert.Contains(t, *hs.inner, shiftEnter, "it goes to the diff instead")
+	hs.send(unknown)
+	assert.Equal(t, []string{"\x1b[5;9z"}, hs.term(0).text, "with the diff focused it does not")
+	assert.Contains(t, *hs.inner, unknown, "it goes to the diff instead")
+}
+
+// modifiedKeyTerm is a pane that takes modified keys, as a chat does.
+type modifiedKeyTerm struct {
+	*fakeTerm
+	modified []uv.KeyPressEvent
+}
+
+func (f *modifiedKeyTerm) SendModifiedKey(k uv.KeyPressEvent) bool {
+	if k.Code != uv.KeyEnter {
+		return false
+	}
+	f.modified = append(f.modified, k)
+	return true
+}
+
+func TestSplit_ModifiedKeys(t *testing.T) {
+	for _, seq := range []string{"\x1b[27;2;13~", "\x1b[13;2u"} {
+		shiftEnter := unknownCSIMsg(t, seq)
+
+		hs := newHarness(t, 100, 30)
+		hs.send(shiftEnter)
+		assert.Equal(t, []string{"\r"}, hs.term(0).text, "%q reaches a shell as the enter it sends without the mode", seq)
+
+		chat := &modifiedKeyTerm{fakeTerm: hs.term(0)}
+		hs.m.terms[0] = chat
+		hs.send(shiftEnter)
+		assert.Equal(t, []uv.KeyPressEvent{{Code: uv.KeyEnter, Mod: uv.ModShift}}, chat.modified,
+			"%q reaches a pane that takes modified keys with its modifier", seq)
+		assert.Equal(t, []string{"\r"}, chat.text, "and nothing else reaches it")
+
+		hs.send(unknownCSIMsg(t, "\x1b[27;6;65~"))
+		assert.Equal(t, []string{"\r", "\x01"}, chat.text, "a key the pane does not take arrives as its plain key")
+
+		hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+		hs.send(shiftEnter)
+		assert.Contains(t, *hs.inner, tea.KeyMsg{Type: tea.KeyEnter}, "with the diff focused it is enter, as before")
+	}
 }
 
 func TestSplit_CtrlQAlwaysAsks(t *testing.T) {

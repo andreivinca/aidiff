@@ -11,7 +11,8 @@ import (
 // edit it (backspace, ctrl+a, ctrl+e, ctrl+u, ctrl+w) or send it (enter).
 // With the slash-command popup open, tab completes the selected row, enter
 // completes it and runs a complete command, esc closes the popup. Alt chords
-// are dropped, except alt+enter and shift+enter, which insert a line break.
+// are dropped, except alt+enter, which inserts a line break (shift+enter
+// arrives through SendModifiedKey).
 func (p *Pane) SendText(s string) {
 	p.lock()
 	defer p.mu.Unlock()
@@ -72,23 +73,33 @@ func (p *Pane) insertLocked(text string) {
 	p.inputChanged()
 }
 
-// modifiedTextLocked handles terminal-encoded alt chords and modified enter.
+// modifiedTextLocked handles alt chords typed as text: alt+enter inserts a
+// line break, any other is dropped.
 func (p *Pane) modifiedTextLocked(s string) bool {
 	if !strings.HasPrefix(s, "\x1b") || len(s) <= 1 {
 		return false
 	}
-	if s == "\x1b\r" || s == "\x1b\n" || isEnterSequence(s) {
+	if s == "\x1b\r" || s == "\x1b\n" {
 		p.insertLocked("\n")
 	}
 	return true
 }
 
-// isEnterSequence reports an enter with a modifier the terminal encoded on
-// its own: CSI u ("\x1b[13;2u" is shift+enter) or xterm's modifyOtherKeys
-// form ("\x1b[27;2;13~").
-func isEnterSequence(s string) bool {
-	return (strings.HasPrefix(s, "\x1b[13;") && strings.HasSuffix(s, "u")) ||
-		(strings.HasPrefix(s, "\x1b[27;") && strings.HasSuffix(s, ";13~"))
+// SendModifiedKey takes an enter with a modifier (shift+enter, ctrl+enter,
+// alt+enter) as a line break in the input, and reports whether it took k.
+// Any other key, and every key while the stop dialog or the activity view is
+// open, is left to arrive as its plain key.
+func (p *Pane) SendModifiedKey(k uv.KeyPressEvent) bool {
+	p.lock()
+	defer p.mu.Unlock()
+	if k.Code != uv.KeyEnter || k.Mod == 0 || p.stop.turn != "" || p.activity.open {
+		return false
+	}
+	p.selection = textSelection{}
+	p.note = ""
+	p.gen++
+	p.insertLocked("\n")
+	return true
 }
 
 // SendKey moves the cursor (left, right, home, end, delete), picks a row of
