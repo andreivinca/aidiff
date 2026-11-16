@@ -1,6 +1,9 @@
 package splitview
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,7 +57,7 @@ func TestSplit_PaletteAsksForCommandsOnlyWhenTheyMayChange(t *testing.T) {
 }
 
 func TestSplit_PaletteNavigationKeys(t *testing.T) {
-	hs := newHarness(t, 100, 30) // rows: Open Terminal, Close Terminal, Quit
+	hs := newCommandHarness(t, func() []Command { return []Command{{Name: "Middle"}} }) // Open Terminal, Middle, Quit
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
 	for _, step := range []struct {
 		key  tea.KeyMsg
@@ -70,6 +73,38 @@ func TestSplit_PaletteNavigationKeys(t *testing.T) {
 		hs.send(step.key)
 		assert.Equal(t, step.want, hs.m.palette.sel, "after %s", step.key)
 	}
+}
+
+func TestSplit_PaletteGroups(t *testing.T) {
+	cmds := []Command{
+		{Name: "Thread A", Group: "Threads"},
+		{Name: "Action"},
+		{Name: "Thread B", Group: "Threads"},
+	}
+	hs := newCommandHarness(t, func() []Command { return cmds })
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	assert.Equal(t, []string{"Open Terminal", "Action", "Quit", "Thread A", "Thread B"}, names(hs.m.palette.rows),
+		"ungrouped commands come first, then each group's together")
+
+	view := strings.Split(ansi.Strip(hs.m.View()), "\n")
+	title := slices.IndexFunc(view, func(l string) bool { return strings.Contains(l, "Threads ─") })
+	require.Positive(t, title, "the group has a title line")
+	assert.Contains(t, view[title-1], "Quit")
+	assert.Contains(t, view[title+1], "Thread A")
+
+	hs.key("act")
+	assert.NotContains(t, ansi.Strip(hs.m.View()), "Threads ─", "a group with no match has no title")
+
+	many := make([]Command, 40)
+	for i := range many {
+		many[i] = Command{Name: fmt.Sprintf("Thread %02d", i), Group: "Threads"}
+	}
+	hs = newCommandHarness(t, func() []Command { return many })
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	hs.send(tea.KeyMsg{Type: tea.KeyUp})
+	view = strings.Split(ansi.Strip(hs.m.View()), "\n")
+	assert.Contains(t, strings.Join(view, "\n"), "Thread 39", "the selection at the bottom stays on screen")
+	assert.NotContains(t, strings.Join(view, "\n"), "Threads ─", "its title scrolled away")
 }
 
 func TestSplit_OutsideCommands(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 type fakeSession struct {
 	label   string
 	sshHost string
+	control string
 	local   bool
 	notices []string
 	server  *fakeServer
@@ -40,6 +41,10 @@ func (s *fakeSession) Label() string {
 
 func (s *fakeSession) SSHHost() string {
 	return s.sshHost
+}
+
+func (s *fakeSession) SSHControlPath() string {
+	return s.control
 }
 
 func (s *fakeSession) Local() bool {

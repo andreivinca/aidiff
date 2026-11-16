@@ -110,7 +110,7 @@ How it works:
 - Redraws are capped at one per 16 ms, but the first change after a quiet spell is shown at once. `Render` is cached until the screen changes.
 - `Close` sends SIGHUP to every process in the child's session, waits 1 s, then sends SIGKILL. Session members are listed from `/proc` on Linux and from `kern.proc.all` plus `getsid` on macOS (`session_linux.go`, `session_darwin.go`). The child is reaped only after that: its exit is observed without reaping (`waitid(WNOWAIT)` on Linux, kqueue on macOS), so its pid, which is also the session id, cannot be reused while the session is signalled.
 - The start command and directory come from `app/revdiff/t3_terminal.go`, at the place `t3palette.Palette.TerminalPlace` names (the review on screen's machine and folder):
-  - When that T3 session goes through SSH, it runs `ssh -t host` with `--terminal-command`, by default a login shell, in the thread's directory.
+  - When that T3 session goes through SSH, it runs `ssh -t host` over the T3 tunnel's ControlMaster socket (`-S`, `ClearAllForwardings=yes`) with `--terminal-command`, by default a login shell, in the thread's directory.
   - Otherwise it runs `--terminal-command` through `/bin/sh` in the reviewed directory, or in aidiff's own when that directory is on another machine.
 
 ## 7. Live refresh (`app/watch`)
@@ -129,7 +129,7 @@ Changes are reported once they have paused for 150 ms (`watch.Config.Settle`), s
 [T3_INTEGRATION.md](T3_INTEGRATION.md) has the full detail.
 - **`t3client.Conn`:** a WebSocket with a read goroutine, a control-frame writer (acks, pings, interrupts) and a ping goroutine that ends a connection whose server stopped answering. Stream callbacks run on the read goroutine and must not block, so callers hand work off with `go p.Send(...)`; none runs after its subscription returns. The server operations are methods on `Conn`; a `Session` owns its lifetime (and any SSH tunnel).
 - **`t3client.Renderer`:** adapts a thread's diff preview to revdiff's renderer interface.
-- **Palette commands (`app/t3palette`):** connect, threads, projects, open chat, send message, send annotations, reconnect. The composition root hands it what it cannot reach itself (`Config.NewReview`, `Config.SaveHistory`, the flags) in `app/revdiff/t3_palette.go`. It reaches servers through its own `Session`/`Server` interfaces, which `*t3client.Session` and `*t3client.Conn` satisfy through a small adapter.
+- **Palette commands (`app/t3palette`):** connect, threads, projects, send annotations, reconnect. The composition root hands it what it cannot reach itself (`Config.NewReview`, `Config.SaveHistory`, the flags) in `app/revdiff/t3_palette.go`. It reaches servers through its own `Session`/`Server` interfaces, which `*t3client.Session` and `*t3client.Conn` satisfy through a small adapter.
 - **Session ownership:** the palette tracks the live session (the one commands use), the session of the T3 review on screen, and the sessions of reviews on their way to the screen in a `ReplaceInnerMsg`. A session none of them uses is closed. The review on screen changes only in `Retire`, at the moment the split swaps models, so a connection that lands while a thread opens never strands a session or leaves the palette pointing at the wrong review. Closing sessions, stopping a refresh and saving history run in the background; `Close` waits for them, and anything that lands after `Close` closes its own session.
 
 ## 9. Chat pane (`app/chat`) and its T3 backend (`app/t3chat`)

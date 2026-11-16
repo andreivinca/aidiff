@@ -136,10 +136,13 @@ func sshOutput(ctx context.Context, host, script string) ([]byte, error) {
 // sshTunnel is a running `ssh -N -L` forward from a Unix socket in a private
 // directory. Only this user can create a socket there, so whatever answers
 // on it is the tunnel, never another local process that took a port first.
+// Its ssh is also a ControlMaster, so other ssh commands to the host can share
+// its connection instead of logging in again.
 type sshTunnel struct {
 	cmd       *exec.Cmd
-	dir       string // 0700 directory holding the socket
+	dir       string // 0700 directory holding the sockets
 	socket    string
+	control   string          // the ControlMaster socket
 	transport *http.Transport // carries HTTP through the socket
 	stderr    *strings.Builder
 	exited    chan struct{}
@@ -154,14 +157,18 @@ func startTunnel(host, remoteAddr string) (*sshTunnel, error) {
 		return nil, fmt.Errorf("create ssh tunnel directory: %w", err)
 	}
 	socket := filepath.Join(dir, "t3.sock")
+	control := filepath.Join(dir, "ssh.ctl")
 	// ClearAllForwardings=no: a host block that clears forwardings would
-	// otherwise drop -L silently and the socket would never open
+	// otherwise drop -L silently and the socket would never open.
+	// ControlMaster=yes with our own ControlPath, never the user's: the
+	// connection must be this tunnel's, ending with it.
 	args := append(append([]string{"-N"}, sshOptions...),
 		"-o", "ClearAllForwardings=no", "-o", "ExitOnForwardFailure=yes", "-o", "StreamLocalBindUnlink=yes",
+		"-o", "ControlMaster=yes", "-o", "ControlPersist=no", "-o", "ControlPath="+control,
 		"-L", socket+":"+remoteAddr, "--", host)
 	cmd := exec.Command("ssh", args...)                   //nolint:gosec,noctx // host validated by validSSHHost; lives for the session
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // keep terminal signals away from it
-	t := &sshTunnel{cmd: cmd, dir: dir, socket: socket, stderr: &strings.Builder{}, exited: make(chan struct{})}
+	t := &sshTunnel{cmd: cmd, dir: dir, socket: socket, control: control, stderr: &strings.Builder{}, exited: make(chan struct{})}
 	t.transport = &http.Transport{DialContext: t.dialSocket}
 	cmd.Stderr = t.stderr
 	if err := cmd.Start(); err != nil {
@@ -175,6 +182,17 @@ func startTunnel(host, remoteAddr string) (*sshTunnel, error) {
 func (t *sshTunnel) wait() {
 	t.err = t.cmd.Wait()
 	close(t.exited)
+}
+
+// controlPath is the socket ssh commands to the tunnel's host can share its
+// connection through (ssh -S), empty once the tunnel has exited.
+func (t *sshTunnel) controlPath() string {
+	select {
+	case <-t.exited:
+		return ""
+	default:
+		return t.control
+	}
 }
 
 // stop ends the tunnel, waits for ssh to exit and removes its socket.

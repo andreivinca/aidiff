@@ -13,7 +13,7 @@ import (
 )
 
 // chatQuitNote is what the quit dialog says about closing a chat pane.
-const chatQuitNote = "Closes the chat. The agent keeps working on the server; reopen it from the palette."
+const chatQuitNote = "Closes the chat. The agent keeps working on the server; it reopens with the next thread you open."
 
 // chatPane is an open chat pane as the palette steers it; *chat.Pane
 // implements it.
@@ -110,42 +110,6 @@ func (t *Palette) threadReview() *Review {
 	return r
 }
 
-// openChat adds a chat pane on the thread on screen to the right column.
-func (t *Palette) openChat(tea.Model) tea.Cmd {
-	return func() tea.Msg {
-		return t.openChatMsg()
-	}
-}
-
-// openChatMsg is the split's request for a chat pane on the thread on
-// screen, or a flash saying what to do first.
-func (t *Palette) openChatMsg() tea.Msg {
-	if r := t.threadReview(); r != nil {
-		return t.chatPaneMsg(r.Session, *r.thread())
-	}
-	if t.liveSession() == nil {
-		return splitview.FlashMsg{Text: "T3: connect to a server first (T3: Connect to server…)"}
-	}
-	return splitview.FlashMsg{Text: "T3: open a thread first; the palette lists them"}
-}
-
-// messagePrompt asks for a message to the agent of the thread on screen.
-func (t *Palette) messagePrompt(tea.Model) tea.Cmd {
-	r := t.threadReview()
-	if r == nil {
-		return flash("T3: open a thread first")
-	}
-	return func() tea.Msg {
-		return splitview.ShowPromptMsg{
-			Title:       "T3 Code: message to " + threadTitle(*r.thread()),
-			Placeholder: "tell the agent what to do next",
-			OnSubmit: func(text string) tea.Cmd {
-				return t.send(r, text, "message sent")
-			},
-		}
-	}
-}
-
 // sendAnnotations hands the review's annotations to the agent of the thread
 // on screen.
 func (t *Palette) sendAnnotations(inner tea.Model) tea.Cmd {
@@ -159,16 +123,11 @@ func (t *Palette) sendAnnotations(inner tea.Model) tea.Cmd {
 	}
 	n := m.Store().Count()
 	text := "Review annotations from aidiff:\n\n" + m.Store().FormatOutput()
-	return t.send(r, text, fmt.Sprintf("%d annotation(s) sent", n))
-}
-
-// send delivers text to the agent of r's thread and reports done.
-func (t *Palette) send(r *Review, text, done string) tea.Cmd {
 	title := threadTitle(*r.thread())
 	return asking("sending to "+title, func(ctx context.Context) tea.Msg {
 		if err := r.Session.Server().SendMessage(ctx, r.thread().ID, text); err != nil {
 			return t3Error("send", err)
 		}
-		return splitview.FlashMsg{Text: "T3: " + done + " to " + title}
+		return splitview.FlashMsg{Text: fmt.Sprintf("T3: %d annotation(s) sent to %s", n, title)}
 	})
 }

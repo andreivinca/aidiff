@@ -328,15 +328,22 @@ func (t *Palette) watchLocked(r *Review) (stop func()) {
 	return cancel
 }
 
-// TerminalPlace is where a new terminal opens: on sshHost (empty: this
-// machine), in dir (empty: where a terminal starts by default). That is the
-// machine and folder of the T3 review on screen, else of the live server in
-// its selected project. The folders of a remote server reached without SSH
-// are not this machine's, so a terminal for one starts in no folder.
-func (t *Palette) TerminalPlace() (sshHost, dir string) {
+// Place is where a new terminal opens.
+type Place struct {
+	SSHHost        string // the host to ssh to; empty: this machine
+	SSHControlPath string // shares the T3 tunnel's connection to SSHHost; may be empty
+	Dir            string // the folder; empty: where a terminal starts by default
+}
+
+// TerminalPlace is where a new terminal opens: the machine and folder of the
+// T3 review on screen, else of the live server in its selected project. The
+// folders of a remote server reached without SSH are not this machine's, so
+// a terminal for one starts in no folder.
+func (t *Palette) TerminalPlace() Place {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var s Session
+	var dir string
 	switch {
 	case t.onScreen != nil:
 		s, dir = t.onScreen.Session, t.onScreen.Target.Cwd
@@ -346,15 +353,15 @@ func (t *Palette) TerminalPlace() (sshHost, dir string) {
 			dir = t.project.WorkspaceRoot
 		}
 	default:
-		return "", ""
+		return Place{}
 	}
 	if host := s.SSHHost(); host != "" {
-		return host, dir
+		return Place{SSHHost: host, SSHControlPath: s.SSHControlPath(), Dir: dir}
 	}
 	if s.Local() {
-		return "", dir
+		return Place{Dir: dir}
 	}
-	return "", ""
+	return Place{}
 }
 
 // closeAll ends every session in sessions.

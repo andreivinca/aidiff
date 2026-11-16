@@ -192,6 +192,17 @@ func (hs *harness) runPalette(query string) {
 	hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 }
 
+// closeFocused closes the focused terminal, or the last one when the diff
+// has focus, the way a shell's exit would.
+func (hs *harness) closeFocused() {
+	i := hs.m.focus
+	if i == focusDiff {
+		i = len(hs.m.terms) - 1
+	}
+	model, _ := hs.m.closeTerminal(i)
+	hs.m = model.(Model)
+}
+
 func TestSplit_LayoutSizes(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 
@@ -316,7 +327,6 @@ func TestSplit_Palette(t *testing.T) {
 	require.True(t, hs.m.palette.open)
 	view := ansi.Strip(hs.m.View())
 	assert.Contains(t, view, "Open Terminal")
-	assert.Contains(t, view, "Close Terminal")
 	assert.Contains(t, view, "Quit")
 
 	hs.key("q")
@@ -334,16 +344,14 @@ func TestSplit_Palette(t *testing.T) {
 	// arrows wrap around and enter runs the selection
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
 	hs.send(tea.KeyMsg{Type: tea.KeyUp})
-	assert.Equal(t, 2, hs.m.palette.sel, "up from the top wraps to the bottom")
-	hs.send(tea.KeyMsg{Type: tea.KeyDown})
+	assert.Equal(t, 1, hs.m.palette.sel, "up from the top wraps to the bottom")
 	hs.send(tea.KeyMsg{Type: tea.KeyDown})
 	hs.send(tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Empty(t, hs.m.terms, "second entry, Close Terminal, closed it")
+	assert.Len(t, hs.m.terms, 2, "the first entry, Open Terminal, opened another")
 	assert.False(t, hs.m.palette.open)
 
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
-	assert.Equal(t, []string{"Open Terminal", "Quit"}, names(hs.m.palette.rows),
-		"Close Terminal only appears when there is one")
+	assert.Equal(t, []string{"Open Terminal", "Quit"}, names(hs.m.palette.rows), "there is no Close Terminal")
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
 	assert.False(t, hs.m.palette.open, "ctrl+p again closes")
 
@@ -481,7 +489,7 @@ func TestSplit_DragDividerResizes(t *testing.T) {
 	assert.Equal(t, 100, hs.m.leftW, "window resize keeps the dragged proportion")
 
 	// close and reopen: the dragged proportion is remembered
-	hs.runPalette("close")
+	hs.closeFocused()
 	assert.Equal(t, 200, hs.m.leftW)
 	hs.runPalette("open")
 	assert.Equal(t, 100, hs.m.leftW)
@@ -526,7 +534,7 @@ func TestSplit_DragSeparatorBetweenTerminals(t *testing.T) {
 	assert.Greater(t, w[1], w[0], "the dragged-wider middle terminal stays the widest")
 
 	// closing one gives its space to the others; opening one keeps the others' proportions
-	hs.runPalette("close") // closes the focused (last opened) one
+	hs.closeFocused() // the focused (last opened) one
 	require.Len(t, hs.m.terms, 2)
 	assert.Equal(t, 79, hs.term(0).w+hs.term(1).w)
 	assert.Greater(t, hs.term(1).w, hs.term(0).w, "proportions kept after closing")
@@ -556,7 +564,7 @@ func TestSplit_QuitAsksWhileTerminalRuns(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "y quits")
 
-	hs.runPalette("close")
+	hs.closeFocused()
 	cmd = hs.send(quitRequestMsg{})
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "no dialog without running terminals")

@@ -20,6 +20,9 @@ type Session interface {
 	Label() string
 	// SSHHost is the host the session tunnels through, empty when none.
 	SSHHost() string
+	// SSHControlPath is the socket that shares the SSH tunnel's connection,
+	// empty when there is none.
+	SSHControlPath() string
 	// Local reports whether the server runs on this machine, so that its
 	// folders are this machine's.
 	Local() bool

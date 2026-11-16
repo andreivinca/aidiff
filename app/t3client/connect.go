@@ -46,6 +46,17 @@ func (s *Session) SSHHost() string {
 	return s.server.sshHost
 }
 
+// SSHControlPath is the ControlMaster socket of the session's SSH tunnel:
+// `ssh -S <path> <host>` shares the tunnel's connection, logging in no
+// second time and setting up none of the host's forwards again. Empty when
+// there is no tunnel or it has exited.
+func (s *Session) SSHControlPath() string {
+	if s.tunnel == nil {
+		return ""
+	}
+	return s.tunnel.controlPath()
+}
+
 // Local reports whether the server runs on this machine: "local", or a URL
 // on loopback. An SSH session's tunnel ends here, but its server does not.
 func (s *Session) Local() bool {

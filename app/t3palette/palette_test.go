@@ -85,9 +85,9 @@ func TestPalette_CommandsFollowState(t *testing.T) {
 
 	swap(h.openThread(t, box, loginID), annotatedModel())
 	cmds := h.p.Commands()
-	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: ▸ Fix login", "T3: Older work", "T3: Open chat",
-		"T3: Send message to agent…", "T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
-		commandNames(cmds), "the thread on screen is marked and offers its chat")
+	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: ▸ Fix login", "T3: Older work",
+		"T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
+		commandNames(cmds), "the thread on screen is marked and can take the annotations")
 	assert.Equal(t, "Sabra2", cmds[0].Detail, "new threads start in the reviewed project")
 	assert.Equal(t, "Sabra2 · idle · main", cmds[2].Detail)
 	assert.Equal(t, "Fix login", cmds[4].Detail)
@@ -295,48 +295,41 @@ func TestPalette_RetiredAnnotationsGoToHistory(t *testing.T) {
 
 func TestPalette_TerminalPlace(t *testing.T) {
 	ssh := newFakeSession("ssh://box", testShell())
-	ssh.sshHost = "box"
+	ssh.sshHost, ssh.control = "box", "/tmp/aidiff-t3-1/ssh.ctl"
 	local := newFakeSession("local", testShell())
 	local.local = true
 	remote := newFakeSession("https://box.example", testShell())
 
-	host, dir := newHarness(t, Config{NoWatch: true, NoChat: true}, nil).p.TerminalPlace()
-	assert.Empty(t, host, "no session runs locally")
-	assert.Empty(t, dir)
+	assert.Equal(t, Place{}, newHarness(t, Config{NoWatch: true, NoChat: true}, nil).p.TerminalPlace(),
+		"no session: a local terminal where terminals start")
 
-	host, dir = newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, ssh, loginID)).p.TerminalPlace()
-	assert.Equal(t, "box", host, "an ssh session opens on its host")
-	assert.Equal(t, "/srv/sabra2", dir, "in the reviewed folder")
+	assert.Equal(t, Place{SSHHost: "box", SSHControlPath: "/tmp/aidiff-t3-1/ssh.ctl", Dir: "/srv/sabra2"},
+		newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, ssh, loginID)).p.TerminalPlace(),
+		"an ssh session opens on its host, over its tunnel's connection, in the reviewed folder")
 
-	host, dir = newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, local, loginID)).p.TerminalPlace()
-	assert.Empty(t, host, "a local session stays local")
-	assert.Equal(t, "/srv/sabra2", dir)
+	assert.Equal(t, Place{Dir: "/srv/sabra2"},
+		newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, local, loginID)).p.TerminalPlace(),
+		"a local session stays local")
 
-	host, dir = newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, remote, loginID)).p.TerminalPlace()
-	assert.Empty(t, host)
-	assert.Empty(t, dir, "a remote server's folder is not this machine's")
+	assert.Equal(t, Place{}, newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, remote, loginID)).p.TerminalPlace(),
+		"a remote server's folder is not this machine's")
 
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
 	h.connect(t, "ssh://box", ssh)
 	h.p.selectProject(ssh, t3client.Project{ID: "p1", WorkspaceRoot: "/srv/repo"})
-	host, dir = h.p.TerminalPlace()
-	assert.Equal(t, "box", host, "connected without a thread: the live server")
-	assert.Equal(t, "/srv/repo", dir, "in the selected project")
+	assert.Equal(t, Place{SSHHost: "box", SSHControlPath: "/tmp/aidiff-t3-1/ssh.ctl", Dir: "/srv/repo"}, h.p.TerminalPlace(),
+		"connected without a thread: the live server, in the selected project")
 }
 
-func TestPalette_ChatAndSendNeedAThread(t *testing.T) {
+func TestPalette_SendAnnotationsNeedsAThread(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
-	assert.Equal(t, splitview.FlashMsg{Text: "T3: connect to a server first (T3: Connect to server…)"}, h.p.openChatMsg())
+	assert.Equal(t, []string{"T3: open a thread first"}, flashes(run(h.p.sendAnnotations(annotatedModel()))))
 
 	a := newFakeSession("ssh://a", testShell())
 	h.connect(t, "ssh://a", a)
-	assert.Equal(t, splitview.FlashMsg{Text: "T3: open a thread first; the palette lists them"}, h.p.openChatMsg())
-
 	swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
-	_, ok := h.p.openChatMsg().(splitview.OpenPaneMsg)
-	assert.True(t, ok)
-
 	assert.Equal(t, []string{"T3: no annotations to send"}, flashes(run(h.p.sendAnnotations(fakeModel{store: annotation.NewStore()}))))
+
 	msgs := run(h.p.sendAnnotations(annotatedModel()))
 	assert.Contains(t, flashes(msgs), "T3: 1 annotation(s) sent to Fix login")
 	require.Len(t, a.server.sent, 1)

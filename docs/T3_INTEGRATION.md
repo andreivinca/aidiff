@@ -26,7 +26,7 @@ In T3 mode the connection is made **before** the full-screen UI starts, so SSH a
 - **ssh://host:**
   1. The host is validated against an allowlist: letters, digits and `. _ @ : -`, not starting with `-`.
   2. One `ssh -- host` login reads the remote runtime file and checks the PID on the remote side (exit 3: no state, exit 4: not running).
-  3. The client creates a private (0700) temp directory and starts `ssh -N -L <dir>/t3.sock:<remote host>:<remote port>` with `ExitOnForwardFailure=yes` and `StreamLocalBindUnlink=yes`, in its own process group. Only this user can create a socket there, so the bearer token cannot reach another local process the way a reused TCP port could.
+  3. The client creates a private (0700) temp directory and starts `ssh -N -L <dir>/t3.sock:<remote host>:<remote port>` with `ExitOnForwardFailure=yes` and `StreamLocalBindUnlink=yes`, in its own process group. That ssh is also a ControlMaster on `<dir>/ssh.ctl`, so remote terminal panes share its connection (see §6). Only this user can create a socket there, so the bearer token cannot reach another local process the way a reused TCP port could.
   4. It waits up to 15 s for the socket to accept connections. If ssh exits first, its stderr is reported.
   5. The tunnel lasts for the whole session; closing the session kills ssh and removes the directory.
   Every ssh command runs with `BatchMode=yes`, `ServerAliveInterval=15` and `ServerAliveCountMax=3`, so a dead link is noticed within about 45 s.
@@ -194,15 +194,19 @@ The popup lists the pane's own commands, then T3's, then the provider's own slas
 Dragging the left mouse button over the transcript selects text from a frozen snapshot, so streaming doesn't move it. Releasing copies it to the clipboard (Linux: `wl-copy` or `xclip`). The pane keeps the mouse while dragging, even outside its bounds.
 
 ### Closing
-Closing the chat doesn't stop the agent. The quit dialog says: "Closes the chat. The agent keeps working on the server; reopen it from the palette."
+Closing the chat doesn't stop the agent. The quit dialog says: "Closes the chat. The agent keeps working on the server; it reopens with the next thread you open."
 
 ## 6. Remote terminals
 
 A terminal opens where the review on screen lives: the thread on screen, or with none the connected server in its selected project. When that session goes through SSH, **Open Terminal** runs:
 
 ```
-ssh -t -- <host> 'cd '<thread cwd>' 2>/dev/null; exec "${SHELL:-/bin/sh}" -l'
+ssh -t -o ClearAllForwardings=yes -o ControlMaster=no -S <dir>/ssh.ctl -- <host> 'cd '<thread cwd>' 2>/dev/null; exec "${SHELL:-/bin/sh}" -l'
 ```
+
+- **One connection.** `-S` makes the terminal a session on the tunnel's own SSH connection: no second login, no new host-key or password prompt. If the control socket is gone, ssh opens a connection of its own.
+- **No duplicate forwards.** The tunnel's ssh already holds the host's `LocalForward`/`RemoteForward`/`DynamicForward` entries from `~/.ssh/config`. `ClearAllForwardings=yes` stops the terminal from binding the same ports again, which would print `Address already in use`, and would fail the login under `ExitOnForwardFailure=yes`.
+- **Lifetime.** The terminal lives on the tunnel's connection, so it ends when that T3 session closes: on quit, on **T3: Reconnect**, and when switching to another server closes the old session.
 
 The directory is single-quote escaped. A `--terminal-command` replaces the `exec …` part and is read by the remote login shell. BatchMode is left off so ssh can prompt inside the pane. Without SSH the pane runs `--terminal-command` locally (through `/bin/sh`), in the thread cwd or the project's workspace root when the server runs on this machine, else in aidiff's own directory.
 

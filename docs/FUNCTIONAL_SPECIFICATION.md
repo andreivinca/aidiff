@@ -82,10 +82,10 @@ Behavior:
 
 ## 6. Terminal pane
 
-- Opened with ctrl+p → **Open Terminal**, or at startup with `--terminal`. Several can be open at once. **Close Terminal** in the palette closes one.
+- Opened with ctrl+p → **Open Terminal**, or at startup with `--terminal`. Several can be open at once. A pane closes when its shell exits.
 - It runs `--terminal-command` (default `$SHELL`). The command is a shell command line, run by `/bin/sh`, so shell quoting works.
 - **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root. A T3 server reached by URL on another machine has folders that are not this machine's, so the pane starts in aidiff's own directory.
-- **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.
+- **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` on the T3 session's own SSH connection, without setting up the host's port forwards a second time, and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.
 - It is a full xterm-256color terminal: colors, application cursor keys, bracketed paste, and mouse support for programs that ask for it.
 - While it has focus, every key except ctrl+], ctrl+p and ctrl+q goes to the terminal.
 - Scrollback is kept but cannot be scrolled yet (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
@@ -97,13 +97,12 @@ ctrl+p opens it from anywhere.
 | Entry | When shown |
 |---|---|
 | Open Terminal | always |
-| Close Terminal | a pane is open |
 | T3: Connect to server… | not connected |
 | T3: New thread…, T3: Projects… | connected |
-| T3: `<thread title>`, up to 8 recent (`▸` marks the current one), T3: All threads… | connected |
-| T3: Open chat, T3: Send message to agent…, T3: Send annotations to agent | a thread is open |
+| T3: Send annotations to agent | a thread is open |
 | T3: Reconnect, T3: Connect to another server… | connected |
 | Quit | always |
+| T3: `<thread title>`, up to 8 recent (`▸` marks the current one), T3: All threads…, under a **Threads** title | connected |
 
 - **Filtering** is a fuzzy subsequence match, so "opt" finds "Open Terminal".
 - **Keys:** ↑/↓ (or ctrl+k / ctrl+n / ctrl+j / tab) move, Enter runs, Esc or ctrl+p closes.
@@ -115,7 +114,7 @@ ctrl+p opens it from anywhere.
 
 - **Connect:** use `--t3 local | ssh://host | https://…`, or the palette at any time. Login is automatic where possible; otherwise pair with `--t3-pair`.
 - **Review a thread:** shows the thread's branch changes (default) or its uncommitted changes (`--t3-source uncommitted`). The diff refreshes when the agent finishes a step. Switching threads from the palette saves the current review's annotations to history.
-- **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message. **T3: Send message to agent…** sends free text.
+- **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
   - queued messages

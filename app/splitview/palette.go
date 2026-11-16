@@ -39,6 +39,7 @@ type palette struct {
 type row struct {
 	label  string
 	detail string
+	group  string // section title; "" for the ungrouped rows on top
 	run    func(Model) (tea.Model, tea.Cmd)
 }
 
@@ -106,18 +107,30 @@ func (m Model) paletteRows() []row {
 	return out
 }
 
-// commands lists what the palette offers in the current state.
+// commands lists what the palette offers in the current state: the
+// ungrouped commands, Quit last among them, then each group's commands.
 func (m Model) commands() []row {
 	rows := []row{{label: "Open Terminal", run: Model.openTerminal}}
-	if len(m.terms) > 0 {
-		rows = append(rows, row{label: "Close Terminal", run: Model.closeFocusedTerminal})
-	}
+	var groups []string
+	byGroup := map[string][]row{}
 	if m.cfg.Commands != nil {
 		for _, c := range m.cfg.Commands() {
-			rows = append(rows, row{label: c.Name, detail: c.Detail, run: runCommand(c)})
+			r := row{label: c.Name, detail: c.Detail, group: c.Group, run: runCommand(c)}
+			if c.Group == "" {
+				rows = append(rows, r)
+				continue
+			}
+			if _, seen := byGroup[c.Group]; !seen {
+				groups = append(groups, c.Group)
+			}
+			byGroup[c.Group] = append(byGroup[c.Group], r)
 		}
 	}
-	return append(rows, row{label: "Quit", detail: m.cfg.Keys.Quit, run: Model.askQuit})
+	rows = append(rows, row{label: "Quit", detail: m.cfg.Keys.Quit, run: Model.askQuit})
+	for _, g := range groups {
+		rows = append(rows, byGroup[g]...)
+	}
+	return rows
 }
 
 // runCommand adapts an outside command to a palette row.

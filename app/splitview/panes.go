@@ -101,19 +101,6 @@ func (m Model) closeTerminal(i int) (tea.Model, tea.Cmd) {
 	return m.relayout()
 }
 
-// closeFocusedTerminal closes the focused terminal, or the rightmost one when
-// the wrapped model has focus.
-func (m Model) closeFocusedTerminal() (tea.Model, tea.Cmd) {
-	if len(m.terms) == 0 {
-		return m, nil
-	}
-	i := m.focus
-	if i == focusDiff {
-		i = len(m.terms) - 1
-	}
-	return m.closeTerminal(i)
-}
-
 func (m Model) handleTermUpdate(msg termUpdateMsg) (tea.Model, tea.Cmd) {
 	i := slices.Index(m.terms, msg.term)
 	if i < 0 {

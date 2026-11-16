@@ -19,6 +19,9 @@ type OpenPaneMsg struct {
 type Command struct {
 	Name   string
 	Detail string // dim text on the right, if any
+	// Group puts the command in a titled section below the ungrouped ones;
+	// commands of a group are listed together, groups in order of first use.
+	Group string
 	// Run starts the command. It receives the wrapped model, so a command can
 	// read the review it acts on, and returns the work to do, if any.
 	Run func(inner tea.Model) tea.Cmd

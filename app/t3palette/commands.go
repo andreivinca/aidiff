@@ -13,6 +13,9 @@ import (
 // callTimeout bounds one palette operation on a connected T3 server.
 const callTimeout = 30 * time.Second
 
+// threadsGroup is the palette section the thread rows are listed in.
+const threadsGroup = "Threads"
+
 // inlineThreads is how many recent threads the palette lists directly.
 const inlineThreads = 8
 
@@ -36,12 +39,7 @@ func (t *Palette) Commands() []splitview.Command {
 	}
 	cmds = append(cmds, t.threadCommands(v, scope)...)
 	if th := v.onScreen.thread(); th != nil {
-		title := threadTitle(*th)
-		cmds = append(cmds,
-			splitview.Command{Name: "T3: Open chat", Detail: title, Run: t.openChat},
-			splitview.Command{Name: "T3: Send message to agent…", Detail: title, Run: t.messagePrompt},
-			splitview.Command{Name: "T3: Send annotations to agent", Detail: title, Run: t.sendAnnotations},
-		)
+		cmds = append(cmds, splitview.Command{Name: "T3: Send annotations to agent", Detail: threadTitle(*th), Run: t.sendAnnotations})
 	}
 	return append(cmds,
 		splitview.Command{Name: "T3: Reconnect", Detail: server, Run: t.reconnect},
@@ -60,10 +58,11 @@ func (t *Palette) threadCommands(v state, scope string) []splitview.Command {
 		if th.ID == current {
 			label = "T3: ▸ " + threadTitle(th)
 		}
-		cmds = append(cmds, splitview.Command{Name: label, Detail: threadDetail(v.shell, th), Run: t.openThread(v.live, th.ID)})
+		cmds = append(cmds, splitview.Command{Name: label, Detail: threadDetail(v.shell, th), Group: threadsGroup,
+			Run: t.openThread(v.live, th.ID)})
 	}
 	if len(threads) > inlineThreads {
-		cmds = append(cmds, splitview.Command{Name: "T3: All threads…", Detail: scope, Run: t.threadPicker})
+		cmds = append(cmds, splitview.Command{Name: "T3: All threads…", Detail: scope, Group: threadsGroup, Run: t.threadPicker})
 	}
 	return cmds
 }
