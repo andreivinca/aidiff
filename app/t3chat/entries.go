@@ -52,7 +52,7 @@ func questions(qs []t3client.Question) []chat.Question {
 		for _, o := range q.Options {
 			options = append(options, chat.Option{Label: o.Label, Description: o.Description, Value: o.Answer()})
 		}
-		out = append(out, chat.Question{ID: q.ID, Text: q.Question, Options: options,
+		out = append(out, chat.Question{Header: q.Header, ID: q.ID, Text: q.Question, Options: options,
 			Multiple: q.MultiSelect, OwnWords: q.AllowCustomAnswer})
 	}
 	return out

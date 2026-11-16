@@ -98,6 +98,7 @@ type Questions struct {
 
 // Question is one question of a Questions prompt.
 type Question struct {
+	Header   string
 	ID       string
 	Text     string
 	Options  []Option // none for a question answered in the user's words

@@ -165,6 +165,16 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 			secondary = append([]Hint{{"↑", "edit queued"}}, secondary...)
 		}
 	}
+	if prompt := p.pendingQuestionsLocked(); prompt != nil && primary.Key == "enter" {
+		primary.Label = "answer"
+		if len(prompt.Questions) > 1 {
+			primary.Label = "save answer"
+			if p.answersFor == prompt.ID && p.questionTab == len(prompt.Questions) {
+				primary.Label = "submit answers"
+			}
+			secondary = append([]Hint{{"tab/shift+tab", "questions"}}, secondary...)
+		}
+	}
 	return primary, secondary
 }
 

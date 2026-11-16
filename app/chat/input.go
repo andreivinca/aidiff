@@ -35,6 +35,9 @@ func (p *Pane) SendText(s string) {
 	}
 	p.note = ""
 	p.gen++
+	if s == "\x1b[Z" && p.moveQuestionLocked(-1) {
+		return
+	}
 	if p.modalTextLocked(s) || p.editKeyLocked(s) || p.modifiedTextLocked(s) {
 		return
 	}
@@ -51,7 +54,9 @@ func (p *Pane) typeLocked(r rune) {
 			p.submitLocked()
 		}
 	case '\t':
-		p.applySuggestionLocked(false)
+		if !p.moveQuestionLocked(1) {
+			p.applySuggestionLocked(false)
+		}
 	case '\x1b':
 		if _, _, ok := p.input.selection(); ok {
 			p.input.deselect()
@@ -243,7 +248,25 @@ func (p *Pane) SendKey(k uv.KeyPressEvent) {
 // composerKeyLocked handles a key for the input and the transcript; mu must
 // be held.
 func (p *Pane) composerKeyLocked(k uv.KeyPressEvent) {
+	if p.input.empty() && !p.busy {
+		if q := p.activeChoiceLocked(); q != nil && len(q.Options) > 0 && (k.Code == uv.KeyUp || k.Code == uv.KeyDown) {
+			delta := 1
+			if k.Code == uv.KeyUp {
+				delta = -1
+			}
+			p.questionChoice = (p.questionChoice + delta + len(q.Options) + 1) % (len(q.Options) + 1)
+			return
+		}
+	}
 	switch k.Code {
+	case uv.KeyTab:
+		delta := 1
+		if k.Mod&uv.ModShift != 0 {
+			delta = -1
+		}
+		if !p.moveQuestionLocked(delta) {
+			p.applySuggestionLocked(false)
+		}
 	case uv.KeyLeft:
 		if p.input.empty() && k.Mod == 0 {
 			p.activity.open = true

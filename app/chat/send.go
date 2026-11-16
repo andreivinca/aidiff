@@ -18,11 +18,28 @@ var (
 func (p *Pane) submitLocked() {
 	text := strings.TrimSpace(p.input.text())
 	if text == "" {
+		if q := p.activeChoiceLocked(); q != nil && len(q.Options) > 0 {
+			if p.questionChoice >= len(q.Options) {
+				p.note = "Type your own answer below, then press Enter"
+				return
+			}
+			if err := p.answerCmd(fmt.Sprint(p.questionChoice + 1)); err != nil {
+				p.note = err.Error()
+			}
+			return
+		}
+		if prompt := p.pendingQuestionsLocked(); prompt != nil && len(prompt.Questions) > 1 && p.answersFor == prompt.ID && p.questionTab == len(prompt.Questions) {
+			if err := p.submitAnswersLocked(prompt); err != nil {
+				p.note = err.Error()
+			}
+		}
 		return
 	}
 	var err error
 	if strings.HasPrefix(text, "/") {
 		err = p.commandLocked(text)
+	} else if p.pendingQuestionsLocked() != nil {
+		err = p.answerCmd(text)
 	} else {
 		err = p.sendMessageLocked(text)
 	}

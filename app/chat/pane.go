@@ -51,40 +51,43 @@ type Pane struct {
 	builtins []command // the pane's own slash commands
 	box      *mailbox  // what the backend delivered; it owns Updates
 
-	mu         sync.Mutex
-	backend    Backend // nil when not connected
-	title      string  // the pane's title until the conversation names itself
-	link       string  // the connection's state for the header; "" once the backend showed the conversation
-	conv       Conversation
-	activities []Activity // the conversation's activity, grouped for the list
-	counts     activityCounts
-	pending    []queuedMessage // messages sent from here the backend has not taken over
-	activity   activityView
-	stop       stopConfirmation
-	input      editor
-	inputTop   int               // the draft's first row shown in the input box; it moves only to keep the cursor in view
-	sug        int               // the selected row of the slash-command popup, kept within it where shown
-	sugHidden  bool              // esc closed the popup until the input changes
-	answers    map[string]Answer // answers given so far to the questions of answersFor
-	answersFor string
-	showWork   bool           // /work: the agent's steps shown one per line instead of a summary
-	images     []pendingImage // images pasted into the input, each shown there as its token
-	imageSeq   int
-	reading    int    // clipboard and file reads in flight
-	busy       bool   // a request the composer waits on is in flight
-	note       string // the last failure or hint, shown until the next key
-	scroll     int    // lines scrolled up from the end of the transcript; 0 follows it
-	width      int
-	height     int
-	gen        uint64 // bumps on every visible change
-	frame      frame
-	rowCache   rowCache         // the transcript's rendered messages (rowcache.go)
-	wheel      wheelState       // the run of wheel notches, which speeds scrolling up (wheel.go)
-	now        func() time.Time // the clock the wheel reads; tests set it
-	selection  textSelection
-	subID      uint64 // the current subscription; what older ones deliver is dropped
-	cancel     context.CancelFunc
-	closed     bool
+	mu             sync.Mutex
+	backend        Backend // nil when not connected
+	title          string  // the pane's title until the conversation names itself
+	link           string  // the connection's state for the header; "" once the backend showed the conversation
+	conv           Conversation
+	activities     []Activity // the conversation's activity, grouped for the list
+	counts         activityCounts
+	pending        []queuedMessage // messages sent from here the backend has not taken over
+	activity       activityView
+	stop           stopConfirmation
+	input          editor
+	inputTop       int               // the draft's first row shown in the input box; it moves only to keep the cursor in view
+	sug            int               // the selected row of the slash-command popup, kept within it where shown
+	sugHidden      bool              // esc closed the popup until the input changes
+	answers        map[string]Answer // answers given so far to the questions of answersFor
+	answersFor     string
+	questionTab    int
+	questionDrafts map[int]string
+	questionChoice int
+	showWork       bool           // /work: the agent's steps shown one per line instead of a summary
+	images         []pendingImage // images pasted into the input, each shown there as its token
+	imageSeq       int
+	reading        int    // clipboard and file reads in flight
+	busy           bool   // a request the composer waits on is in flight
+	note           string // the last failure or hint, shown until the next key
+	scroll         int    // lines scrolled up from the end of the transcript; 0 follows it
+	width          int
+	height         int
+	gen            uint64 // bumps on every visible change
+	frame          frame
+	rowCache       rowCache         // the transcript's rendered messages (rowcache.go)
+	wheel          wheelState       // the run of wheel notches, which speeds scrolling up (wheel.go)
+	now            func() time.Time // the clock the wheel reads; tests set it
+	selection      textSelection
+	subID          uint64 // the current subscription; what older ones deliver is dropped
+	cancel         context.CancelFunc
+	closed         bool
 }
 
 // frame is a Render result and what it was built from.

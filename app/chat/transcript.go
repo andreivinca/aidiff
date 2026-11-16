@@ -90,7 +90,14 @@ func (p *Pane) entryRowsLocked(e Entry, w int) []string {
 		if e.ID == p.answersFor {
 			answered = p.answers
 		}
-		return questionRows(e, w, st, answered)
+		if !e.Pending {
+			return questionRows(e, w, st, answered)
+		}
+		tab := 0
+		if e.ID == p.answersFor {
+			tab = p.questionTab
+		}
+		return questionPromptRows(e, w, st, answered, tab, p.questionChoice)
 	case Failure:
 		return []string{st.bad.Render(ansi.Truncate(inset+"✗ "+firstLine(e.Text), w, "…"))}
 	}
@@ -277,13 +284,17 @@ func questionRows(q Questions, w int, st styles, answered map[string]Answer) []s
 		if _, ok := answered[question.ID]; ok {
 			mark = "✓ "
 		}
-		out = append(out, st.warn.Render(ansi.Truncate(inset+mark+firstLine(question.Text), w, "…")))
+		for _, row := range wrapLines(mark+question.Text, w) {
+			out = append(out, st.warn.Render(row))
+		}
 		for i, o := range question.Options {
-			line := fmt.Sprintf("%s    %d) %s", inset, i+1, o.Label)
+			line := fmt.Sprintf("    %d) %s", i+1, o.Label)
 			if o.Description != "" {
-				line += " — " + firstLine(o.Description)
+				line += " — " + o.Description
 			}
-			out = append(out, st.muted.Render(ansi.Truncate(line, w, "…")))
+			for _, row := range wrapLines(line, w) {
+				out = append(out, st.muted.Render(row))
+			}
 		}
 	}
 	hint := "  /1, /2… picks an option"
@@ -294,11 +305,14 @@ func questionRows(q Questions, w int, st styles, answered map[string]Answer) []s
 		case len(next.Options) == 0:
 			hint = "  /answer <text> replies"
 		}
-		if next.OwnWords && len(next.Options) > 0 {
+		if len(next.Options) > 0 {
 			hint += " · /answer <text> for your own"
 		}
 	}
-	return append(out, st.muted.Render(ansi.Truncate(inset+hint+" · /dismiss drops it", w, "…")))
+	for _, row := range wrapLines(hint+"\n  Type a number or your own answer, then Enter.\n  /dismiss skips the question.", w) {
+		out = append(out, st.muted.Render(row))
+	}
+	return out
 }
 
 func firstQuestion(q Questions) string {

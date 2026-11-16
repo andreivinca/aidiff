@@ -25,14 +25,24 @@ func (p *Pane) pendingQuestionsLocked() *Questions {
 // answers once every question has one. They are kept until the backend took
 // them; when sending fails, only the last answer has to be given again.
 func (p *Pane) answerCmd(raw string) error {
+	if p.busy {
+		return errBusy
+	}
 	prompt := p.pendingQuestionsLocked()
 	if prompt == nil {
 		return errors.New("the agent is not asking a question")
 	}
 	if p.answersFor != prompt.ID {
 		p.answersFor, p.answers = prompt.ID, map[string]Answer{}
+		p.questionTab, p.questionDrafts = 0, map[int]string{}
 	}
 	q := nextQuestion(prompt.Questions, p.answers)
+	if len(prompt.Questions) > 1 {
+		if p.questionTab >= len(prompt.Questions) {
+			return p.submitAnswersLocked(prompt)
+		}
+		q = &prompt.Questions[p.questionTab]
+	}
 	if q == nil {
 		return errors.New("every question is answered already")
 	}
@@ -41,6 +51,13 @@ func (p *Pane) answerCmd(raw string) error {
 		return err
 	}
 	p.answers[q.ID] = answer
+	if len(prompt.Questions) > 1 {
+		p.questionDrafts[p.questionTab] = raw
+		p.questionTab++
+		p.questionChoice = p.savedChoiceLocked(prompt)
+		p.note = "Answer saved; Tab / Shift+Tab to review or change answers"
+		return nil
+	}
 	if next := nextQuestion(prompt.Questions, p.answers); next != nil {
 		p.note = fmt.Sprintf("answered %d of %d; next: %s", len(p.answers), len(prompt.Questions), firstLine(next.Text))
 		return nil
@@ -151,4 +168,72 @@ func parseNumbers(s string) ([]int, bool) {
 		out = append(out, n)
 	}
 	return out, len(out) > 0
+}
+
+// moveQuestionLocked preserves drafts while switching question tabs.
+func (p *Pane) moveQuestionLocked(delta int) bool {
+	prompt := p.pendingQuestionsLocked()
+	if prompt == nil || len(prompt.Questions) < 2 || p.busy {
+		return false
+	}
+	if p.answersFor != prompt.ID {
+		p.answersFor, p.answers = prompt.ID, map[string]Answer{}
+		p.questionTab, p.questionDrafts = 0, map[int]string{}
+	}
+	p.questionDrafts[p.questionTab] = p.input.text()
+	p.questionTab = (p.questionTab + delta + len(prompt.Questions) + 1) % (len(prompt.Questions) + 1)
+	p.questionChoice = p.savedChoiceLocked(prompt)
+	p.input.clear()
+	p.input.insert(p.questionDrafts[p.questionTab])
+	p.inputChanged()
+	p.scroll = 0
+	return true
+}
+
+func (p *Pane) submitAnswersLocked(prompt *Questions) error {
+	if nextQuestion(prompt.Questions, p.answers) != nil {
+		return errors.New("answer every question before submitting; Tab to return")
+	}
+	id, answers := prompt.ID, maps.Clone(p.answers)
+	b := p.backend
+	return p.requestLocked(request{
+		run: func(ctx context.Context) error {
+			if err := b.Answer(ctx, id, answers); err != nil {
+				return fmt.Errorf("answer failed: %w", err)
+			}
+			return nil
+		},
+		finish: func(err error) {
+			if err == nil && p.answersFor == id {
+				p.answers, p.answersFor = nil, ""
+				p.questionTab, p.questionDrafts = 0, nil
+			}
+		},
+	})
+}
+
+// savedChoiceLocked is the picker row to start the current tab on: the
+// answer already saved for its question, else the first option.
+func (p *Pane) savedChoiceLocked(prompt *Questions) int {
+	if p.questionTab >= len(prompt.Questions) {
+		return 0
+	}
+	q := prompt.Questions[p.questionTab]
+	a, ok := p.answers[q.ID]
+	return savedChoice(q, a, ok)
+}
+
+func (p *Pane) activeChoiceLocked() *Question {
+	prompt := p.pendingQuestionsLocked()
+	if prompt == nil {
+		return nil
+	}
+	tab := 0
+	if p.answersFor == prompt.ID {
+		tab = p.questionTab
+	}
+	if tab >= len(prompt.Questions) {
+		return nil
+	}
+	return &prompt.Questions[tab]
 }
