@@ -151,6 +151,8 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | ctrl+a / ctrl+e / ctrl+u / ctrl+w | Line start / end / clear / delete word before the cursor |
 | ctrl+← / ctrl+→ (or alt) | Move by a word |
 | ctrl+delete (or alt) | Delete the word after the cursor |
+| ctrl+backspace (or alt) | Delete the word before the cursor, stopping where ctrl+← would |
+| ctrl+c / ctrl+shift+c | Copy the selection: the text selected in the input, else the transcript text the mouse selected. There is one selection at a time: a drag drops the input's, a key drops the transcript's |
 | shift+← / shift+→ / shift+home / shift+end | Select; typing or pasting replaces the selection, backspace and delete remove it |
 | ctrl+shift+← / ctrl+shift+→ | Select a word at a time |
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, which the input treats as one character (the cursor skips it, one delete removes it and drops the image), text is inserted |

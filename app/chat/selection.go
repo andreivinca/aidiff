@@ -49,6 +49,7 @@ func (p *Pane) startSelectionLocked(m uv.Mouse) {
 		return
 	}
 	p.selection = textSelection{}
+	p.input.deselect() // one selection at a time, so a copy takes the one on screen
 	p.gen++
 	f := p.frame
 	if !f.valid || m.Y < f.layout.headerH || m.Y >= f.layout.textBottom {

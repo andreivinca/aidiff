@@ -261,3 +261,26 @@ func TestPane_BlocksAreDrawnAsChips(t *testing.T) {
 	assert.Equal(t, panel, bg(x-1), "the text around it is not")
 	assert.Equal(t, panel, bg(x+len("[Image #1]")))
 }
+
+func TestPane_CtrlBackspaceDeletesAWord(t *testing.T) {
+	p, _ := newTestPane(t, 80, 14, fixture())
+	p.SendText("fix the login.go handler")
+	p.SendText("\b") // ctrl+backspace as most terminals send it
+	assert.Equal(t, "fix the login.go ", p.input.text(), "the word before the cursor goes")
+	p.SendText("\b")
+	assert.Equal(t, "fix the login.", p.input.text(), "a word stops where ctrl+← does")
+	p.SendText("\x1b\x7f") // alt+backspace
+	assert.Equal(t, "fix the login", p.input.text())
+	assert.True(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyBackspace, Mod: uv.ModCtrl}),
+		"ctrl+backspace reported with its modifier")
+	assert.Equal(t, "fix the ", p.input.text())
+	p.SendText("\x7f")
+	assert.Equal(t, "fix the", p.input.text(), "a plain backspace still deletes one character")
+
+	locked(p, func() {
+		p.input.insert(" ")
+		p.input.insertAtom("[Image #1]")
+	})
+	p.SendText("\b")
+	assert.Equal(t, "fix the ", p.input.text(), "a block is one word")
+}

@@ -87,6 +87,15 @@ func (e *editor) selection() (lo, hi int, ok bool) {
 	return min(e.anchor, e.cur), max(e.anchor, e.cur), true
 }
 
+// selected is the selected text, "" when nothing is selected.
+func (e *editor) selected() string {
+	lo, hi, ok := e.selection()
+	if !ok {
+		return ""
+	}
+	return strings.Join(e.clusters[lo:hi], "")
+}
+
 // deselect drops the selection, leaving the text and cursor as they are.
 func (e *editor) deselect() {
 	e.selecting = false
@@ -234,6 +243,17 @@ func (e *editor) killWord() {
 	for i > 0 && !e.space(i-1) {
 		i--
 	}
+	e.remove(i, e.cur)
+	e.cur = i
+}
+
+// deleteWordLeft deletes back to the start of the word before the cursor,
+// the way ctrl+← moves, or deletes the selection.
+func (e *editor) deleteWordLeft() {
+	if e.deleteSelection() {
+		return
+	}
+	i := e.wordLeft()
 	e.remove(i, e.cur)
 	e.cur = i
 }

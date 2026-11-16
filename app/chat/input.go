@@ -4,13 +4,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 )
 
 // SendText takes typed bytes: text goes into the input line, control bytes
-// edit it (backspace, ctrl+a, ctrl+e, ctrl+u, ctrl+w) or send it (enter), and
+// edit it (backspace, ctrl+backspace, ctrl+a, ctrl+e, ctrl+u, ctrl+w), copy
+// the selection (ctrl+c) or send it (enter), and
 // the escape sequences of modified arrows, home, end and delete move by word
 // and select (see editKeyLocked).
 // With the slash-command popup open, tab completes the selected row, enter
@@ -20,6 +22,10 @@ import (
 func (p *Pane) SendText(s string) {
 	p.lock()
 	defer p.mu.Unlock()
+	if s == "\x03" && p.stop.turn == "" && !p.activity.open { // ctrl+c, before a key drops the selection
+		p.copyKeyLocked()
+		return
+	}
 	if p.selection.rows != nil {
 		p.selection = textSelection{}
 		p.gen++
@@ -54,8 +60,11 @@ func (p *Pane) typeLocked(r rune) {
 		p.escapeLocked()
 	case '\n':
 		p.insertLocked("\n")
-	case 0x7f, '\b':
+	case 0x7f:
 		p.input.backspace()
+		p.inputChanged()
+	case '\b': // ctrl+backspace, as most terminals send it (and ctrl+h)
+		p.input.deleteWordLeft()
 		p.inputChanged()
 	case 0x01: // ctrl+a
 		p.input.home()
@@ -145,30 +154,67 @@ func (p *Pane) editKeyLocked(s string) bool {
 }
 
 // modifiedTextLocked handles alt chords typed as text: alt+enter inserts a
-// line break, any other is dropped.
+// line break, alt+backspace deletes the word before the cursor, any other is
+// dropped.
 func (p *Pane) modifiedTextLocked(s string) bool {
 	if !strings.HasPrefix(s, "\x1b") || len(s) <= 1 {
 		return false
 	}
-	if s == "\x1b\r" || s == "\x1b\n" {
+	switch s {
+	case "\x1b\r", "\x1b\n":
 		p.insertLocked("\n")
+	case "\x1b\x7f", "\x1b\b":
+		p.input.deleteWordLeft()
+		p.inputChanged()
 	}
 	return true
 }
 
+// copyKeyLocked copies the selection, for ctrl+c and ctrl+shift+c: the text
+// selected in the input, else the transcript text the mouse selected, which
+// stays selected. mu must be held.
+func (p *Pane) copyKeyLocked() {
+	p.note = ""
+	p.gen++
+	if text := p.input.selected(); text != "" {
+		p.copySelectionLocked(text)
+		return
+	}
+	if text := p.selection.text(p.width); p.selection.rows != nil && text != "" {
+		p.copySelectionLocked(text)
+		return
+	}
+	p.note = "nothing selected to copy"
+}
+
 // SendModifiedKey takes an enter with a modifier (shift+enter, ctrl+enter,
-// alt+enter) as a line break in the input, and reports whether it took k.
-// Any other key, and every key while the stop dialog or the activity view is
+// alt+enter) as a line break in the input, a backspace with ctrl or alt as
+// deleting the word before the cursor, and ctrl+shift+c as copying the
+// selection; it reports whether it took k. Any
+// other key, and every key while the stop dialog or the activity view is
 // open, is left to arrive as its plain key.
 func (p *Pane) SendModifiedKey(k uv.KeyPressEvent) bool {
 	p.lock()
 	defer p.mu.Unlock()
-	if k.Code != uv.KeyEnter || k.Mod == 0 || p.stop.turn != "" || p.activity.open {
+	if k.Mod == 0 || p.stop.turn != "" || p.activity.open {
+		return false
+	}
+	if k.Mod&(uv.ModCtrl|uv.ModShift) == uv.ModCtrl|uv.ModShift && unicode.ToLower(k.Code) == 'c' {
+		p.copyKeyLocked()
+		return true
+	}
+	wordBack := k.Code == uv.KeyBackspace && k.Mod&(uv.ModCtrl|uv.ModAlt) != 0
+	if k.Code != uv.KeyEnter && !wordBack {
 		return false
 	}
 	p.selection = textSelection{}
 	p.note = ""
 	p.gen++
+	if wordBack {
+		p.input.deleteWordLeft()
+		p.inputChanged()
+		return true
+	}
 	p.insertLocked("\n")
 	return true
 }
