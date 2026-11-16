@@ -121,6 +121,10 @@ func run(opts options) (int, error) {
 		lipgloss.SetColorProfile(termenv.TrueColor)
 	}
 
+	// registered first so it runs last, after every other deferred close
+	deadline := newExitDeadline()
+	defer deadline.disarm()
+
 	store := annotation.NewStore()
 	deps := newReviewDeps(opts)
 
@@ -179,7 +183,7 @@ func run(opts options) (int, error) {
 	guard := &shutdownGuard{}
 	stop := guard.watch(p)
 	defer stop()
-	finalModel, runErr := runSplit(p, tuiOut)
+	finalModel, runErr := runSplit(p, tuiOut, deadline)
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()

@@ -42,9 +42,10 @@ func splitProgramOptions() []tea.ProgramOption {
 // runSplit runs the program on out with modified-key reports on, so a chat
 // pane can tell shift+enter from enter, then closes the split's panes and
 // returns the review it wrapped, for revdiff's finalization.
-func runSplit(p *tea.Program, out io.Writer) (tea.Model, error) {
+func runSplit(p *tea.Program, out io.Writer, deadline *exitDeadline) (tea.Model, error) {
 	restoreKeys := splitview.ReportModifiedKeys(out)
 	final, err := p.Run()
+	deadline.arm(shutdownLimit) // the screen is gone: whatever follows must not hang
 	restoreKeys()
 	return closeSplit(final), err
 }
