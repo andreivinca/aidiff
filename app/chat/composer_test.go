@@ -117,7 +117,7 @@ func TestPane_ComposerBackgroundSurvivesNestedStyles(t *testing.T) {
 		_, err := emu.WriteString(strings.Join(rows, "\r\n"))
 		require.NoError(t, err)
 		for y, row := range rows[:len(rows)-1] { // the shortcut row uses the terminal background
-			if row == "" { // outer spacing also uses the terminal background
+			if row == "" || strings.ContainsAny(ansi.Strip(row), "▄▀") { // outer spacing also uses the terminal background
 				continue
 			}
 			start := 0
@@ -283,4 +283,29 @@ func TestPane_CtrlBackspaceDeletesAWord(t *testing.T) {
 	})
 	p.SendText("\b")
 	assert.Equal(t, "fix the ", p.input.text(), "a block is one word")
+}
+
+func TestPane_ComposerHalfRowPadding(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+	p := New(nil, "Padding", 80, 20, Config{})
+	t.Cleanup(p.Close)
+	var rows []string
+	locked(p, func() {
+		p.conv.Settings = Settings{Mode: "Build", Model: "Test model"}
+		rows = p.composerRowsLocked(80, 17, true)
+	})
+	settings := -1
+	for i, row := range rows {
+		if strings.Contains(ansi.Strip(row), "Test model") {
+			settings = i
+		}
+	}
+	require.GreaterOrEqual(t, settings, 0)
+	require.Less(t, settings+1, len(rows))
+	assert.Equal(t, "  "+strings.Repeat("▀", 78), ansi.Strip(rows[settings+1]))
+	assert.NotContains(t, ansi.Strip(strings.Join(rows, "\n")), "▄")
+	assert.Contains(t, ansi.Strip(rows[settings]), "│   Build")
+	assert.NotContains(t, ansi.Strip(strings.Join(rows, "\n")), "▌")
 }

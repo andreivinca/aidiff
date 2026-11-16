@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path"
 	"path/filepath"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -154,4 +156,26 @@ func (s sourceSetup) newFileTree(entries []diff.FileEntry) ui.FileTreeComponent 
 		return sidepane.NewFolderTree(s.folder)
 	}
 	return sidepane.NewFileTree(entries)
+}
+
+// branchName resolves the current branch in the reviewed repository.
+func (s sourceSetup) branchName() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if s.t3 != nil {
+		refs, err := s.t3.Session.Conn().ListRefs(ctx, s.t3.Target.Cwd)
+		if err == nil {
+			for _, ref := range refs {
+				if ref.Current {
+					return ref.Name
+				}
+			}
+		}
+		return ""
+	}
+	if s.vcsType != diff.VCSGit {
+		return ""
+	}
+	name, _ := (localGit{dir: s.workDir}).run(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
+	return name
 }

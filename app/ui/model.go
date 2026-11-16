@@ -838,6 +838,8 @@ type ModelConfig struct {
 	// Project is the folder, or the T3 project, the review belongs to, shown
 	// after MachineName. Empty shows none.
 	Project string
+	// Branch is the current Git branch shown in the status bar.
+	Branch string
 	// T3Mode marks a review that comes from T3 Code, labeled in the status bar.
 	T3Mode bool
 }
@@ -932,7 +934,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 	}
 
 	return Model{
-		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode),
+		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,

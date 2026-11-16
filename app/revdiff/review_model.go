@@ -69,6 +69,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		T3Mode:               src.t3 != nil,
 		MachineName:          src.machineName(d.hostname),
 		Project:              src.projectName(),
+		Branch:               src.branchName(),
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,

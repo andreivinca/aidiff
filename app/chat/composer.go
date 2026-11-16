@@ -31,7 +31,7 @@ func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
 	popup := p.suggestionRowsLocked(w, min(maxSuggestionRows, room))
 	room -= len(popup)
 	rows := append([]string(nil), popup...)
-	// Separate the input panel from the status and shortcut rows when space allows.
+	// Separate the input panel from the status row when space allows.
 	spaced := room >= 4
 	if spaced {
 		rows = append(rows, "")
@@ -42,14 +42,14 @@ func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
 	for _, line := range input {
 		rows = append(rows, p.composerRowLocked(line, w, showCursor))
 	}
-	if room >= 2 {
+	if room >= 3 {
 		rows = append(rows, p.composerRowLocked("", w, showCursor))
 	}
 	if meta {
 		rows = append(rows, p.composerRowLocked(p.composerSettingsLocked(inner), w, showCursor))
 	}
-	if spaced {
-		rows = append(rows, "")
+	if room >= 2 {
+		rows = append(rows, p.composerEdgeLocked(w, showCursor))
 	}
 	if hints {
 		rows = append(rows, p.composerHintsLocked(w, len(popup) > 0))
@@ -70,7 +70,22 @@ func (p *Pane) composerRowLocked(text string, w int, focused bool) string {
 	if !focused {
 		accent = p.styles.muted
 	}
+
 	return accent.Render("│") + " " + p.composer.fill(p.composer.text.Render("  ")+text, w-2)
+}
+
+// composerEdgeLocked uses half-height blocks to soften the panel's padding.
+// The unpainted half retains the terminal background.
+func (p *Pane) composerEdgeLocked(w int, focused bool) string {
+	if w < 6 {
+		return p.composerRowLocked("", w, focused)
+	}
+	if _, colored := p.composer.text.GetBackground().(lipgloss.Color); !colored {
+		return p.composerRowLocked("", w, focused)
+	}
+
+	edge := lipgloss.NewStyle().Foreground(composerBackground)
+	return "  " + edge.Render(strings.Repeat("▀", w-2))
 }
 
 // composerSettingsLocked shows how the agent runs: its mode, its model and
