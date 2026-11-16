@@ -1,6 +1,6 @@
 # Known issues and gaps
 
-These are limitations found in aidiff's own features at `v0.0.11`.
+These are limitations found in aidiff's own features at `v0.0.12`.
 
 ## Branding
 
