@@ -75,3 +75,9 @@ type termUpdateMsg struct {
 // quitRequestMsg stands in for a tea.QuitMsg the user has not confirmed yet
 // (see QuitGuard).
 type quitRequestMsg struct{}
+
+// ForceQuitMsg quits without the quit dialog, closing every open pane. It is
+// for quits nobody is there to confirm, such as a hangup: the terminal is
+// gone, so a dialog would never be answered and the program would run on
+// unseen.
+type ForceQuitMsg struct{}

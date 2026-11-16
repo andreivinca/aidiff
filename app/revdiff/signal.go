@@ -6,6 +6,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/umputun/revdiff/app/splitview"
 )
 
 //go:generate moq -out quitter_moq_test.go -pkg main -skip-ensure -fmt goimports . quitter
@@ -18,16 +22,26 @@ type quitter interface{ Quit() }
 // graceful Quit and records that the exit was signal-driven. SIGINT is caught
 // and drained without quitting (see watch/handle). The flag is read only after
 // p.Run() joins, so the annotation store is never touched off the main goroutine.
+//
+// With a deadline, the first signal also starts it, so a quit that never
+// completes still ends the process, and any later signal ends it at once.
 type shutdownGuard struct {
 	once     sync.Once
 	signaled atomic.Bool
+	deadline *exitDeadline // nil: signals only quit
 }
 
 func (g *shutdownGuard) trigger(quit func()) {
+	first := false
 	g.once.Do(func() {
+		first = true
 		g.signaled.Store(true)
+		g.deadline.arm(shutdownLimit)
 		quit()
 	})
+	if !first {
+		g.deadline.expireNow()
+	}
 }
 
 func (g *shutdownGuard) handle(ch <-chan os.Signal, quit func()) {
@@ -63,6 +77,18 @@ func (g *shutdownGuard) watch(q quitter) (stop func()) {
 			close(ch)
 		})
 	}
+}
+
+// forceQuitter quits the split without its quit dialog. A signal-driven quit
+// must not ask: after a hangup the terminal is gone, nobody can answer, and the
+// process would keep running unseen, holding the T3 SSH tunnel and its port
+// forwards.
+type forceQuitter struct{ p *tea.Program }
+
+// Quit does not wait for the program to take the message, so a wedged event
+// loop cannot block the signal handler and a second signal still gets through.
+func (f forceQuitter) Quit() {
+	go f.p.Send(splitview.ForceQuitMsg{})
 }
 
 func (g *shutdownGuard) wasSignaled() bool {

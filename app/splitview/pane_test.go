@@ -130,3 +130,21 @@ func TestSplit_CtrlQAlwaysAsks(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "which goes through with nothing open")
 }
+
+func TestSplit_ForceQuitSkipsTheDialog(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	hs.key("open")
+	hs.send(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotEmpty(t, hs.m.terms)
+
+	hs.send(quitRequestMsg{})
+	require.True(t, hs.m.quitDialog, "a plain quit asks first")
+
+	cmd := hs.send(ForceQuitMsg{})
+	require.NotNil(t, cmd)
+	assert.False(t, hs.m.quitDialog, "the unanswerable dialog is gone")
+	quit := hs.run(cmd)
+	assert.IsType(t, tea.QuitMsg{}, quit)
+	assert.Equal(t, quit, filterQuit(hs.m, quit), "the guard lets a forced quit through")
+}

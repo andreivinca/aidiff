@@ -36,8 +36,12 @@ func newExitDeadline() *exitDeadline {
 	return &exitDeadline{dir: os.TempDir(), exit: os.Exit, log: os.Stderr, dump: dumpGoroutines}
 }
 
-// arm starts the countdown; arming twice keeps the first countdown.
+// arm starts the countdown; arming twice keeps the first countdown. A nil
+// deadline does nothing.
 func (d *exitDeadline) arm(limit time.Duration) {
+	if d == nil {
+		return
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.done || d.timer != nil {
@@ -54,6 +58,15 @@ func (d *exitDeadline) disarm() {
 	if d.timer != nil {
 		d.timer.Stop()
 	}
+}
+
+// expireNow gives up on the exit at once, unless it already finished. A nil
+// deadline does nothing.
+func (d *exitDeadline) expireNow() {
+	if d == nil {
+		return
+	}
+	d.expire()
 }
 
 func (d *exitDeadline) expire() {

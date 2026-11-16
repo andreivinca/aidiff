@@ -97,3 +97,41 @@ func TestDumpGoroutines(t *testing.T) {
 	require.NoError(t, dumpGoroutines(&buf))
 	assert.Contains(t, buf.String(), "TestDumpGoroutines")
 }
+
+func TestShutdownGuard_FirstSignalArmsDeadline(t *testing.T) {
+	td := newTestDeadline(t)
+	g := shutdownGuard{deadline: td.exitDeadline}
+	quits := 0
+	g.trigger(func() { quits++ })
+	assert.Equal(t, 1, quits)
+	td.exitDeadline.mu.Lock()
+	armed := td.timer != nil
+	td.exitDeadline.mu.Unlock()
+	assert.True(t, armed, "a quit that never lands must still end the process")
+	td.disarm()
+}
+
+func TestShutdownGuard_SecondSignalExitsAtOnce(t *testing.T) {
+	td := newTestDeadline(t)
+	g := shutdownGuard{deadline: td.exitDeadline}
+	quits := 0
+	g.trigger(func() { quits++ })
+	g.trigger(func() { quits++ })
+	assert.Equal(t, 1, quits, "the quit itself runs once")
+	select {
+	case <-td.exited:
+	case <-time.After(time.Second):
+		t.Fatal("a second signal did not exit")
+	}
+	td.mu.Lock()
+	defer td.mu.Unlock()
+	assert.Equal(t, []int{1}, td.codes)
+}
+
+func TestShutdownGuard_NoDeadlineOnlyQuits(t *testing.T) {
+	var g shutdownGuard
+	quits := 0
+	g.trigger(func() { quits++ })
+	g.trigger(func() { quits++ })
+	assert.Equal(t, 1, quits)
+}

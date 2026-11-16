@@ -180,8 +180,8 @@ func run(opts options) (int, error) {
 
 	p := tea.NewProgram(newSplit(opts, model, t3p), append(programOptions, splitProgramOptions()...)...)
 	t3p.Start(p, src.watch(opts, p))
-	guard := &shutdownGuard{}
-	stop := guard.watch(p)
+	guard := &shutdownGuard{deadline: deadline} // a signal bounds the exit even when the quit never lands
+	stop := guard.watch(forceQuitter{p})
 	defer stop()
 	finalModel, runErr := runSplit(p, tuiOut, deadline)
 	// capture the signal flag once: a signal can land between reads, so a graceful

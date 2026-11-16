@@ -122,6 +122,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTermUpdate(msg)
 	case quitRequestMsg:
 		return m.requestQuit()
+	case ForceQuitMsg:
+		return m.quit()
 	case ShowPickerMsg:
 		return m.showPicker(msg)
 	case ShowPromptMsg:
