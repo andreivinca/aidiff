@@ -4,89 +4,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-
-	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/ui"
 )
 
 type vcsSetup struct {
-	machineName        string
 	renderer           ui.Renderer
 	vcsType            diff.VCSType
 	gitRoot            string // set only when VCS is git; used by history module to run git commands
 	workDir            string
-	folder             *diff.FolderReader
-	allFiles           bool // plain folders implicitly browse all file contents
 	blamer             ui.Blamer
 	untrackedFn        func() ([]string, error)
 	untrackedRenamesFn func([]string) ([]diff.FileEntry, error) // git-only; pairs untracked renames with their origin
 	commitLogger       diff.CommitLogger                        // VCS-backed commit log source; nil when VCS lacks the capability
-}
-
-// sourceSetup is where the reviewed diff comes from: a local VCS, a compare
-// pair, stdin, or a T3 Code server. Fields beyond vcsSetup are set only by
-// the source that needs them.
-type sourceSetup struct {
-	vcsSetup
-	tty *os.File  // stdin mode: the terminal to read keys from
-	t3  *t3Review // T3 mode: the live server session
-}
-
-// setupSource picks the diff source for this run. T3 mode connects here,
-// before the alt screen opens, so SSH and auth failures print plainly.
-func setupSource(opts options) (sourceSetup, error) {
-	switch {
-	case opts.t3Mode():
-		t3, err := setupT3Review(opts)
-		if err != nil {
-			return sourceSetup{}, err
-		}
-		return sourceSetup{vcsSetup: vcsSetup{renderer: t3.renderer, machineName: t3.session.MachineName()}, t3: t3}, nil
-	case opts.compareAbsOld != "":
-		return sourceSetup{vcsSetup: vcsSetup{
-			renderer: diff.NewCompareReader(opts.compareAbsOld, opts.compareAbsNew),
-			workDir:  filepath.Dir(opts.compareAbsNew),
-		}}, nil
-	case opts.Stdin:
-		r, tty, err := prepareStdinMode(opts, os.Stdin)
-		if err != nil {
-			return sourceSetup{}, err
-		}
-		return sourceSetup{vcsSetup: vcsSetup{renderer: r}, tty: tty}, nil
-	}
-	setup, err := setupVCSRenderer(opts)
-	if err != nil {
-		return sourceSetup{}, err
-	}
-	setup.untrackedFn = filterUntracked(setup.untrackedFn, opts.Include, opts.Exclude)
-	return sourceSetup{vcsSetup: setup}, nil
-}
-
-// watch starts live refresh for the source and returns its stop function:
-// file watching for git and plain folders, run tracking for a T3 thread.
-func (s sourceSetup) watch(opts options, p *tea.Program) (stop func()) {
-	switch {
-	case opts.NoWatch:
-		return func() {}
-	case s.t3 != nil:
-		return s.t3.watch(p)
-	case s.vcsType == diff.VCSGit:
-		return watchRepo(s.workDir, p)
-	case s.allFiles && s.vcsType == diff.VCSNone:
-		return watchLazyFolder(s.folder, s.workDir, p)
-	}
-	return func() {}
-}
-
-// close releases what the source holds open. A T3 session is not closed
-// here: the palette adopts it and closes whichever session is live at exit.
-func (s sourceSetup) close() {
-	if s.tty != nil {
-		_ = s.tty.Close()
-	}
 }
 
 // setupVCSRenderer detects the VCS and creates the appropriate renderer, blamer, and untracked function.
@@ -126,12 +57,11 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 		}
 		return vcsSetup{renderer: r, vcsType: diff.VCSJJ, workDir: workDir, blamer: jj, untrackedFn: jj.UntrackedFiles, commitLogger: jj}, nil
 	default:
-		r, workDir, err := makeNoVCSRenderer(opts, cwd)
+		r, workDir, err := makeNoVCSRenderer(opts.Only, cwd)
 		if err != nil {
 			return vcsSetup{}, err
 		}
-		folder, _ := r.(*diff.FolderReader)
-		return vcsSetup{renderer: r, workDir: workDir, folder: folder, allFiles: len(opts.Only) == 0}, nil
+		return vcsSetup{renderer: r, workDir: workDir}, nil
 	}
 }
 
@@ -210,13 +140,11 @@ func filterUntracked(fn func() ([]string, error), include, exclude []string) fun
 }
 
 // makeNoVCSRenderer creates a renderer when no VCS is detected.
-// Plain folders browse all files by default; --only selects standalone files.
-func makeNoVCSRenderer(opts options, cwd string) (ui.Renderer, string, error) {
-	if opts.ref() != "" || opts.Staged {
-		return nil, "", errors.New("refs and --staged require a repository")
+// No-VCS mode requires --only, which is mutually exclusive with --include.
+// --exclude is a no-op here (FileReader only returns the --only files).
+func makeNoVCSRenderer(only []string, cwd string) (ui.Renderer, string, error) {
+	if len(only) == 0 {
+		return nil, "", errors.New("no git, mercurial, or jujutsu repository found (use --only to review standalone files)")
 	}
-	if len(opts.Only) > 0 {
-		return diff.NewFileReader(opts.Only, cwd), cwd, nil
-	}
-	return diff.NewFolderReader(cwd, opts.Include, opts.Exclude), cwd, nil
+	return diff.NewFileReader(only, cwd), cwd, nil
 }

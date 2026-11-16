@@ -23,7 +23,7 @@ func sshHostsFrom(path string) []string {
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	var hosts []string
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(f)

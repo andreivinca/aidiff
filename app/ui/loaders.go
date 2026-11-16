@@ -61,15 +61,6 @@ func (m Model) loadFiles() tea.Cmd {
 				entries = m.mergeUntrackedEntries(entries, ut, renames)
 			}
 		}
-		// Collapsing a folder hides its files without invalidating their review marks.
-		for path := range reviewed {
-			for _, entry := range entries {
-				if entry.IsDir && !entry.Expanded && strings.HasPrefix(path, entry.Path+"/") {
-					delete(reviewed, path)
-					break
-				}
-			}
-		}
 		fingerprints, fingerprintWarnings := m.loadReviewedFingerprints(entries, reviewed)
 		warnings = append(warnings, fingerprintWarnings...)
 		return filesLoadedMsg{
@@ -449,7 +440,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	for _, w := range msg.warnings {
 		log.Printf("[WARN] %s", w)
 	}
-	entries := m.filterOnly(msg.entries)
+	entries := m.filterOnly(m.splitFolders(msg.entries)) // folder rows go to the tree (folder.go)
 	statsPending := m.review.statsRequested && !m.review.statsLoaded
 	m.setReviewEntries(entries)
 	var statsCmd tea.Cmd
@@ -492,10 +483,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	if m.file.name != "" && m.selectedDirectory() == "" {
 		m.tree.SelectByPath(m.file.name)
 	}
-	m.file.singleFile = m.tree.TotalFiles() == 1
-	if _, lazy := m.diffRenderer.(interface{ ToggleDirectory(string) }); lazy {
-		m.file.singleFile = false
-	}
+	m.file.singleFile = m.tree.TotalFiles() == 1 && !m.browsingFolders()
 	if len(entries) == 0 {
 		m.file.name = ""
 		m.file.oldName = ""
@@ -511,7 +499,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	if f := m.tree.SelectedFile(); f != "" {
 		return m, tea.Batch(m.requestFileDiff(f), statsCmd)
 	}
-	return m, statsCmd
+	return m, tea.Batch(m.refreshShownFile(entries), statsCmd)
 }
 
 // handleCommitsLoaded processes the result of loadCommits, populating the
@@ -659,13 +647,8 @@ func (m *Model) placeCursorAfterLoad(msg fileLoadedMsg) {
 		}
 	}
 
-	// a RefreshMsg reload puts the cursor back on its line (refresh.go)
-	if a := m.refresh; a != nil {
-		m.refresh = nil
-		if a.seq == msg.seq {
-			m.applyRefreshAnchor(a)
-			return
-		}
+	if m.applyRefreshAnchor(msg) { // a RefreshMsg reload puts the cursor back on its line (refresh.go)
+		return
 	}
 
 	// handle pending compact-toggle anchor: restore the cursor to where it was

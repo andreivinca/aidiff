@@ -4,22 +4,15 @@
 package termpane
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
@@ -30,11 +23,26 @@ import (
 // follow-ups within the same frame are held back and coalesced.
 const frameInterval = 16 * time.Millisecond
 
-// scrollbackLines is how many lines that scrolled off the top are kept.
-const scrollbackLines = 5000
+// scrollbackLines is how many lines that scrolled off the top the emulator
+// keeps. The pane never shows them, but the emulator cannot turn its
+// scrollback off (zero means its 10000-line default), so keep the minimum.
+const scrollbackLines = 1
+
+// readBufSize is how much child output one read takes in.
+const readBufSize = 32 * 1024
+
+// ioStopWait bounds how long Close waits for the I/O goroutines once the pty
+// is closed, so a wedged read cannot hang the UI.
+const ioStopWait = time.Second
 
 // Pane is a running command attached to a pseudo-terminal plus the emulated
 // screen it draws into. All methods are safe for concurrent use.
+//
+// Input never waits on the child: keys, pastes and the emulator's own replies
+// go through the emulator's in-memory pipe into an unbounded queue, and a
+// separate goroutine writes that queue to the pty. A child that stops reading
+// its input (or a paste larger than the pty buffer) therefore stalls only that
+// writer, never a caller holding mu.
 type Pane struct {
 	// mu guards every emulator access. vt.SafeEmulator is not enough: its
 	// CellAt hands out pointers into the live buffer after unlocking, so a
@@ -51,12 +59,16 @@ type Pane struct {
 	screenGen uint64
 	frame     renderedFrame
 
+	input inputQueue
+
 	dirty      atomic.Bool
 	exited     atomic.Bool
 	kick       chan struct{} // wakes notifyLoop after dirty is set
-	updates    chan struct{}
-	done       chan struct{}
+	updates    chan struct{} // closed when notifyLoop ends, after Close
+	done       chan struct{} // closed by Close
 	readerDone chan struct{} // closed when readOutput stops writing to emu
+	writerDone chan struct{} // closed when writeInput stops writing to the pty
+	leaderGone chan struct{} // closed once the child has exited (not yet reaped)
 
 	closeOnce sync.Once
 }
@@ -73,7 +85,9 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 	}
 	width, height = max(width, 1), max(height, 1)
 
-	cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // user-chosen command, run on purpose; it lives until Close
+	// no context: the child lives until Close, which ends its whole session;
+	// a context would only kill the leader and leave its jobs behind.
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec,noctx // user-chosen command, run on purpose; Close ends it
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 
@@ -82,33 +96,53 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 		return nil, fmt.Errorf("start %s in pty: %w", argv[0], err)
 	}
 
+	p := newPane(ptmx, width, height)
+	p.cmd = cmd
+	p.startIO()
+	go p.watchLeader()
+	return p, nil
+}
+
+// newPane builds a pane around an open pty master; startIO sets it running.
+func newPane(ptmx *os.File, width, height int) *Pane {
 	emu := vt.NewEmulator(width, height)
 	emu.SetScrollbackSize(scrollbackLines)
-
-	p := &Pane{
+	return &Pane{
 		emu:        emu,
 		ptmx:       ptmx,
-		cmd:        cmd,
+		input:      newInputQueue(),
 		kick:       make(chan struct{}, 1),
 		updates:    make(chan struct{}, 1),
 		done:       make(chan struct{}),
 		readerDone: make(chan struct{}),
+		writerDone: make(chan struct{}),
+		leaderGone: make(chan struct{}),
 	}
+}
+
+// startIO starts the goroutines that move bytes between the pty, the
+// emulator and the UI.
+func (p *Pane) startIO() {
 	go p.readOutput()
-	go p.forwardInput()
+	go p.queueInput()
+	go p.writeInput()
 	go p.notifyLoop()
-	go func() {
-		_ = cmd.Wait()
-		p.exited.Store(true)
-		p.markDirty()
-	}()
-	return p, nil
+}
+
+// watchLeader reports the child's exit without reaping it: while the leader
+// is an unreaped zombie its pid, which is also the session and process group
+// id, cannot be reused, so Close can still signal the session safely.
+func (p *Pane) watchLeader() {
+	defer close(p.leaderGone)
+	waitExited(p.cmd.Process.Pid)
+	p.exited.Store(true)
+	p.markDirty()
 }
 
 // readOutput copies everything the child writes into the emulator.
 func (p *Pane) readOutput() {
 	defer close(p.readerDone)
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, readBufSize)
 	for {
 		n, err := p.ptmx.Read(buf)
 		if n > 0 {
@@ -126,12 +160,40 @@ func (p *Pane) readOutput() {
 	}
 }
 
-// forwardInput copies keys and the emulator's own replies (cursor position
-// reports, device attributes) to the child.
-func (p *Pane) forwardInput() {
-	_, err := io.Copy(p.ptmx, p.emu)
-	if err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
-		p.markDirty()
+// queueInput drains the emulator's input pipe (keys, pastes, and replies such
+// as cursor position reports) into the input queue. It never waits on the
+// child, so a pipe write made under mu always completes. It ends when Close
+// closes the pipe.
+func (p *Pane) queueInput() {
+	buf := make([]byte, readBufSize)
+	for {
+		n, err := p.emu.Read(buf)
+		if n > 0 {
+			p.input.push(buf[:n])
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// writeInput writes queued input to the child. When the pty refuses input
+// the child can no longer be reached: the queue drops everything from then
+// on and the pane reports itself exited.
+func (p *Pane) writeInput() {
+	defer close(p.writerDone)
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-p.input.ready:
+		}
+		if _, err := p.ptmx.Write(p.input.take()); err != nil {
+			p.input.discard()
+			p.exited.Store(true)
+			p.markDirty()
+			return
+		}
 	}
 }
 
@@ -146,8 +208,10 @@ func (p *Pane) markDirty() {
 
 // notifyLoop turns bursts of output into at most one update per frame. It
 // sleeps until woken, so an idle pane costs nothing, and reports a change
-// immediately unless an update already went out less than a frame ago.
+// immediately unless an update already went out less than a frame ago. It
+// closes updates when Close stops it, so a waiting receiver is released.
 func (p *Pane) notifyLoop() {
+	defer close(p.updates)
 	var last time.Time
 	for {
 		select {
@@ -175,11 +239,16 @@ func (p *Pane) notifyLoop() {
 	}
 }
 
-// Updates delivers a value whenever the screen changed since the last one.
-func (p *Pane) Updates() <-chan struct{} { return p.updates }
+// Updates delivers a value whenever the screen changed since the last one,
+// and is closed once the pane is closed.
+func (p *Pane) Updates() <-chan struct{} {
+	return p.updates
+}
 
 // Exited reports whether the child process has ended.
-func (p *Pane) Exited() bool { return p.exited.Load() }
+func (p *Pane) Exited() bool {
+	return p.exited.Load()
+}
 
 // SendText writes raw bytes to the child as if typed.
 func (p *Pane) SendText(s string) {
@@ -224,150 +293,52 @@ func (p *Pane) Resize(width, height int) {
 	p.markDirty()
 }
 
-// renderedFrame is a Render result and what it was built from.
-type renderedFrame struct {
-	valid      bool
-	gen        uint64
-	drawCursor bool
-	out        string
-}
-
-// Render returns exactly height lines of exactly width cells. When showCursor
-// is set, the cursor cell is drawn in reverse video.
-func (p *Pane) Render(showCursor bool) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	drawCursor := showCursor && !p.emu.CursorHidden() && !p.Exited()
-	if f := p.frame; f.valid && f.gen == p.screenGen && f.drawCursor == drawCursor {
-		return f.out
-	}
-	out := p.renderLocked(drawCursor)
-	p.frame = renderedFrame{valid: true, gen: p.screenGen, drawCursor: drawCursor, out: out}
-	return out
-}
-
-// renderLocked builds the frame from the emulator cells; mu must be held.
-func (p *Pane) renderLocked(drawCursor bool) string {
-	w, h := p.emu.Width(), p.emu.Height()
-	cur := p.emu.CursorPosition()
-
-	var b strings.Builder
-	b.Grow(h * (w + 16))
-	line := make(uv.Line, w)
-	for y := range h {
-		for x := range w {
-			if c := p.emu.CellAt(x, y); c != nil {
-				line[x] = *c
-			} else {
-				line[x] = uv.EmptyCell
-			}
-		}
-		if drawCursor && y == cur.Y && cur.X >= 0 && cur.X < w {
-			c := &line[cur.X]
-			if c.IsZero() || c.Content == "" {
-				*c = uv.EmptyCell
-				c.Content = " "
-			}
-			c.Style.Attrs ^= uv.AttrReverse
-		}
-		rendered := line.Render() + ansi.ResetStyle
-		if pad := w - ansi.StringWidth(rendered); pad > 0 {
-			rendered += strings.Repeat(" ", pad)
-		}
-		b.WriteString(rendered)
-		if y < h-1 {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
-// killGrace is how long processes get to exit after SIGHUP before SIGKILL.
-const killGrace = time.Second
-
 // Close ends everything started in the terminal and releases the pty. Like
 // closing a terminal window it sends SIGHUP, but to every process in the
 // child's session (jobs and background processes included, which live in
-// their own process groups), then SIGKILLs whatever ignored it.
+// their own process groups), then SIGKILLs whatever ignored it. The child is
+// reaped only after that, so the session id cannot have been reused.
 func (p *Pane) Close() {
 	p.closeOnce.Do(func() {
 		close(p.done)
-		if p.cmd.Process != nil {
-			p.killSession(p.cmd.Process.Pid)
-		}
-		_ = p.ptmx.Close() // unblocks readOutput
-		// Emulator.Close flips an unlocked flag that Read/Write also check, so it
-		// would race the copy goroutines. Closing only the input pipe (an
-		// io.PipeWriter, safe across goroutines) ends forwardInput with EOF.
-		if pw, ok := p.emu.InputPipe().(*io.PipeWriter); ok {
-			_ = pw.Close()
-		}
-		select {
-		case <-p.readerDone:
-		case <-time.After(time.Second):
-		}
+		p.killSession()
+		p.reapLeader()
+		p.stopIO()
 	})
 }
 
-// killSession hangs up every process in session sid (the child is the session
-// leader, so sid is its pid), waits up to killGrace, then kills survivors.
-// Without /proc (non-Linux) it falls back to the child's process group.
-func (p *Pane) killSession(sid int) {
-	signalAll := func(sig syscall.Signal) int {
-		pids := sessionMembers(sid)
-		if pids == nil { // no /proc: best effort on the process group
-			_ = syscall.Kill(-sid, sig)
-			return 0
-		}
-		for _, pid := range pids {
-			_ = syscall.Kill(pid, sig)
-		}
-		return len(pids)
+// reapLeader collects the child's exit status once killSession has ended it.
+// Should the child still be running (its session could not be listed), it is
+// killed directly; it is still unreaped, so its pid is still its own.
+func (p *Pane) reapLeader() {
+	grace := time.NewTimer(killGrace)
+	defer grace.Stop()
+	select {
+	case <-p.leaderGone:
+	case <-grace.C:
+		_ = p.cmd.Process.Kill()
+		<-p.leaderGone
 	}
-
-	if signalAll(syscall.SIGHUP) == 0 {
-		return
-	}
-	deadline := time.Now().Add(killGrace)
-	for time.Now().Before(deadline) {
-		if len(sessionMembers(sid)) == 0 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	signalAll(syscall.SIGKILL)
+	_ = p.cmd.Wait()
 }
 
-// sessionMembers lists live (non-zombie) processes whose session id is sid.
-// It returns nil when /proc is unavailable and an empty slice when no
-// process matches.
-func sessionMembers(sid int) []int {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
+// stopIO closes the pty and the emulator's input pipe and waits for the I/O
+// goroutines to end.
+func (p *Pane) stopIO() {
+	_ = p.ptmx.Close() // unblocks readOutput and a writeInput stuck on a full pty
+	// Emulator.Close flips an unlocked flag that Read/Write also check, so it
+	// would race the copy goroutines. Closing only the input pipe (an
+	// io.PipeWriter, safe across goroutines) ends queueInput with EOF.
+	if pw, ok := p.emu.InputPipe().(*io.PipeWriter); ok {
+		_ = pw.Close()
 	}
-	pids := []int{}
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		stat, err := os.ReadFile("/proc/" + e.Name() + "/stat")
-		if err != nil {
-			continue // exited while scanning
-		}
-		// fields after the parenthesized command name: state ppid pgrp session ...
-		end := bytes.LastIndexByte(stat, ')')
-		if end < 0 {
-			continue
-		}
-		fields := strings.Fields(string(stat[end+1:]))
-		if len(fields) < 4 || fields[0] == "Z" {
-			continue
-		}
-		if s, err := strconv.Atoi(fields[3]); err == nil && s == sid {
-			pids = append(pids, pid)
+	timeout := time.NewTimer(ioStopWait)
+	defer timeout.Stop()
+	for _, done := range []chan struct{}{p.readerDone, p.writerDone} {
+		select {
+		case <-done:
+		case <-timeout.C:
+			return
 		}
 	}
-	return pids
 }

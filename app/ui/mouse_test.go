@@ -408,27 +408,53 @@ func TestModel_HandleMouse_ShiftWheelHalfPage(t *testing.T) {
 	assert.Equal(t, 10, model.nav.diffCursor, "cursor must pin to top of visible range after half-page scroll")
 }
 
-func TestModel_HandleMouse_WheelInTreeScrollsWithoutSelecting(t *testing.T) {
-	files := make([]string, 60)
+func TestModel_HandleMouse_WheelInTreeKeepsTreeCursor(t *testing.T) {
+	// aidiff: the tree wheel scrolls the window and never moves the
+	// selection (TestModel_HandleMouse_WheelInTreeScrollsWithoutSelecting);
+	// these cases pin that the cursor stays put at both ends.
+	files := make([]string, 30)
+	diffs := make(map[string][]diff.DiffLine, 30)
 	for i := range files {
-		files[i] = fmt.Sprintf("%02d.go", i)
+		p := string(rune('a'+(i/10))) + string(rune('a'+(i%10))) + ".go"
+		files[i] = p
+		diffs[p] = []diff.DiffLine{{NewNum: 1, Content: p, ChangeType: diff.ChangeContext}}
 	}
-	m := mouseTestModel(t, files, nil)
-	selected := m.tree.SelectedFile()
-	result, cmd := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
-	model := result.(Model)
-	assert.Nil(t, cmd)
-	assert.Equal(t, selected, model.tree.SelectedFile())
-	assert.Equal(t, wheelStep, model.tree.ScrollState().Offset)
-	model.View()
-	assert.Equal(t, wheelStep, model.tree.ScrollState().Offset)
-	result, _ = model.Update(wheelMsg(tea.MouseButtonWheelUp, 5, 3, false))
-	model = result.(Model)
-	assert.Equal(t, 0, model.tree.ScrollState().Offset)
-	assert.Equal(t, selected, model.tree.SelectedFile())
-	model.tree.Move(sidepane.MotionDown)
-	model.tree.EnsureVisible(model.treePageSize())
-	assert.Equal(t, files[1], model.tree.SelectedFile())
+
+	t.Run("wheel-up at top is no-op", func(t *testing.T) {
+		m := mouseTestModel(t, files, diffs)
+		require.Equal(t, "aa.go", m.tree.SelectedFile())
+
+		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelUp, 5, 3, false))
+		model := result.(Model)
+		assert.Equal(t, "aa.go", model.tree.SelectedFile(), "wheel-up at first entry must clamp, not wrap")
+	})
+
+	t.Run("wheel-down at bottom is no-op", func(t *testing.T) {
+		m := mouseTestModel(t, files, diffs)
+		m.tree.SelectByPath(files[len(files)-1])
+		require.Equal(t, files[len(files)-1], m.tree.SelectedFile())
+
+		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
+		model := result.(Model)
+		assert.Equal(t, files[len(files)-1], model.tree.SelectedFile(), "wheel-down at last entry must clamp, not wrap")
+	})
+
+	t.Run("tree wheel does not touch diff wheelState", func(t *testing.T) {
+		// negative invariant: the hitTree branch is independent of the
+		// diff-pane debounce state. a regression that accidentally bumped
+		// wheel.gen or set wheel.renderPending in the tree path would
+		// silently extend a later diff-pane debounce.
+		m := mouseTestModel(t, files, diffs)
+		require.Equal(t, 0, m.wheel.gen)
+		require.False(t, m.wheel.renderPending)
+		require.False(t, m.wheel.tickInFlight)
+
+		result, _ := m.Update(wheelMsg(tea.MouseButtonWheelDown, 5, 3, false))
+		model := result.(Model)
+		assert.Equal(t, 0, model.wheel.gen, "tree wheel must not bump diff wheel gen")
+		assert.False(t, model.wheel.renderPending, "tree wheel must not set diff renderPending")
+		assert.False(t, model.wheel.tickInFlight, "tree wheel must not schedule a diff debounce tick")
+	})
 }
 
 func TestModel_HandleMouse_WheelNonPressActionIgnored(t *testing.T) {
@@ -1769,37 +1795,4 @@ func TestToggleMouse_KeyThroughUpdate(t *testing.T) {
 			assert.Equal(t, tt.trackingOn, m.mouseTracking)
 		})
 	}
-}
-
-func TestModel_dragTreeDivider(t *testing.T) {
-	m := testModel([]string{"a.go", "b.go"}, nil)
-	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = mm.(Model)
-	require.False(t, m.treePaneHidden())
-	border := m.layout.treeWidth + 1
-	was := m.layout.treeWidth
-
-	mouse := func(x int, action tea.MouseAction) {
-		next, _ := m.Update(tea.MouseMsg(tea.MouseEvent{X: x, Y: 5, Button: tea.MouseButtonLeft, Action: action}))
-		m = next.(Model)
-	}
-	mouse(border, tea.MouseActionPress)
-	assert.True(t, m.layout.treeDrag, "a press on the tree's right border starts the drag")
-	mouse(border+10, tea.MouseActionMotion)
-	assert.Equal(t, was+10, m.layout.treeWidth, "motion moves the divider")
-	assert.Equal(t, 120-m.layout.treeWidth-4, m.layout.viewport.Width)
-	mouse(5, tea.MouseActionMotion)
-	assert.Equal(t, minTreeWidth, m.layout.treeWidth, "the tree keeps its minimum")
-	mouse(300, tea.MouseActionMotion)
-	assert.Equal(t, 120-4-minDiffWidth, m.layout.treeWidth, "the diff keeps its minimum")
-	mouse(300, tea.MouseActionRelease)
-	assert.False(t, m.layout.treeDrag)
-
-	mm, _ = m.Update(tea.WindowSizeMsg{Width: 240, Height: 40})
-	m = mm.(Model)
-	assert.InDelta(t, float64(120-4-minDiffWidth)/120, m.layout.treeShare, 0.5/120)
-	assert.Equal(t, int(float64(240)*m.layout.treeShare+0.5), m.layout.treeWidth, "a resize keeps the dragged share")
-
-	mouse(border, tea.MouseActionPress) // not on the border any more: an ordinary click
-	assert.False(t, m.layout.treeDrag)
 }

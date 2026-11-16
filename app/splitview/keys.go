@@ -2,11 +2,9 @@ package splitview
 
 import (
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 )
 
@@ -117,30 +115,4 @@ func toTermMouse(msg tea.MouseMsg, x, y int) (vt.Mouse, bool) {
 	default:
 		return uv.MouseMotionEvent(m), true
 	}
-}
-
-// fitBlock forces s to exactly w columns by h rows, so panes line up even if
-// a pane renders a ragged view.
-func fitBlock(s string, w, h int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > h {
-		lines = lines[:h]
-	}
-	for len(lines) < h {
-		lines = append(lines, "")
-	}
-	for i, l := range lines {
-		lines[i] = fitLine(l, w)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func fitLine(l string, w int) string {
-	if ansi.StringWidth(l) > w {
-		l = ansi.Truncate(l, w, "")
-	}
-	if pad := w - ansi.StringWidth(l); pad > 0 {
-		l += strings.Repeat(" ", pad)
-	}
-	return l
 }

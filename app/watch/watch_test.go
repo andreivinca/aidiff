@@ -1,9 +1,11 @@
 package watch
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +39,9 @@ func newRepo(t *testing.T, isIgnored func(string) bool) *repo {
 		IsIgnored: isIgnored,
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = w.Close() })
+	t.Cleanup(func() {
+		_ = w.Close()
+	})
 	return &repo{root: root, gitDir: gitDir, w: w}
 }
 
@@ -46,67 +50,48 @@ func (r *repo) write(t *testing.T, rel, content string) {
 	require.NoError(t, os.WriteFile(filepath.Join(r.root, rel), []byte(content), 0o600))
 }
 
-// next waits for changes and collects everything until events stop for a
-// moment: one file write is several kernel events (create, write), and a
-// notification may arrive after its paths were already drained (an empty batch).
-func (r *repo) next(t *testing.T) ([]string, bool) {
+// next waits for a change notification, then for events to stop for a
+// moment: one file write is several kernel events (create, write), each of
+// which may make a notification pending.
+func (r *repo) next(t *testing.T) {
 	t.Helper()
-	set := map[string]struct{}{}
-	meta := false
-	deadline := time.After(waitFor)
-	for {
-		select {
-		case <-r.w.Changes():
-			paths, m := r.w.Drain()
-			for _, p := range paths {
-				set[p] = struct{}{}
-			}
-			meta = meta || m
-		case <-time.After(quiet):
-			if len(set) > 0 || meta {
-				out := make([]string, 0, len(set))
-				for p := range set {
-					out = append(out, p)
-				}
-				slices.Sort(out)
-				return out, meta
-			}
-		case <-deadline:
-			t.Fatal("no change notification")
-		}
+	select {
+	case <-r.w.Changes():
+	case <-time.After(waitFor):
+		t.Fatal("no change notification")
 	}
-}
-
-// assertQuiet fails if any real change (not an empty batch) shows up.
-func (r *repo) assertQuiet(t *testing.T, why string) {
-	t.Helper()
-	timeout := time.After(quiet)
 	for {
 		select {
 		case <-r.w.Changes():
-			if paths, meta := r.w.Drain(); len(paths) > 0 || meta {
-				t.Fatalf("%s: unexpected change %v meta=%v", why, paths, meta)
-			}
-		case <-timeout:
+		case <-time.After(quiet):
 			return
 		}
 	}
 }
 
-func TestWatcher_ReportsEditsWithPaths(t *testing.T) {
+// assertQuiet fails if a change notification shows up.
+func (r *repo) assertQuiet(t *testing.T, why string) {
+	t.Helper()
+	select {
+	case <-r.w.Changes():
+		t.Fatalf("%s: unexpected change notification", why)
+	case <-time.After(quiet):
+	}
+}
+
+func TestWatcher_ReportsEdits(t *testing.T) {
 	r := newRepo(t, nil)
 	r.write(t, "src/deep/a.go", "package a")
-	paths, meta := r.next(t)
-	assert.Contains(t, paths, "src/deep/a.go", "nested directories are watched")
-	assert.False(t, meta)
+	r.next(t) // nested directories are watched
 
 	r.write(t, "top.txt", "x")
-	paths, _ = r.next(t)
-	assert.Contains(t, paths, "top.txt")
+	r.next(t)
 
 	require.NoError(t, os.Remove(filepath.Join(r.root, "top.txt")))
-	paths, _ = r.next(t)
-	assert.Contains(t, paths, "top.txt", "deletes are changes too")
+	r.next(t) // deletes are changes too
+
+	r.write(t, "..env", "x")
+	r.next(t) // a root file whose name starts with ".." is inside the root
 }
 
 func TestWatcher_BurstIsOneNotification(t *testing.T) {
@@ -128,9 +113,35 @@ func TestWatcher_BurstIsOneNotification(t *testing.T) {
 		t.Fatal("a burst must not queue more than one notification")
 	default:
 	}
-	paths, _ := r.w.Drain()
-	slices.Sort(paths)
-	assert.Equal(t, []string{"src/f.txt", "src/g.txt"}, paths, "each path once")
+}
+
+func TestWatcher_SettleWaitsForTheBurstToEnd(t *testing.T) {
+	root := t.TempDir()
+	const settle = 500 * time.Millisecond
+	w, err := New(Config{Root: root, Settle: settle})
+	require.NoError(t, err)
+	defer w.Close()
+
+	started := time.Now()
+	for i := range 6 {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "f.txt"), []byte{byte('a' + i)}, 0o600))
+		select {
+		case <-w.Changes():
+			t.Fatal("reported before the burst ended")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	select {
+	case <-w.Changes():
+		assert.GreaterOrEqual(t, time.Since(started), settle, "the report trails the last change")
+	case <-time.After(waitFor):
+		t.Fatal("no notification after the burst")
+	}
+	select {
+	case <-w.Changes():
+		t.Fatal("a settled burst is one notification")
+	case <-time.After(quiet):
+	}
 }
 
 func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
@@ -157,40 +168,36 @@ func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
 }
 
 func TestWatcher_WatchesNewDirectories(t *testing.T) {
-	r := newRepo(t, func(string) bool { return false })
+	r := newRepo(t, func(string) bool {
+		return false
+	})
 	require.NoError(t, os.Mkdir(filepath.Join(r.root, "newpkg"), 0o750))
-	paths, _ := r.next(t)
-	assert.Contains(t, paths, "newpkg")
+	r.next(t)
 
 	r.write(t, "newpkg/b.go", "package b")
-	paths, _ = r.next(t)
-	assert.Contains(t, paths, "newpkg/b.go", "the new directory is watched")
+	r.next(t) // the new directory is watched
 }
 
-func TestWatcher_GitStateIsMeta(t *testing.T) {
+func TestWatcher_GitStateIsAChange(t *testing.T) {
 	r := newRepo(t, nil)
 
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index.lock"), []byte("x"), 0o600))
 	r.assertQuiet(t, "lock files are ignored")
 
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "index"), []byte("x"), 0o600))
-	paths, meta := r.next(t)
-	assert.True(t, meta, "staging (index) is a git state change")
-	assert.Empty(t, paths, ".git paths are not reported as worktree files")
+	r.next(t) // staging (index) is a git state change
 
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "main"), []byte("x"), 0o600))
-	_, meta = r.next(t)
-	assert.True(t, meta, "a commit moves a branch ref")
+	r.next(t) // a commit moves a branch ref
 
 	require.NoError(t, os.Mkdir(filepath.Join(r.gitDir, "refs", "heads", "feature"), 0o750))
-	_, _ = r.next(t)
+	r.next(t)
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "refs", "heads", "feature", "x"), []byte("x"), 0o600))
-	_, meta = r.next(t)
-	assert.True(t, meta, "refs in new branch namespaces are watched too")
+	r.next(t) // refs in new branch namespaces are watched too
 
 	require.NoError(t, os.MkdirAll(filepath.Join(r.gitDir, "objects", "ab"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "cd"), []byte("x"), 0o600))
-	_, _ = r.next(t) // creating objects/ at the top of .git is itself an event
+	r.next(t) // creating objects/ at the top of .git is itself an event
 	require.NoError(t, os.WriteFile(filepath.Join(r.gitDir, "objects", "ab", "ef"), []byte("x"), 0o600))
 	r.assertQuiet(t, "object writes are not watched")
 }
@@ -198,7 +205,7 @@ func TestWatcher_GitStateIsMeta(t *testing.T) {
 func TestWatcher_IgnoresChmod(t *testing.T) {
 	r := newRepo(t, nil)
 	r.write(t, "src/a.txt", "x")
-	_, _ = r.next(t)
+	r.next(t)
 	require.NoError(t, os.Chmod(filepath.Join(r.root, "src", "a.txt"), 0o600))
 	r.assertQuiet(t, "permission-only change")
 }
@@ -223,10 +230,35 @@ func TestShallowWatchFollowsOpenedDirectories(t *testing.T) {
 	assert.ElementsMatch(t, []string{root, src}, w.fsw.WatchList())
 	r := &repo{root: root, w: w}
 	r.write(t, "src/file", "hello")
-	paths, _ := r.next(t)
-	assert.Contains(t, paths, "src/file")
+	r.next(t)
 	w.SetDirectories([]string{root})
 	assert.ElementsMatch(t, []string{root}, w.fsw.WatchList())
 	r.write(t, "src/file", "changed")
 	r.assertQuiet(t, "collapsed folder must no longer be watched")
+}
+
+func TestWatcher_CloseConcurrently(t *testing.T) {
+	r := newRepo(t, nil)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			assert.NoError(t, r.w.Close())
+		})
+	}
+	wg.Wait()
+}
+
+func TestWatcher_WarnsOnceAboutUnwatchedDirectories(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	root := t.TempDir()
+	w, err := New(Config{Root: root, Shallow: true})
+	require.NoError(t, err)
+	defer w.Close()
+
+	missing := filepath.Join(root, "missing")
+	w.SetDirectories([]string{root, missing, filepath.Join(root, "also-missing")})
+	assert.Equal(t, 1, strings.Count(buf.String(), "[WARN]"), buf.String())
+	assert.Contains(t, buf.String(), missing)
 }

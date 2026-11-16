@@ -54,11 +54,12 @@ func TestLaunchThreadRequest(t *testing.T) {
 		got.add(req)
 		send(t, ws, success(req["id"], map[string]any{"threadId": "th-1", "resumed": false}))
 	})
-	c := dial(t, url)
-	id, err := LaunchThread(context.Background(), c, LaunchRequest{
-		ProjectID: "p1",
-		Message:   "Fix the login page\n\nIt breaks on empty passwords.",
-		Model:     ModelSelection{InstanceID: "claude", Model: "opus"},
+	c := dialFake(t, url)
+	id, err := c.LaunchThread(context.Background(), LaunchRequest{
+		ProjectID:   "p1",
+		Message:     "Fix the login page\n\nIt breaks on empty passwords.",
+		Model:       ModelSelection{InstanceID: "claude", Model: "opus"},
+		RuntimeMode: "full-access",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "th-1", id)
@@ -78,13 +79,17 @@ func TestLaunchThreadRequest(t *testing.T) {
 	assert.Equal(t, []any{}, msg["attachments"])
 	assert.Regexp(t, uuidRe, msg["messageId"])
 
-	id, err = LaunchThread(context.Background(), c, LaunchRequest{ProjectID: "p1", Message: "  \n"})
+	id, err = c.LaunchThread(context.Background(), LaunchRequest{ProjectID: "p1", Message: "  \n", RuntimeMode: "auto"})
 	require.NoError(t, err, "a thread may start empty")
 	assert.Equal(t, "th-1", id)
 	p = payloadOf(t, got.last())
 	assert.Nil(t, p["initialMessage"], "no message, no run")
 	assert.Equal(t, "New thread", p["title"])
 	assert.Equal(t, true, p["generateTitle"], "T3 names it after the first message")
+	assert.Equal(t, "auto", p["runtimeMode"], "the runtime mode is the caller's")
+
+	_, err = c.LaunchThread(context.Background(), LaunchRequest{ProjectID: "p1"})
+	require.ErrorContains(t, err, "no runtime mode")
 }
 
 func TestSendMessageRequest(t *testing.T) {
@@ -93,8 +98,8 @@ func TestSendMessageRequest(t *testing.T) {
 		got.add(req)
 		send(t, ws, success(req["id"], map[string]any{"sequence": 7}))
 	})
-	c := dial(t, url)
-	require.NoError(t, SendMessage(context.Background(), c, "th-1", "  please add tests  "))
+	c := dialFake(t, url)
+	require.NoError(t, c.SendMessage(context.Background(), "th-1", "  please add tests  "))
 	req := got.last()
 	assert.Equal(t, "orchestration.dispatchCommand", req["tag"])
 	p := payloadOf(t, req)
@@ -107,7 +112,7 @@ func TestSendMessageRequest(t *testing.T) {
 	assert.Regexp(t, uuidRe, p["messageId"])
 	assert.NotEqual(t, p["commandId"], p["messageId"])
 
-	require.Error(t, SendMessage(context.Background(), c, "th-1", " "))
+	require.Error(t, c.SendMessage(context.Background(), "th-1", " "))
 }
 
 func TestDefaultModel(t *testing.T) {
@@ -126,15 +131,15 @@ func TestDefaultModel(t *testing.T) {
 		mu.Unlock()
 		send(t, ws, success(req["id"], v))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
 	own := Project{ID: "p", DefaultModelSelection: &ModelSelection{InstanceID: "codex", Model: "gpt"}}
-	m, err := DefaultModel(context.Background(), c, own)
+	m, err := c.DefaultModel(context.Background(), own)
 	require.NoError(t, err)
 	assert.Equal(t, ModelSelection{InstanceID: "codex", Model: "gpt"}, m)
 	assert.Equal(t, 0, calls.count(), "a project default needs no server call")
 
-	_, err = DefaultModel(context.Background(), c, Project{ID: "p"})
+	_, err = c.DefaultModel(context.Background(), Project{ID: "p"})
 	require.Error(t, err, "no default anywhere")
 	assert.Equal(t, "server.getConfig", calls.last()["tag"])
 
@@ -146,7 +151,7 @@ func TestDefaultModel(t *testing.T) {
 		},
 		"settings": map[string]any{},
 	})
-	m, err = DefaultModel(context.Background(), c, Project{ID: "p"})
+	m, err = c.DefaultModel(context.Background(), Project{ID: "p"})
 	require.NoError(t, err)
 	assert.Equal(t, ModelSelection{InstanceID: "claude", Model: "opus"}, m, "the first enabled provider's default model")
 
@@ -154,7 +159,7 @@ func TestDefaultModel(t *testing.T) {
 		"providers": []any{map[string]any{"instanceId": "claude", "enabled": true, "models": []any{map[string]any{"slug": "opus"}}}},
 		"settings":  map[string]any{"defaultModelSelection": map[string]any{"instanceId": "s", "model": "server-pick"}},
 	})
-	m, err = DefaultModel(context.Background(), c, Project{ID: "p"})
+	m, err = c.DefaultModel(context.Background(), Project{ID: "p"})
 	require.NoError(t, err)
 	assert.Equal(t, ModelSelection{InstanceID: "s", Model: "server-pick"}, m, "the server setting wins over providers")
 }
@@ -176,14 +181,16 @@ Host !bastion
 }
 
 func TestTokenStoreServers(t *testing.T) {
-	s := TokenStore{Path: filepath.Join(t.TempDir(), "tokens.json")}
+	clock := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	s := TokenStore{Path: filepath.Join(t.TempDir(), "tokens.json"), now: func() time.Time {
+		clock = clock.Add(time.Minute)
+		return clock
+	}}
 	servers, err := s.Servers()
 	require.NoError(t, err)
 	assert.Empty(t, servers)
 	require.NoError(t, s.Put("ssh://old", "a"))
-	time.Sleep(2 * time.Millisecond)
 	require.NoError(t, s.Put("http://192.168.1.5:3000/", "b"))
-	time.Sleep(2 * time.Millisecond)
 	require.NoError(t, s.Put("local", "c"))
 	servers, err = s.Servers()
 	require.NoError(t, err)
@@ -195,7 +202,7 @@ func TestTitleFromAndNewID(t *testing.T) {
 	title := titleFrom(strings.Repeat("word ", 30))
 	assert.LessOrEqual(t, len([]rune(title)), maxTitleRunes)
 	assert.True(t, strings.HasSuffix(title, "…"))
-	first, second := newID(), newID()
+	first, second := NewID(), NewID()
 	assert.Regexp(t, uuidRe, first)
 	assert.NotEqual(t, first, second)
 }

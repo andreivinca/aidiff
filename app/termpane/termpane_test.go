@@ -1,9 +1,7 @@
 package termpane
 
 import (
-	"bytes"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,18 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// screen is the pane's plain text.
+func screen(p *Pane) string {
+	return ansi.Strip(p.Render(false))
+}
+
 // waitFor polls the plain-text screen until it contains want.
-func waitFor(t *testing.T, p *Pane, want string) string {
+func waitFor(t *testing.T, p *Pane, want string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if screen := ansi.Strip(p.Render(false)); strings.Contains(screen, want) {
-			return screen
+		if strings.Contains(screen(p), want) {
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("screen never contained %q; last screen:\n%s", want, ansi.Strip(p.Render(false)))
-	return ""
+	t.Fatalf("screen never contained %q; last screen:\n%s", want, screen(p))
 }
 
 func TestPane_RendersChildOutput(t *testing.T) {
@@ -61,11 +63,11 @@ func TestPane_InputReachesChild(t *testing.T) {
 
 func TestPane_SpecialKeysAreEncoded(t *testing.T) {
 	// cat -v echoes control sequences visibly: an up arrow arrives as ^[[A.
-	p, err := Start([]string{"sh", "-c", "stty -echo; cat -v"}, t.TempDir(), 40, 6)
+	p, err := Start([]string{"sh", "-c", "stty -echo; echo READY; cat -v"}, t.TempDir(), 40, 6)
 	require.NoError(t, err)
 	defer p.Close()
 
-	time.Sleep(200 * time.Millisecond) // let stty run before typing
+	waitFor(t, p, "READY") // stty has run: typing is no longer echoed raw
 	p.SendKey(uv.KeyPressEvent{Code: uv.KeyUp})
 	p.SendText("\r")
 	waitFor(t, p, "^[[A")
@@ -97,51 +99,14 @@ func TestPane_CursorDrawnOnlyWhenRequested(t *testing.T) {
 	assert.Contains(t, p.Render(true), "\x1b[7m")
 }
 
-func TestPane_CloseLeavesNoProcessBehind(t *testing.T) {
-	// a background job in its own process group that ignores SIGHUP: closing
-	// the pty alone would leave it running.
-	p, err := Start([]string{"sh", "-c", `trap "" HUP; sleep 300 & echo "PID=$!"; wait`}, t.TempDir(), 40, 4)
-	require.NoError(t, err)
-
-	screen := waitFor(t, p, "PID=")
-	var pid int
-	for f := range strings.FieldsSeq(screen) {
-		if v, ok := strings.CutPrefix(f, "PID="); ok {
-			pid, err = strconv.Atoi(v)
-			require.NoError(t, err)
-		}
-	}
-	require.NotZero(t, pid)
-	require.Contains(t, sessionMembers(p.cmd.Process.Pid), pid, "the job belongs to the terminal's session")
-
-	start := time.Now()
-	p.Close()
-	assert.Less(t, time.Since(start), killGrace+time.Second, "close does not hang")
-
-	deadline := time.Now().Add(2 * time.Second)
-	for alive(pid) && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	assert.False(t, alive(pid), "the SIGHUP-ignoring job was killed")
-}
-
-// alive reports whether pid exists and is not a zombie.
-func alive(pid int) bool {
-	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	if err != nil {
-		return false
-	}
-	end := bytes.LastIndexByte(stat, ')')
-	fields := strings.Fields(string(stat[end+1:]))
-	return len(fields) > 0 && fields[0] != "Z"
-}
-
 // notifyOnly builds a Pane with just the notification plumbing running.
 func notifyOnly(t *testing.T) *Pane {
 	t.Helper()
 	p := &Pane{kick: make(chan struct{}, 1), updates: make(chan struct{}, 1), done: make(chan struct{})}
 	go p.notifyLoop()
-	t.Cleanup(func() { close(p.done) })
+	t.Cleanup(func() {
+		close(p.done)
+	})
 	return p
 }
 
@@ -202,4 +167,79 @@ func TestPane_RenderReusesUnchangedFrame(t *testing.T) {
 
 	p.SendText("\r")
 	waitFor(t, p, "two") // output invalidates the cached frame
+}
+
+// returnsWithin reports whether f returns within d.
+func returnsWithin(d time.Duration, f func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+func TestPane_InputNeverWaitsOnTheChild(t *testing.T) {
+	// sleep never reads its input: in raw mode (canonical mode drops what
+	// does not fit instead) writing to the pty blocks once its input buffer
+	// is full. Typing and drawing must carry on regardless.
+	p, err := Start([]string{"sh", "-c", "stty raw -echo; echo READY; sleep 60"}, t.TempDir(), 40, 6)
+	require.NoError(t, err)
+	waitFor(t, p, "READY")
+
+	paste := strings.Repeat("x", 256*1024)
+	require.True(t, returnsWithin(2*time.Second, func() {
+		p.Paste(paste)
+	}), "a paste larger than the pty buffer does not block")
+	require.True(t, returnsWithin(2*time.Second, func() {
+		p.SendText("more")
+		p.SendKey(uv.KeyPressEvent{Code: uv.KeyUp})
+		p.Resize(30, 5)
+		_ = p.Render(true)
+	}), "nor does anything after it")
+	assert.True(t, returnsWithin(killGrace+2*time.Second, p.Close), "close does not hang on the stuck input")
+}
+
+func TestPane_RefusedInputIsDropped(t *testing.T) {
+	// the read end of a pipe stands in for a pty that refuses writes
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	p := newPane(r, 10, 2)
+	p.startIO()
+	t.Cleanup(func() {
+		close(p.done)
+		_ = w.Close()
+		p.stopIO()
+	})
+
+	p.SendText("x")
+	require.Eventually(t, p.Exited, time.Second, 10*time.Millisecond, "an unreachable child counts as exited")
+	assert.True(t, returnsWithin(time.Second, func() {
+		for range 100 {
+			p.SendText(strings.Repeat("y", 1024))
+		}
+	}), "later input is dropped, not left blocking")
+}
+
+func TestPane_UpdatesClosedAfterClose(t *testing.T) {
+	p, err := Start([]string{"sleep", "60"}, t.TempDir(), 10, 2)
+	require.NoError(t, err)
+	p.Close()
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, ok := <-p.Updates():
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("updates stays open after Close: a waiting receiver would leak")
+		}
+	}
 }

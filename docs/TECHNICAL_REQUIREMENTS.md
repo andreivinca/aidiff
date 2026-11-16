@@ -35,7 +35,7 @@ Go libraries added by aidiff:
 ## 3. Non-functional requirements
 
 ### Performance
-- **TR-5. No startup stall.** Startup must not wait on terminals that don't answer color queries. A vendored termenv patch cuts the wait from 5 s to 150 ms, and `TestStartupSilentTerminal` checks it.
+- **TR-5. No startup stall.** Startup must not wait on terminals that don't answer color queries. A patched termenv (`third_party/termenv`) cuts the wait from 5 s to 150 ms, and `TestStartupSilentTerminal` checks it.
 - **TR-6. Terminal latency.** The UI runs at 120 FPS. A terminal pane redraws at most once per 16 ms, but the first change after a quiet spell is shown at once.
 - **TR-7. Terminal typing does not redraw the review.** Splitview caches the review's view until the review receives a message.
 - **TR-8. Large folders open at once.** Folder browsing reads a directory only when it is expanded, and watches only the root and expanded folders.
@@ -51,7 +51,7 @@ Go libraries added by aidiff:
 - **TR-16. Atomic token storage.** The T3 token file is written to a temp file and renamed into place, with mode 0600 in a 0700 directory.
 
 ### Maintainability
-- **TR-17. Upstream mergeability.** Fork code lives in `splitview`, `termpane`, `watch`, `t3client`, `t3chat` and `clipboard`. Hooks into revdiff code are limited to `RefreshMsg`/`CanRefresh`, folder browsing, and the status-bar identity.
+- **TR-17. Upstream mergeability.** Fork code lives in `splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard` and `imagefile`. Hooks into revdiff code are limited to `RefreshMsg`/`CanRefresh`, folder browsing, and the status-bar identity.
 - **TR-18. No OS work in the review UI.** PTYs, sockets, fsnotify and the clipboard stay out of `app/ui`.
 - **TR-19. Quality gates.** Tests run under the race detector, golangci-lint must pass, and shellcheck runs on the scripts (see [DEVELOPMENT.md](DEVELOPMENT.md)).
 

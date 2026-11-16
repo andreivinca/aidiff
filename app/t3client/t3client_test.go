@@ -28,6 +28,14 @@ type fakeServer struct {
 	mu    sync.Mutex
 	acks  int
 	query string
+	ws    *websocket.Conn // the latest connection
+}
+
+// socket is the latest client connection, for frames a test sends itself.
+func (f *fakeServer) socket() *websocket.Conn {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ws
 }
 
 func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +55,9 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.SetReadLimit(maxFrameBytes)
+	f.mu.Lock()
+	f.ws = ws
+	f.mu.Unlock()
 	ctx := r.Context()
 	for {
 		_, data, err := ws.Read(ctx)
@@ -96,13 +107,15 @@ func startFake(t *testing.T, handler func(ws *websocket.Conn, req map[string]any
 	return f, srv.URL
 }
 
-func dial(t *testing.T, url string) *Conn {
+func dialFake(t *testing.T, url string) *Conn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, err := Dial(ctx, url, "tok")
+	c, err := dial(ctx, directEndpoint(url), "tok")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() {
+		_ = c.close()
+	})
 	return c
 }
 
@@ -118,10 +131,10 @@ func TestConn_CallSuccessAndRequestShape(t *testing.T) {
 		mu.Unlock()
 		send(t, ws, success(req["id"], map[string]any{"answer": 42}))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
 	var out struct{ Answer int }
-	require.NoError(t, c.Call(context.Background(), "some.method", map[string]string{"k": "v"}, &out))
+	require.NoError(t, c.call(context.Background(), "some.method", map[string]string{"k": "v"}, &out))
 	assert.Equal(t, 42, out.Answer)
 	mu.Lock()
 	defer mu.Unlock()
@@ -144,15 +157,15 @@ func TestConn_CallFailureAndDefect(t *testing.T) {
 		send(t, ws, map[string]any{"_tag": "Exit", "requestId": req["id"], "exit": map[string]any{
 			"_tag": "Failure", "cause": []any{map[string]any{"_tag": "Die", "defect": "Unknown request tag: dies"}}}})
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
-	err := c.Call(context.Background(), "fails", nil, nil)
-	var rpcErr *RPCError
+	err := c.call(context.Background(), "fails", nil, nil)
+	var rpcErr *rpcError
 	require.ErrorAs(t, err, &rpcErr)
 	assert.Equal(t, "VcsRepositoryDetectionError", rpcErr.Tag)
 	assert.Equal(t, "cwd outside workspace", rpcErr.Detail)
 
-	err = c.Call(context.Background(), "dies", nil, nil)
+	err = c.call(context.Background(), "dies", nil, nil)
 	require.ErrorAs(t, err, &rpcErr)
 	assert.Empty(t, rpcErr.Tag)
 	assert.Contains(t, err.Error(), "Unknown request tag: dies")
@@ -160,8 +173,8 @@ func TestConn_CallFailureAndDefect(t *testing.T) {
 
 func TestDial_RejectsBadTokenWithErrUnauthorized(t *testing.T) {
 	_, url := startFake(t, nil)
-	_, err := Dial(context.Background(), url, "wrong")
-	require.ErrorIs(t, err, ErrUnauthorized)
+	_, err := dial(context.Background(), directEndpoint(url), "wrong")
+	require.ErrorIs(t, err, errUnauthorized)
 }
 
 func TestConn_SubscribeAcksEveryChunk(t *testing.T) {
@@ -170,22 +183,24 @@ func TestConn_SubscribeAcksEveryChunk(t *testing.T) {
 		send(t, ws, map[string]any{"_tag": "Chunk", "requestId": req["id"], "values": []any{3}})
 		send(t, ws, success(req["id"], nil))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
 	var vals []string
-	require.NoError(t, c.Subscribe(context.Background(), "stream", nil, func(v json.RawMessage) {
+	require.NoError(t, c.subscribe(context.Background(), "stream", nil, func(v json.RawMessage) {
 		vals = append(vals, string(v))
 	}))
 	assert.Equal(t, []string{"1", "2", "3"}, vals)
-	require.Eventually(t, func() bool { return f.ackCount() == 2 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return f.ackCount() == 2
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestConn_CallFailsWhenConnectionDrops(t *testing.T) {
 	_, url := startFake(t, func(ws *websocket.Conn, _ map[string]any) {
 		_ = ws.Close(websocket.StatusGoingAway, "restart")
 	})
-	c := dial(t, url)
-	require.Error(t, c.Call(context.Background(), "x", nil, nil))
+	c := dialFake(t, url)
+	require.Error(t, c.call(context.Background(), "x", nil, nil))
 	<-c.Done()
 	require.Error(t, c.Err())
 }
@@ -245,9 +260,9 @@ func TestFetchShellAndRenderer(t *testing.T) {
 			}}))
 		}
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
-	sh, err := FetchShell(context.Background(), c)
+	sh, err := c.FetchShell(context.Background())
 	require.NoError(t, err)
 	require.Len(t, sh.Threads, 2)
 
@@ -284,7 +299,9 @@ func TestWatchThreadFiresOnRunTransitions(t *testing.T) {
 
 	_, url := startFake(t, func(ws *websocket.Conn, req map[string]any) {
 		id := req["id"]
-		chunk := func(v any) { send(t, ws, map[string]any{"_tag": "Chunk", "requestId": id, "values": []any{v}}) }
+		chunk := func(v any) {
+			send(t, ws, map[string]any{"_tag": "Chunk", "requestId": id, "values": []any{v}})
+		}
 		chunk(map[string]any{"kind": "snapshot", "snapshot": Shell{Threads: []Thread{idle}}})
 		chunk(map[string]any{"kind": "thread.updated", "thread": other}) // another thread: ignored
 		chunk(map[string]any{"kind": "thread.updated", "thread": idle})  // no change: ignored
@@ -292,10 +309,10 @@ func TestWatchThreadFiresOnRunTransitions(t *testing.T) {
 		chunk(map[string]any{"kind": "thread.updated", "thread": finished})
 		send(t, ws, success(id, nil))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
 	var seen []bool
-	require.NoError(t, WatchThread(context.Background(), c, "t1", func(th Thread) {
+	require.NoError(t, c.WatchThread(context.Background(), "t1", func(th Thread) {
 		seen = append(seen, th.Running())
 	}))
 	assert.Equal(t, []bool{true, false}, seen)
@@ -315,32 +332,36 @@ func TestPairExchangesCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tok, err := Pair(context.Background(), srv.URL, "CRED")
+	tok, err := pair(context.Background(), directEndpoint(srv.URL), "CRED")
 	require.NoError(t, err)
 	assert.Equal(t, "bearer-1", tok)
 
-	_, err = Pair(context.Background(), srv.URL, "nope")
+	_, err = pair(context.Background(), directEndpoint(srv.URL), "nope")
 	require.ErrorContains(t, err, "HTTP 400")
 }
 
-func TestPairingCredential(t *testing.T) {
-	cred, origin := PairingCredential("https://box.tail.ts.net:8443/pair#token=ABC123")
+func TestPairingCredentialParsesLinks(t *testing.T) {
+	cred, origin := pairingCredential("https://box.tail.ts.net:8443/pair#token=ABC123")
 	assert.Equal(t, "ABC123", cred)
 	assert.Equal(t, "https://box.tail.ts.net:8443", origin)
 
-	cred, origin = PairingCredential("  ABC123 \n")
+	cred, origin = pairingCredential("  ABC123 \n")
 	assert.Equal(t, "ABC123", cred)
 	assert.Empty(t, origin)
 }
 
 func TestFirstTokenSkipsLauncherNoise(t *testing.T) {
-	out := "eyJ2Ijox.sig_-x\n[1115/115502.414082:ERROR:electron/shell/common/node_util.cc:78] CompileAndCall failed\n"
+	out := "\n  eyJ2Ijox.sig_-x\n[1115/115502.414082:ERROR:electron/shell/common/node_util.cc:78] CompileAndCall failed\n"
 	tok, err := firstToken([]byte(out))
 	require.NoError(t, err)
-	assert.Equal(t, "eyJ2Ijox.sig_-x", tok)
+	assert.Equal(t, "eyJ2Ijox.sig_-x", tok, "the first non-empty line, the noise after it ignored")
 
 	_, err = firstToken([]byte("[1115:ERROR] boom\n"))
-	require.Error(t, err)
+	require.ErrorContains(t, err, "where a token belongs")
+	_, err = firstToken([]byte("Usage: t3 auth session issue\neyJ2Ijox.sig\n"))
+	require.Error(t, err, "a token is never searched for past a line that is not one")
+	_, err = firstToken([]byte("\n\n"))
+	require.ErrorContains(t, err, "printed no token")
 }
 
 func TestTokenStoreRoundTrip(t *testing.T) {
@@ -359,7 +380,7 @@ func TestTokenStoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
-	require.NoError(t, s.Delete("http://h:1"))
+	require.NoError(t, s.remove("http://h:1"))
 	tok, err = s.Get("http://h:1")
 	require.NoError(t, err)
 	assert.Empty(t, tok)
@@ -417,7 +438,7 @@ func TestRendererListsEveryFileAndFetchesPatchesOnDemand(t *testing.T) {
 			}},
 		}}))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 	r := NewRenderer(c, "/srv/wt/feature", SourceBranchRange)
 
 	files, err := r.ChangedFiles("", false)
@@ -426,7 +447,7 @@ func TestRendererListsEveryFileAndFetchesPatchesOnDemand(t *testing.T) {
 	assert.Equal(t, diff.FileAdded, files[1].Status)
 	assert.Equal(t, diff.FileRenamed, files[2].Status)
 	assert.Equal(t, "frontend/src/old.tsx", files[2].OldPath)
-	assert.False(t, r.Truncated(), "a listing is never cut short")
+	assert.False(t, r.cutShort(), "a listing is never cut short")
 	assert.Equal(t, 1, got.count())
 
 	lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt"})

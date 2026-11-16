@@ -5,16 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// DirectoryReader lists files and reads them as context lines.
-// The file list can come from a VCS or directly from the filesystem.
+// DirectoryReader is a Renderer that lists all tracked files and reads them as context lines.
+// used for --all-files mode where every tracked file is browsable, not just changed files.
+// the file-listing strategy is pluggable so git, jj, or any future VCS can plug in.
 type DirectoryReader struct {
 	workDir    string
 	listSource string // human label used in error messages ("git ls-files", "jj file list")
@@ -56,47 +55,8 @@ func NewJjDirectoryReader(workDir string) *DirectoryReader {
 	return dr
 }
 
-// NewFilesystemDirectoryReader browses a folder without requiring a repository.
-// It includes hidden files, skips VCS metadata, and never descends into symlinks.
-func NewFilesystemDirectoryReader(workDir string) *DirectoryReader {
-	return &DirectoryReader{
-		workDir:    workDir,
-		listSource: "list folder",
-		splitSep:   '\x00',
-		listFiles: func() ([]byte, error) {
-			var paths bytes.Buffer
-			err := filepath.WalkDir(workDir, func(path string, entry fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if entry.IsDir() {
-					if path != workDir && isVCSMetadata(entry.Name()) {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				if isVCSMetadata(entry.Name()) {
-					return nil
-				}
-				rel, err := filepath.Rel(workDir, path)
-				if err != nil {
-					return fmt.Errorf("relative path %s: %w", path, err)
-				}
-				paths.WriteString(filepath.ToSlash(rel))
-				paths.WriteByte(0)
-				return nil
-			})
-			return paths.Bytes(), err
-		},
-	}
-}
-
-func isVCSMetadata(name string) bool {
-	return name == ".git" || name == ".hg" || name == ".jj"
-}
-
-// ChangedFiles returns sorted relative paths.
-// ref and staged parameters are ignored since this source browses file contents.
+// ChangedFiles returns all tracked files as sorted relative paths.
+// ref and staged parameters are ignored since all tracked files are returned.
 func (dr *DirectoryReader) ChangedFiles(_ string, _ bool) ([]FileEntry, error) {
 	out, err := dr.listFiles()
 	if err != nil {

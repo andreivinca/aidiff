@@ -1,0 +1,142 @@
+package t3chat
+
+import (
+	"cmp"
+	"slices"
+
+	"github.com/umputun/revdiff/app/chat"
+	"github.com/umputun/revdiff/app/t3client"
+)
+
+// conversationLocked is the thread as the pane shows it; mu must be held.
+func (b *Backend) conversationLocked() chat.Conversation {
+	t := &b.thread
+	queued := t.queue()
+	return chat.Conversation{
+		Title:     t.title,
+		State:     t.state(),
+		Running:   t.activeRuns(),
+		Entries:   t.entries(queued),
+		Queued:    queued,
+		Delivered: t.delivered(),
+		Activity:  t.activity(),
+		Settings:  b.settingsLocked(),
+	}
+}
+
+// state derives what the agent does from its runs and open requests.
+func (t *thread) state() chat.AgentState {
+	for _, r := range t.requests {
+		if r.Pending() {
+			return chat.AgentWaiting
+		}
+	}
+	var latest *t3client.Run
+	for id := range t.runs {
+		r := t.runs[id]
+		if latest == nil || r.Ordinal > latest.Ordinal {
+			latest = &r
+		}
+	}
+	switch {
+	case latest == nil:
+		return chat.AgentIdle
+	case latest.Status == "waiting":
+		return chat.AgentWaiting
+	case latest.Active():
+		return chat.AgentRunning
+	case latest.Status == "completed":
+		return chat.AgentIdle
+	}
+	return chat.AgentState(latest.Status)
+}
+
+// activeRuns are the runs still going, newest first.
+func (t *thread) activeRuns() []string {
+	var runs []t3client.Run
+	for _, r := range t.runs {
+		if r.Active() {
+			runs = append(runs, r)
+		}
+	}
+	slices.SortFunc(runs, func(a, b t3client.Run) int {
+		return cmp.Compare(b.Ordinal, a.Ordinal)
+	})
+	ids := make([]string, 0, len(runs))
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	return ids
+}
+
+// queue is what the server holds queued: the messages of runs not started
+// yet, in their order, then the queued turns of the transcript.
+func (t *thread) queue() []chat.Queued {
+	var runs []t3client.Run
+	for _, r := range t.runs {
+		if r.Status == "queued" || r.Status == "preparing" {
+			runs = append(runs, r)
+		}
+	}
+	slices.SortFunc(runs, func(a, b t3client.Run) int {
+		return cmp.Compare(a.Ordinal, b.Ordinal)
+	})
+	var out []chat.Queued
+	for _, r := range runs {
+		if msg, ok := t.userMessages[r.UserMessageID]; ok {
+			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text})
+		}
+	}
+	for _, it := range t.items {
+		if t.queuedTurn(it) {
+			out = append(out, chat.Queued{ID: it.MessageID, Text: it.Text})
+		}
+	}
+	return out
+}
+
+// queuedTurn reports a transcript row of a message waiting for its turn.
+func (t *thread) queuedTurn(it t3client.TurnItem) bool {
+	if it.Type != "user_message" || it.InputIntent != "queued_turn" || it.Status != "pending" || it.MessageID == "" {
+		return false
+	}
+	if it.RunID == nil {
+		return true
+	}
+	run, ok := t.runs[*it.RunID]
+	return !ok || run.Active()
+}
+
+// delivered are the messages the server took over: the transcript shows
+// them, or their run ended. A message is known by its id, never by its text.
+func (t *thread) delivered() []string {
+	var out []string
+	for _, it := range t.items {
+		if it.Type == "user_message" && it.MessageID != "" {
+			out = append(out, it.MessageID)
+		}
+	}
+	for _, r := range t.runs {
+		if !r.Active() && r.UserMessageID != "" {
+			out = append(out, r.UserMessageID)
+		}
+	}
+	return out
+}
+
+// entries is the transcript as the pane shows it, without the queued
+// messages, which it shows apart, and without T3's own turn markers.
+func (t *thread) entries(queued []chat.Queued) []chat.Entry {
+	waiting := make(map[string]bool, len(queued))
+	for _, q := range queued {
+		waiting[q.ID] = true
+	}
+	out := make([]chat.Entry, 0, len(t.items))
+	for _, it := range t.items {
+		if it.Type == "checkpoint" || (it.Type == "user_message" && waiting[it.MessageID]) {
+			continue
+		}
+		out = append(out, t.entry(it))
+	}
+	return out
+}

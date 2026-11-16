@@ -1035,31 +1035,3 @@ func TestNewFileTree_Nil(t *testing.T) {
 	assert.NotPanics(t, func() { ft.EnsureVisible(10) })
 	assert.NotPanics(t, func() { ft.SetReviewed("x.go", "fp-x") })
 }
-
-func TestLazyFolderStartsAboveFilesAndPreservesSelection(t *testing.T) {
-	entries := make([]diff.FileEntry, 0, 41)
-	for i := range 40 {
-		entries = append(entries, diff.FileEntry{Path: fmt.Sprintf("folder-%02d", i), IsDir: true})
-	}
-	entries = append(entries, diff.FileEntry{Path: "readme.txt"})
-	for _, fresh := range []bool{true, false} {
-		t.Run(fmt.Sprint("fresh=", fresh), func(t *testing.T) {
-			tree := NewFileTree(nil)
-			if fresh {
-				tree = NewFileTree(entries)
-			} else {
-				tree.Rebuild(entries)
-			}
-			tree.EnsureVisible(10)
-			assert.Equal(t, "folder-00", tree.SelectedDirectory())
-			assert.Equal(t, 0, tree.ScrollState().Offset, "initial files must not scroll the folders out of view")
-			require.True(t, tree.SelectByPath("readme.txt"))
-			tree.EnsureVisible(10)
-			before := tree.ScrollState().Offset
-			tree.Rebuild(entries)
-			tree.EnsureVisible(10)
-			assert.Equal(t, "readme.txt", tree.SelectedFile(), "refresh preserves a file explicitly selected by the user")
-			assert.Equal(t, before, tree.ScrollState().Offset)
-		})
-	}
-}

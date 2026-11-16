@@ -1,11 +1,8 @@
 package diff
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // VCSType identifies a version control system.
@@ -35,7 +32,7 @@ func DetectVCS(startDir string) (VCSType, string) {
 			return VCSJJ, dir
 		}
 		// .git can be a file in worktrees/submodules
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil && isGitWorktree(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil && isGitMetadata(dir) {
 			return VCSGit, dir
 		}
 		if info, err := os.Stat(filepath.Join(dir, ".hg")); err == nil && info.IsDir() {
@@ -48,13 +45,4 @@ func DetectVCS(startDir string) (VCSType, string) {
 		}
 		dir = parent
 	}
-}
-
-// A .git entry alone is insufficient: it may be empty, stale, or a sandbox
-// placeholder. Ask Git before selecting a renderer that requires a repository.
-func isGitWorktree(dir string) bool {
-	cmd := exec.CommandContext(context.Background(), "git", "rev-parse", "--is-inside-work-tree")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
 }

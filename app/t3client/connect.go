@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 // ConnectOptions configure how Connect authenticates.
@@ -24,19 +21,111 @@ type ConnectOptions struct {
 }
 
 // Session is a live connection plus whatever was started to reach it.
+// Close it with Session.Close, which also ends an SSH tunnel.
 type Session struct {
-	*Conn
-	Label  string // what the user named: local, ssh://host or a URL
-	tunnel *sshTunnel
+	conn    *Conn
+	server  server
+	opts    ConnectOptions // what the session was made with, for Redial
+	tunnel  *sshTunnel
+	notices []string
+}
+
+// Conn is the session's connection.
+func (s *Session) Conn() *Conn {
+	return s.conn
+}
+
+// Label is the server as the user named it: local, ssh://host or a URL.
+func (s *Session) Label() string {
+	return s.server.label
+}
+
+// SSHHost is the SSH host the session tunnels through, empty for a local or
+// HTTP session.
+func (s *Session) SSHHost() string {
+	return s.server.sshHost
+}
+
+// Local reports whether the server runs on this machine: "local", or a URL
+// on loopback. An SSH session's tunnel ends here, but its server does not.
+func (s *Session) Local() bool {
+	return s.server.kind == serverLocal || (s.server.kind == serverHTTP && isLoopback(s.server.origin))
+}
+
+// MachineName identifies the connected host, preserving SSH aliases and avoiding
+// tunnel loopback addresses, credentials, and ports in the status bar.
+func (s *Session) MachineName() string {
+	if s.server.kind == serverLocal {
+		name, _ := os.Hostname()
+		return name
+	}
+	// the label is ssh://host or the server's origin
+	if u, err := url.Parse(s.server.label); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return "remote"
+}
+
+// Notices are what the user should know about how the session was reached
+// but that did not stop it: a token that could not be saved, credentials
+// sent unencrypted.
+func (s *Session) Notices() []string {
+	return s.notices
+}
+
+// Redial connects again to the same server, with the options this session
+// was made with. A pairing credential is spent by the first exchange, so a
+// session made by pairing redials with the token that pairing produced.
+func (s *Session) Redial(ctx context.Context) (*Session, error) {
+	return connect(ctx, s.server, s.opts)
 }
 
 // Close ends the connection and any SSH tunnel.
 func (s *Session) Close() error {
-	err := s.Conn.Close()
+	var err error
+	if s.conn != nil {
+		err = s.conn.close()
+	}
 	if s.tunnel != nil {
 		s.tunnel.stop()
 	}
 	return err
+}
+
+// serverKind is how a server is reached.
+type serverKind int
+
+const (
+	serverLocal serverKind = iota // this user's server on this machine
+	serverSSH                     // a server on an SSH host, through a tunnel
+	serverHTTP                    // a server reached at its URL
+)
+
+// server is a T3 server as the user named it.
+type server struct {
+	kind    serverKind
+	label   string // local, ssh://host or the server's origin; tokens are saved under it
+	sshHost string // serverSSH only, validated for the ssh command line
+	origin  string // serverHTTP only
+}
+
+// parseServer reads a server spec: "local", "ssh://host" or "http(s)://host[:port]".
+func parseServer(spec string) (server, error) {
+	spec = strings.TrimSpace(spec)
+	switch {
+	case spec == "" || spec == "local":
+		return server{kind: serverLocal, label: "local"}, nil
+	case strings.HasPrefix(spec, "ssh://"):
+		host := strings.TrimSuffix(strings.TrimPrefix(spec, "ssh://"), "/")
+		if err := validSSHHost(host); err != nil {
+			return server{}, err
+		}
+		return server{kind: serverSSH, label: "ssh://" + host, sshHost: host}, nil
+	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
+		origin := normalizeURL(spec)
+		return server{kind: serverHTTP, label: origin, origin: origin}, nil
+	}
+	return server{}, fmt.Errorf("unknown T3 server %q: use local, ssh://host or http(s)://host:port", spec)
 }
 
 // Connect reaches a T3 server named by spec:
@@ -47,81 +136,128 @@ func (s *Session) Close() error {
 //
 // An empty spec means the server a pairing link names, else local.
 func Connect(ctx context.Context, spec string, o ConnectOptions) (*Session, error) {
-	spec = strings.TrimSpace(spec)
-	if spec == "" && o.Pair != "" {
-		_, spec = PairingCredential(o.Pair)
+	if strings.TrimSpace(spec) == "" && o.Pair != "" {
+		_, spec = pairingCredential(o.Pair)
 	}
-	switch {
-	case spec == "" || spec == "local":
+	srv, err := parseServer(spec)
+	if err != nil {
+		return nil, err
+	}
+	return connect(ctx, srv, o)
+}
+
+// connect reaches srv, authenticating as o says.
+func connect(ctx context.Context, srv server, o ConnectOptions) (*Session, error) {
+	switch srv.kind {
+	case serverLocal:
 		origin, err := LocalOrigin()
 		if err != nil {
 			return nil, err
 		}
-		return connectHTTP(ctx, origin, "local", o, issueLocal)
-	case strings.HasPrefix(spec, "ssh://"):
-		return connectSSH(ctx, strings.TrimSuffix(strings.TrimPrefix(spec, "ssh://"), "/"), o)
-	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
-		var issue func(context.Context) (string, error)
-		if IsLoopback(spec) {
+		return connectHTTP(ctx, srv, directEndpoint(origin), o, issueLocal)
+	case serverSSH:
+		return connectSSH(ctx, srv, o)
+	default: // serverHTTP
+		var issue issuer
+		if isLoopback(srv.origin) {
 			issue = issueLocal
 		}
-		origin := NormalizeURL(spec)
-		return connectHTTP(ctx, origin, origin, o, issue)
+		return connectHTTP(ctx, srv, directEndpoint(srv.origin), o, issue)
 	}
-	return nil, fmt.Errorf("unknown T3 server %q: use local, ssh://host or http(s)://host:port", spec)
 }
 
-// connectHTTP authenticates and dials origin. Tokens are saved under key.
-// issue, when set, mints a token without user help; it is retried once when
-// a saved token turns out to be revoked or expired.
-func connectHTTP(ctx context.Context, origin, key string, o ConnectOptions, issue func(context.Context) (string, error)) (*Session, error) {
-	token, fromStore, err := resolveToken(ctx, origin, key, o, issue)
+// issuer mints a token without user help.
+type issuer func(context.Context) (string, error)
+
+// endpoint is how to reach a T3 server's HTTP origin.
+type endpoint struct {
+	origin string       // http(s)://host[:port], what requests are addressed to
+	client *http.Client // carries them; never follows a redirect
+}
+
+// directEndpoint reaches origin over the network.
+func directEndpoint(origin string) endpoint {
+	return endpoint{origin: origin, client: &http.Client{CheckRedirect: refuseRedirect}}
+}
+
+// refuseRedirect keeps a redirect from carrying a credential to another URL;
+// the redirect response itself then reads as a failure.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// connectHTTP authenticates and dials ep. issue, when set, mints a token
+// without user help; it is retried once when a saved token turns out to be
+// revoked or expired.
+func connectHTTP(ctx context.Context, srv server, ep endpoint, o ConnectOptions, issue issuer) (*Session, error) {
+	s := &Session{server: srv, opts: o}
+	if srv.kind == serverHTTP && !strings.HasPrefix(ep.origin, "https://") && !isLoopback(ep.origin) {
+		s.notice("the T3 token travels unencrypted to %s; use https:// or ssh:// to protect it", ep.origin)
+	}
+	token, fromStore, err := s.resolveToken(ctx, ep, issue)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := Dial(ctx, origin, token)
-	if errors.Is(err, ErrUnauthorized) && fromStore && issue != nil {
+	conn, err := dial(ctx, ep, token)
+	if errors.Is(err, errUnauthorized) && fromStore && issue != nil {
 		if token, err = issue(ctx); err == nil {
-			if err = o.Store.Put(key, token); err == nil {
-				conn, err = Dial(ctx, origin, token)
-			}
+			s.save(token)
+			conn, err = dial(ctx, ep, token)
 		}
 	}
-	if errors.Is(err, ErrUnauthorized) {
+	if errors.Is(err, errUnauthorized) {
 		return nil, fmt.Errorf("%w; run `t3 pair` on the T3 host and pass the link with --t3-pair", err)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &Session{Conn: conn, Label: key}, nil
+	s.conn = conn
+	return s, nil
 }
 
 // resolveToken picks the token to dial with: an explicit one, a pairing
 // exchange, a saved one, or a freshly issued one, in that order.
-func resolveToken(ctx context.Context, origin, key string, o ConnectOptions, issue func(context.Context) (string, error)) (token string, fromStore bool, err error) {
+func (s *Session) resolveToken(ctx context.Context, ep endpoint, issue issuer) (token string, fromStore bool, err error) {
+	o := s.opts
 	if o.Token != "" {
 		return o.Token, false, nil
 	}
 	if o.Pair != "" {
-		cred, _ := PairingCredential(o.Pair)
-		if token, err = Pair(ctx, origin, cred); err != nil {
+		cred, _ := pairingCredential(o.Pair)
+		if token, err = pair(ctx, ep, cred); err != nil {
 			return "", false, err
 		}
-		return token, false, o.Store.Put(key, token)
+		s.opts.Pair, s.opts.Token = "", token // the credential is spent
+		s.save(token)
+		return token, false, nil
 	}
-	if token, err = o.Store.Get(key); err != nil {
+	if token, err = o.Store.Get(s.server.label); err != nil {
 		return "", false, err
 	}
 	if token != "" {
 		return token, true, nil
 	}
 	if issue == nil {
-		return "", false, fmt.Errorf("no T3 token for %s: run `t3 pair` on the T3 host and pass the link with --t3-pair", key)
+		return "", false, fmt.Errorf("no T3 token for %s: run `t3 pair` on the T3 host and pass the link with --t3-pair", s.server.label)
 	}
 	if token, err = issue(ctx); err != nil {
 		return "", false, err
 	}
-	return token, false, o.Store.Put(key, token)
+	s.save(token)
+	return token, false, nil
+}
+
+// save keeps a freshly obtained token for later sessions. Failing to save
+// does not fail this one, which holds the token already, so it becomes a
+// notice.
+func (s *Session) save(token string) {
+	if err := s.opts.Store.Put(s.server.label, token); err != nil {
+		s.notice("the T3 token for %s was not saved, so the next connection needs a new one: %v", s.server.label, err)
+	}
+}
+
+func (s *Session) notice(format string, args ...any) {
+	s.notices = append(s.notices, fmt.Sprintf(format, args...))
 }
 
 // runtimeState is T3's record of its running server (userdata/server-runtime.json).
@@ -157,167 +293,4 @@ func LocalOrigin() (string, error) {
 		}
 	}
 	return st.Origin, nil
-}
-
-// remoteT3 runs the t3 CLI on an SSH host, where a non-interactive shell often
-// lacks ~/.local/bin on PATH.
-const remoteT3 = `PATH="$HOME/.local/bin:$HOME/.t3/bin:$PATH" t3`
-
-// remoteStateScript prints the remote runtime state, failing when the
-// recorded server process is gone.
-const remoteStateScript = `f="${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json"; ` +
-	`[ -r "$f" ] || { echo "no T3 server state at $f" >&2; exit 3; }; cat "$f"`
-
-// connectSSH forwards a local port to the T3 server on host and connects.
-func connectSSH(ctx context.Context, host string, o ConnectOptions) (*Session, error) {
-	if host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t/'\"`$;&|") {
-		return nil, fmt.Errorf("invalid ssh host %q", host)
-	}
-	out, err := sshOutput(ctx, host, remoteStateScript)
-	if err != nil {
-		return nil, fmt.Errorf("read T3 state on %s: %w", host, err)
-	}
-	var st runtimeState
-	if jerr := json.Unmarshal(out, &st); jerr != nil || st.Port == 0 {
-		return nil, fmt.Errorf("unreadable T3 runtime state on %s", host)
-	}
-	if st.PID > 0 {
-		if _, kerr := sshOutput(ctx, host, "kill -0 "+strconv.Itoa(st.PID)); kerr != nil {
-			return nil, fmt.Errorf("T3 Code is not running on %s", host)
-		}
-	}
-	remoteHost := st.Host
-	if remoteHost == "" || remoteHost == "0.0.0.0" || remoteHost == "::" {
-		remoteHost = "127.0.0.1"
-	}
-
-	port, err := freePort(ctx)
-	if err != nil {
-		return nil, err
-	}
-	tun, err := startTunnel(host, fmt.Sprintf("127.0.0.1:%d:%s:%d", port, remoteHost, st.Port))
-	if err != nil {
-		return nil, err
-	}
-	if werr := tun.waitListening(ctx, port, 15*time.Second); werr != nil {
-		tun.stop()
-		return nil, fmt.Errorf("ssh tunnel to %s: %w", host, werr)
-	}
-	issue := func(ctx context.Context) (string, error) {
-		return runIssue(exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "--", host, //nolint:gosec // host validated above
-			remoteT3+" "+strings.Join(issueArgs, " ")))
-	}
-	s, err := connectHTTP(ctx, fmt.Sprintf("http://127.0.0.1:%d", port), "ssh://"+host, o, issue)
-	if err != nil {
-		tun.stop()
-		return nil, err
-	}
-	s.tunnel = tun
-	return s, nil
-}
-
-// sshTunnel is a running `ssh -N -L` port forward.
-type sshTunnel struct {
-	cmd    *exec.Cmd
-	stderr *strings.Builder
-	exited chan struct{}
-	err    error // valid once exited is closed
-}
-
-// startTunnel forwards spec (local:port:remote:port) through host. The
-// tunnel outlives the connect timeout, so it is not tied to a context.
-func startTunnel(host, spec string) (*sshTunnel, error) {
-	// ClearAllForwardings=no: a host block that clears forwardings would
-	// otherwise drop -L silently and the port would never open
-	cmd := exec.Command("ssh", "-N", "-o", "BatchMode=yes", "-o", "ClearAllForwardings=no", //nolint:gosec,noctx // host validated by caller; lives for the session
-		"-o", "ExitOnForwardFailure=yes", "-L", spec, "--", host)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // keep terminal signals away from it
-	t := &sshTunnel{cmd: cmd, stderr: &strings.Builder{}, exited: make(chan struct{})}
-	cmd.Stderr = t.stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
-	}
-	go func() {
-		t.err = cmd.Wait()
-		close(t.exited)
-	}()
-	return t, nil
-}
-
-// stop ends the tunnel and waits for ssh to exit.
-func (t *sshTunnel) stop() {
-	_ = t.cmd.Process.Kill()
-	<-t.exited
-}
-
-// waitListening waits for the forwarded port to accept connections, failing
-// early with ssh's own message when the tunnel exits first.
-func (t *sshTunnel) waitListening(ctx context.Context, port int, limit time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	d := net.Dialer{Timeout: 500 * time.Millisecond}
-	for {
-		if c, err := d.DialContext(ctx, "tcp", addr); err == nil {
-			_ = c.Close()
-			return nil
-		}
-		select {
-		case <-t.exited:
-			if msg := strings.TrimSpace(t.stderr.String()); msg != "" {
-				return fmt.Errorf("ssh exited: %s", msg)
-			}
-			return fmt.Errorf("ssh exited: %w", t.err)
-		case <-ctx.Done():
-			return errors.New("forwarded port never opened")
-		case <-time.After(150 * time.Millisecond):
-		}
-	}
-}
-
-func sshOutput(ctx context.Context, host, script string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "--", host, script) //nolint:gosec // host validated by caller
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("%w: %s", err, msg)
-		}
-		return nil, fmt.Errorf("ssh: %w", err)
-	}
-	return out, nil
-}
-
-func freePort(ctx context.Context) (int, error) {
-	var lc net.ListenConfig
-	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("pick a local port: %w", err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
-// SSHHost is the SSH host the session tunnels through, empty for a local or
-// HTTP session.
-func (s *Session) SSHHost() string {
-	host, ok := strings.CutPrefix(s.Label, "ssh://")
-	if !ok {
-		return ""
-	}
-	return strings.TrimSuffix(host, "/")
-}
-
-// MachineName identifies the connected host, preserving SSH aliases and avoiding
-// tunnel loopback addresses, credentials, and ports in the status bar.
-func (s *Session) MachineName() string {
-	if s.Label == "local" {
-		name, _ := os.Hostname()
-		return name
-	}
-	if u, err := url.Parse(s.Label); err == nil && u.Hostname() != "" {
-		return u.Hostname()
-	}
-	return "remote"
 }

@@ -15,7 +15,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"reflect"
 	"strconv"
@@ -229,7 +228,7 @@ type FileTreeComponent interface {
 	SelectByVisibleRow(row int) bool
 	// EnsureVisible adjusts offset so the cursor is within the visible range.
 	EnsureVisible(height int)
-	// ScrollBy scrolls the file window without changing selection.
+	// ScrollBy scrolls the window by delta entries without moving the cursor.
 	ScrollBy(delta, height int)
 	// Rebuild rebuilds the file tree from new entries in-place.
 	Rebuild(entries []diff.FileEntry)
@@ -348,8 +347,6 @@ type layoutState struct {
 	width      int          // terminal width
 	height     int          // terminal height
 	treeWidth  int          // current tree pane width in columns
-	treeShare  float64      // tree width as a share of the window once the user dragged the divider; 0 = use the configured ratio
-	treeDrag   bool         // the tree/diff divider is being dragged with the mouse
 	scrollX    int          // horizontal scroll offset for diff pane
 }
 
@@ -584,8 +581,6 @@ type annotationState struct {
 
 // Model is the top-level bubbletea model for revdiff.
 type Model struct {
-	t3Mode      bool
-	machineName string // hostname of the active machine
 	// injected dependencies
 	resolver      styleResolver
 	renderer      styleRenderer
@@ -623,7 +618,9 @@ type Model struct {
 	keys        keyState          // chord-pending state and transient hint for leader-chord keybindings
 	vim         vimState          // count accumulator, pending letter leader, and transient hint for vim-motion preset
 	wheel       wheelState        // diff-pane mouse wheel coalescing (debounced render via wheelDebounceMsg)
-	refresh     *refreshAnchor    // cursor to restore after a RefreshMsg reload (refresh.go)
+	refresh     refreshState      // quiet reloads requested by a file watcher (refresh.go)
+	divider     dividerState      // tree/diff divider dragged with the mouse (treedrag.go)
+	identity    machineIdentity   // the host and source named in the status bar (identity.go)
 
 	ready        bool   // true after first WindowSizeMsg
 	filesLoaded  bool   // true after the first filesLoadedMsg is handled (keeps the loading view pinned until real data arrives)
@@ -712,8 +709,6 @@ type reviewStatsLoadedMsg struct {
 // NewFileTree, ParseTOC, Themes) are required and must be constructed by the caller.
 // Blamer, LoadUntracked, and Keymap are optional.
 type ModelConfig struct {
-	MachineName string // active host; empty uses the local hostname
-	T3Mode      bool   // the current review comes from T3 Code
 	// --- UI dependencies (required, caller-constructed) ---
 	Renderer    Renderer          // diff renderer: ChangedFiles, FileDiff
 	Store       *annotation.Store // annotation store
@@ -836,6 +831,12 @@ type ModelConfig struct {
 	// disables the flush (there is no file to write to); a non-empty path enables
 	// it. Copied into modelConfigState.outputPath as a plain value.
 	OutputPath string
+
+	// MachineName is the host the reviewed files live on, shown at the start
+	// of the status bar. Empty shows none.
+	MachineName string
+	// T3Mode marks a review that comes from T3 Code, labeled in the status bar.
+	T3Mode bool
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -927,13 +928,8 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		tree.ToggleUnreviewedFilter()
 	}
 
-	machineName := cfg.MachineName
-	if machineName == "" {
-		machineName, _ = os.Hostname()
-	}
 	return Model{
-		machineName:   style.SanitizeFilenameForDisplay(machineName),
-		t3Mode:        cfg.T3Mode,
+		identity:      newMachineIdentity(cfg.MachineName, cfg.T3Mode),
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -1035,19 +1031,9 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadFiles(), m.loadCommits())
 }
 
-// MachineIdentityMsg updates the active host after connecting through the palette.
-type MachineIdentityMsg struct {
-	Name string
-	T3   bool
-}
-
 // Update handles messages and updates the model state.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case MachineIdentityMsg:
-		m.machineName = style.SanitizeFilenameForDisplay(msg.Name)
-		m.t3Mode = msg.T3
-		return m, nil
 	case tea.KeyMsg:
 		if m.inConfirmDiscard {
 			return m.handleConfirmDiscardKey(msg)
@@ -1079,6 +1065,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWheelDebounce(msg)
 	case RefreshMsg:
 		return m.handleRefresh()
+	case MachineIdentityMsg:
+		return m.handleMachineIdentity(msg), nil
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).
@@ -1662,38 +1650,4 @@ func resolveCommitLogSource(explicit commitLogSource, renderer Renderer) commitL
 		return cl
 	}
 	return nil
-}
-
-// minDiffWidth is the narrowest the diff content gets when the tree pane is dragged wider.
-const minDiffWidth = 20
-
-// fitTreeWidth is the tree pane's width for the current window: the share the
-// user last dragged it to, else the configured ratio (N of 10 units).
-func (m Model) fitTreeWidth() int {
-	if m.layout.treeShare > 0 {
-		return m.clampTreeWidth(int(float64(m.layout.width)*m.layout.treeShare + 0.5))
-	}
-	return max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
-}
-
-// clampTreeWidth keeps a tree width between minTreeWidth and what leaves the
-// diff its minimum, borders included.
-func (m Model) clampTreeWidth(w int) int {
-	return max(minTreeWidth, min(w, m.layout.width-4-minDiffWidth))
-}
-
-// dragTreeTo moves the tree/diff divider so the tree's right border sits at
-// column x, and remembers the share for later resizes.
-func (m Model) dragTreeTo(x int) Model {
-	if m.layout.width < minTreeWidth+4+minDiffWidth {
-		return m
-	}
-	w := m.clampTreeWidth(x - 1)
-	if w == m.layout.treeWidth {
-		return m
-	}
-	m.layout.treeWidth = w
-	m.layout.treeShare = float64(w) / float64(m.layout.width)
-	m.layout.viewport.Width = m.layout.width - w - 4
-	return m
 }

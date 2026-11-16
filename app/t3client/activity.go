@@ -1,7 +1,5 @@
 package t3client
 
-import "encoding/json"
-
 // ProviderRef identifies an item in the provider's own transcript.
 type ProviderRef struct {
 	NativeID string `json:"nativeId"`
@@ -44,22 +42,4 @@ type BackgroundTask struct {
 type ProviderThread struct {
 	ID                     string           `json:"id"`
 	PendingBackgroundTasks []BackgroundTask `json:"pendingBackgroundTasks"`
-}
-
-func (h ThreadEvents) dispatchActivity(typ string, payload json.RawMessage) bool {
-	switch typ {
-	case "subagent.updated":
-		var a Subagent
-		if h.Subagent != nil && json.Unmarshal(payload, &a) == nil && a.ID != "" {
-			h.Subagent(a)
-		}
-	case "provider-thread.updated":
-		var t ProviderThread
-		if h.ProviderThread != nil && json.Unmarshal(payload, &t) == nil && t.ID != "" {
-			h.ProviderThread(t)
-		}
-	default:
-		return false
-	}
-	return true
 }

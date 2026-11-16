@@ -9,7 +9,6 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
-	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -28,6 +27,7 @@ type reviewDeps struct {
 	res           style.Resolver
 	themes        *themeCatalog
 	postFlushHook ui.PostFlushHook
+	hostname      string // this machine, shown in the status bar for local reviews
 }
 
 // newReviewDeps builds the shared dependencies from the options.
@@ -50,6 +50,9 @@ func newReviewDeps(opts options) reviewDeps {
 			configPath: resolveFlagPath(os.Args[1:], "config", "REVDIFF_CONFIG", defaultConfigPath),
 		},
 	}
+	if host, err := os.Hostname(); err == nil {
+		d.hostname = host
+	}
 	// the optional post-flush handoff is configured apart from theme settings
 	if hook := handoff.New(opts.PostFlushCommand); hook != nil {
 		d.postFlushHook = hook
@@ -59,13 +62,12 @@ func newReviewDeps(opts options) reviewDeps {
 
 // newModel builds the review of src, with its annotation store and the
 // info-popup description.
-func (d reviewDeps) newModel(src vcsSetup, store *annotation.Store, description string) (ui.Model, error) {
+func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, description string) (ui.Model, error) {
 	opts := d.opts
-	opts.AllFiles = opts.AllFiles || src.allFiles
-	_, t3Mode := src.renderer.(*t3client.Renderer)
+	opts.AllFiles = opts.AllFiles || src.folder != nil // a plain folder browses every file
 	model, err := ui.NewModel(ui.ModelConfig{
-		T3Mode:               t3Mode,
-		MachineName:          src.machineName,
+		T3Mode:               src.t3 != nil,
+		MachineName:          src.machineName(d.hostname),
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,
@@ -121,9 +123,7 @@ func (d reviewDeps) newModel(src vcsSetup, store *annotation.Store, description 
 		ActiveThemeName:  d.themes.catalog.ActiveName(opts.Theme),
 		AnnotationMarker: opts.AnnotationMarker,
 		OutputPath:       opts.Output,
-		NewFileTree: func(entries []diff.FileEntry) ui.FileTreeComponent {
-			return sidepane.NewFileTree(entries)
-		},
+		NewFileTree:      src.newFileTree,
 		ParseTOC: func(lines []diff.DiffLine, filename string) ui.TOCComponent {
 			toc := sidepane.ParseTOC(lines, filename)
 			if toc == nil {

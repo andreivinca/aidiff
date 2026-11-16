@@ -10,25 +10,66 @@ import (
 )
 
 // ranMsg is what a test command's work produces.
-type ranMsg struct{ what string }
+type ranMsg struct {
+	what string
+}
+
+// ran is a command whose work produces ranMsg{what}.
+func ran(what string) tea.Cmd {
+	return func() tea.Msg {
+		return ranMsg{what}
+	}
+}
 
 // newCommandHarness is a split with no terminal open whose palette carries
 // the given outside commands.
 func newCommandHarness(t *testing.T, cmds func() []Command) *harness {
 	t.Helper()
-	got := []tea.Msg{}
-	hs := &harness{inner: &got}
-	hs.m = New(innerModel{got: &got, quitKey: "q"}, Config{
-		WidthPercent: 40,
-		Start: func(cw, ch int) (Terminal, error) {
-			ft := newFakeTerm(cw, ch)
-			hs.started = append(hs.started, ft)
-			return ft, nil
-		},
-		Commands: cmds,
+	hs := newSplit(func(hs *harness) Config {
+		cfg := hs.config()
+		cfg.Commands = cmds
+		return cfg
 	})
 	hs.send(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return hs
+}
+
+func TestSplit_PaletteAsksForCommandsOnlyWhenTheyMayChange(t *testing.T) {
+	calls := 0
+	hs := newCommandHarness(t, func() []Command {
+		calls++
+		return []Command{{Name: "T3: Connect…"}, {Name: "T3: Projects…"}}
+	})
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	assert.Equal(t, 1, calls, "asked when the palette opens")
+	_ = hs.m.View()
+	hs.send(tea.KeyMsg{Type: tea.KeyDown})
+	hs.send(tea.KeyMsg{Type: tea.KeyUp})
+	_ = hs.m.View()
+	assert.Equal(t, 1, calls, "not for drawing or moving the selection")
+	hs.key("t")
+	assert.Equal(t, 2, calls, "again when the filter changes")
+	hs.send(ranMsg{"state changed"})
+	assert.Equal(t, 3, calls, "and when the wrapped model handled a message")
+}
+
+func TestSplit_PaletteNavigationKeys(t *testing.T) {
+	hs := newHarness(t, 100, 30) // rows: Open Terminal, Close Terminal, Quit
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	for _, step := range []struct {
+		key  tea.KeyMsg
+		want int
+	}{
+		{tea.KeyMsg{Type: tea.KeyDown}, 1},
+		{tea.KeyMsg{Type: tea.KeyTab}, 2},
+		{tea.KeyMsg{Type: tea.KeyCtrlJ}, 0},
+		{tea.KeyMsg{Type: tea.KeyUp}, 2},
+		{tea.KeyMsg{Type: tea.KeyShiftTab}, 1},
+		{tea.KeyMsg{Type: tea.KeyCtrlK}, 0},
+	} {
+		hs.send(step.key)
+		assert.Equal(t, step.want, hs.m.palette.sel, "after %s", step.key)
+	}
 }
 
 func TestSplit_OutsideCommands(t *testing.T) {
@@ -36,11 +77,11 @@ func TestSplit_OutsideCommands(t *testing.T) {
 	hs := newCommandHarness(t, func() []Command {
 		return []Command{{Name: "T3: Connect…", Detail: "ssh://box", Run: func(inner tea.Model) tea.Cmd {
 			gotInner = inner
-			return func() tea.Msg { return ranMsg{"connect"} }
+			return ran("connect")
 		}}}
 	})
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
-	assert.Equal(t, []string{"Open Terminal", "T3: Connect…", "Quit"}, names(hs.m.paletteItems()),
+	assert.Equal(t, []string{"Open Terminal", "T3: Connect…", "Quit"}, names(hs.m.palette.rows),
 		"outside commands sit between the built-ins and Quit")
 	view := ansi.Strip(hs.m.View())
 	assert.Contains(t, view, "T3: Connect…")
@@ -64,8 +105,14 @@ func TestSplit_Picker(t *testing.T) {
 			{Label: "Fix login", Detail: "sabra · idle · main", Value: 1},
 			{Label: "Add icons", Detail: "sabra · running", Value: 2},
 		},
-		OnPick:    func(it PickerItem) tea.Cmd { picked = it; return func() tea.Msg { return ranMsg{"pick"} } },
-		OnText:    func(s string) tea.Cmd { typed = s; return nil },
+		OnPick: func(it PickerItem) tea.Cmd {
+			picked = it
+			return ran("pick")
+		},
+		OnText: func(s string) tea.Cmd {
+			typed = s
+			return nil
+		},
 		TextLabel: "Connect to %s",
 	})
 	require.True(t, hs.m.palette.open)
@@ -75,7 +122,7 @@ func TestSplit_Picker(t *testing.T) {
 	assert.Contains(t, view, "sabra · running", "details are shown")
 
 	hs.key("running")
-	assert.Equal(t, []string{"Add icons", "Connect to running"}, names(hs.m.paletteItems()),
+	assert.Equal(t, []string{"Add icons", "Connect to running"}, names(hs.m.palette.rows),
 		"details are matched too, and the typed text is offered as a last row")
 	cmd := hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
@@ -83,12 +130,15 @@ func TestSplit_Picker(t *testing.T) {
 	assert.Equal(t, 2, picked.Value)
 	assert.False(t, hs.m.palette.open)
 
-	hs.send(ShowPickerMsg{Items: []PickerItem{{Label: "local"}}, OnText: func(s string) tea.Cmd { typed = s; return nil }})
+	hs.send(ShowPickerMsg{Items: []PickerItem{{Label: "local"}}, OnText: func(s string) tea.Cmd {
+		typed = s
+		return nil
+	}})
 	hs.key("local")
-	assert.Equal(t, []string{"local"}, names(hs.m.paletteItems()), "text equal to a label adds no row")
+	assert.Equal(t, []string{"local"}, names(hs.m.palette.rows), "text equal to a label adds no row")
 	hs.send(tea.KeyMsg{Type: tea.KeyBackspace})
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("host\n"), Paste: true})
-	assert.Equal(t, []string{"locahost"}, names(hs.m.paletteItems()), "pasted text counts, line breaks dropped")
+	assert.Equal(t, []string{"locahost"}, names(hs.m.palette.rows), "pasted text counts, line breaks dropped")
 	hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, "locahost", typed)
 
@@ -106,7 +156,7 @@ func TestSplit_Prompt(t *testing.T) {
 	var submitted string
 	hs.send(ShowPromptMsg{Title: "message to Fix login", Placeholder: "what next?", OnSubmit: func(s string) tea.Cmd {
 		submitted = s
-		return func() tea.Msg { return ranMsg{"sent"} }
+		return ran("sent")
 	}})
 	view := ansi.Strip(hs.m.View())
 	assert.Contains(t, view, "message to Fix login")
@@ -126,7 +176,10 @@ func TestSplit_Prompt(t *testing.T) {
 	assert.False(t, hs.m.palette.open)
 
 	called := false
-	hs.send(ShowPromptMsg{OnSubmit: func(string) tea.Cmd { called = true; return nil }})
+	hs.send(ShowPromptMsg{OnSubmit: func(string) tea.Cmd {
+		called = true
+		return nil
+	}})
 	hs.key("x")
 	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.False(t, hs.m.palette.open, "esc cancels")
@@ -143,7 +196,9 @@ func TestSplit_ReplaceInnerAndFlash(t *testing.T) {
 	oldSize := hs.lastInnerSize()
 	var retired tea.Model
 	got2 := []tea.Msg{}
-	hs.send(ReplaceInnerMsg{Model: innerModel{got: &got2}, Retire: func(old tea.Model) { retired = old }})
+	hs.send(ReplaceInnerMsg{Model: innerModel{got: &got2}, Retire: func(old tea.Model) {
+		retired = old
+	}})
 	assert.IsType(t, innerModel{}, retired, "the old model is handed to Retire")
 	require.NotEmpty(t, got2, "the new model receives its size at once")
 	assert.Equal(t, oldSize, got2[len(got2)-1], "sized like the model it replaced")

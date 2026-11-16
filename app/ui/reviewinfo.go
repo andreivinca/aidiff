@@ -31,12 +31,7 @@ func (m *Model) setReviewEntries(entries []diff.FileEntry) {
 	// through this header. The slice is small (per-file entries) so the copy
 	// is cheap, and a single code path avoids drift between stats-on and
 	// stats-off modes.
-	m.review.entries = nil
-	for _, entry := range entries {
-		if !entry.IsDir {
-			m.review.entries = append(m.review.entries, entry)
-		}
-	}
+	m.review.entries = append([]diff.FileEntry(nil), entries...)
 	m.review.adds = 0
 	m.review.removes = 0
 	m.review.partial = false
@@ -220,7 +215,7 @@ func (m Model) reviewHeaderText() string {
 		return "two-file diff"
 	case cfg.AllFiles:
 		if cfg.VCS == "none" {
-			return "all files"
+			return "all files" // a plain folder: nothing is tracked
 		}
 		return "all tracked files"
 	case cfg.Staged:

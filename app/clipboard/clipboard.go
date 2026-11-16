@@ -1,68 +1,111 @@
-// Package clipboard reads the system clipboard, which a terminal cannot
-// paste when it holds an image. Linux only: wl-paste on Wayland, xclip on
-// X11.
+// Package clipboard reads and writes the system clipboard, which a terminal
+// cannot paste from when it holds an image. Linux only: wl-clipboard on
+// Wayland, xclip on X11.
 package clipboard
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-// Content is what the clipboard held: an image, or text.
+// maxReadBytes caps what one read takes from the clipboard.
+const maxReadBytes = 64 << 20
+
+// Content is what the clipboard held: an image, or text. Both are empty when
+// the clipboard is.
 type Content struct {
 	Image []byte // set when the clipboard holds an image
 	Mime  string // the image's media type
 	Text  string // set when it holds text instead
 }
 
-// ErrNoTool means no clipboard reader is available on this machine.
+// ErrNoTool means no clipboard tool is available on this machine.
 var ErrNoTool = errors.New("no clipboard tool: install wl-clipboard (Wayland) or xclip (X11)")
 
+// System is this machine's clipboard.
+type System struct{}
+
 // Read returns the clipboard's image when it holds one, else its text.
-func Read(ctx context.Context) (Content, error) {
-	switch {
-	case os.Getenv("WAYLAND_DISPLAY") != "" && has("wl-paste"):
-		return read(ctx, "wl-paste",
-			[]string{"--list-types"},
-			func(mime string) []string { return []string{"--type", mime} },
-			[]string{"--no-newline"})
-	case os.Getenv("DISPLAY") != "" && has("xclip"):
-		return read(ctx, "xclip",
-			[]string{"-selection", "clipboard", "-t", "TARGETS", "-o"},
-			func(mime string) []string { return []string{"-selection", "clipboard", "-t", mime, "-o"} },
-			[]string{"-selection", "clipboard", "-o"})
+func (System) Read(ctx context.Context) (Content, error) {
+	return local.read(ctx)
+}
+
+// Write copies text to the clipboard.
+func (System) Write(ctx context.Context, text string) error {
+	return local.write(ctx, text)
+}
+
+// local is this machine's clipboard.
+var local = system{getenv: os.Getenv, lookPath: exec.LookPath, run: runCommand}
+
+// system is where the clipboard tools are looked up and run; tests replace
+// all three.
+type system struct {
+	getenv   func(key string) string
+	lookPath func(file string) (string, error)
+	run      func(ctx context.Context, c command) ([]byte, error)
+}
+
+// read lists the clipboard's offered types, then fetches the best image type,
+// or the text when there is no image.
+func (s system) read(ctx context.Context) (Content, error) {
+	t, ok := s.pick(func(t tool) string {
+		return t.reader
+	})
+	if !ok {
+		return Content{}, ErrNoTool
 	}
-	return Content{}, ErrNoTool
-}
-
-func has(tool string) bool {
-	_, err := exec.LookPath(tool)
-	return err == nil
-}
-
-// read lists the clipboard's offered types with tool, then fetches the best
-// image type, or the text when there is no image.
-func read(ctx context.Context, tool string, list []string, image func(mime string) []string, text []string) (Content, error) {
-	types, err := output(ctx, tool, list...)
+	types, err := s.run(ctx, t.readCommand(t.listTypes))
+	if t.isEmpty(err) {
+		return Content{}, nil
+	}
 	if err != nil {
 		return Content{}, err
 	}
 	if mime := pickImage(string(types)); mime != "" {
-		data, ierr := output(ctx, tool, image(mime)...)
-		if ierr != nil {
-			return Content{}, ierr
+		image, imageErr := s.run(ctx, t.readCommand(t.readType(mime)))
+		if imageErr != nil {
+			return Content{}, imageErr
 		}
-		return Content{Image: data, Mime: mime}, nil
+		return Content{Image: image, Mime: mime}, nil
 	}
-	data, err := output(ctx, tool, text...)
+	text, err := s.run(ctx, t.readCommand(t.readText))
+	if t.isEmpty(err) {
+		return Content{}, nil
+	}
 	if err != nil {
 		return Content{}, err
 	}
-	return Content{Text: string(data)}, nil
+	return Content{Text: string(text)}, nil
+}
+
+// write copies text to the clipboard.
+func (s system) write(ctx context.Context, text string) error {
+	t, ok := s.pick(func(t tool) string {
+		return t.writer
+	})
+	if !ok {
+		return ErrNoTool
+	}
+	_, err := s.run(ctx, command{name: t.writer, args: t.writeText, stdin: strings.NewReader(text)})
+	return err
+}
+
+// pick returns the tool for the running display server whose program (as
+// chosen by program) is installed.
+func (s system) pick(program func(tool) string) (tool, bool) {
+	for _, t := range tools {
+		if s.getenv(t.display) == "" {
+			continue
+		}
+		if _, err := s.lookPath(program(t)); err == nil {
+			return t, true
+		}
+	}
+	return tool{}, false
 }
 
 // pickImage chooses the image type to read from the offered ones: PNG when
@@ -79,34 +122,4 @@ func pickImage(types string) string {
 		}
 	}
 	return first
-}
-
-func output(ctx context.Context, tool string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, tool, args...).Output() //nolint:gosec // a known tool, fixed arguments
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
-			return nil, fmt.Errorf("%s: %s", tool, strings.TrimSpace(string(exit.Stderr)))
-		}
-		return nil, fmt.Errorf("%s: %w", tool, err)
-	}
-	return out, nil
-}
-
-// Write copies text to the local desktop clipboard.
-func Write(ctx context.Context, text string) error {
-	var cmd *exec.Cmd
-	switch {
-	case os.Getenv("WAYLAND_DISPLAY") != "" && has("wl-copy"):
-		cmd = exec.CommandContext(ctx, "wl-copy")
-	case os.Getenv("DISPLAY") != "" && has("xclip"):
-		cmd = exec.CommandContext(ctx, "xclip", "-selection", "clipboard")
-	default:
-		return ErrNoTool
-	}
-	cmd.Stdin = strings.NewReader(text)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("copy text: %w", err)
-	}
-	return nil
 }

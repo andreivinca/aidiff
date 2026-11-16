@@ -1,73 +1,84 @@
 package t3chat
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/umputun/revdiff/app/chat"
 	"github.com/umputun/revdiff/app/t3client"
 )
 
-func (p *Pane) effortOptionLocked() (t3client.ModelOptionDescriptor, string) {
-	if p.current == nil {
+// effortOptionLocked is the effort option of the thread's model, or why
+// there is none; mu must be held.
+func (b *Backend) effortOptionLocked() (t3client.ModelOptionDescriptor, string) {
+	if b.thread.model == nil {
 		return t3client.ModelOptionDescriptor{}, "the thread's model is not available yet"
 	}
-	p.ensureCatalogLocked()
-	if p.catalog == nil {
-		return t3client.ModelOptionDescriptor{}, "the model list is still loading; try again in a moment"
+	if _, problem := b.catalogLocked(); problem != "" {
+		return t3client.ModelOptionDescriptor{}, problem
 	}
-	for _, m := range p.catalog.Models {
-		if m.InstanceID == p.current.InstanceID && m.Slug == p.current.Model {
-			if d, ok := m.Capabilities.EffortOption(); ok && len(d.SelectableValues()) > 0 {
-				return d, ""
-			}
+	if m, ok := b.modelLocked(); ok {
+		if d, ok := m.Capabilities.EffortOption(); ok && len(d.SelectableValues()) > 0 {
+			return d, ""
 		}
 	}
 	return t3client.ModelOptionDescriptor{}, "this model does not advertise adjustable effort"
 }
 
-func (p *Pane) effortCmd(arg string) {
-	d, problem := p.effortOptionLocked()
+func (b *Backend) effortCmd(arg string) (chat.Reply, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	d, problem := b.effortOptionLocked()
 	if problem != "" {
-		p.note = problem
-		return
+		b.retryCatalogLocked()
+		return chat.Reply{}, errors.New(problem)
 	}
 	var levels []string
 	for _, o := range d.SelectableValues() {
 		levels = append(levels, o.ID)
 	}
 	if strings.TrimSpace(arg) == "" {
-		current := p.composerEffortLocked()
+		current := b.effortLocked()
 		if current == "" {
 			current = "unknown"
 		}
-		p.note = "effort: " + current + " · /effort " + strings.Join(levels, " | ")
-		return
+		return chat.Reply{Note: "effort: " + current + " · /effort " + strings.Join(levels, " | ")}, nil
 	}
-	selection, err := p.current.WithEffort(d, strings.TrimSpace(arg))
+	selection, err := b.thread.model.WithEffort(d, strings.TrimSpace(arg))
 	if err != nil {
-		p.note = err.Error() + "; supported: " + strings.Join(levels, ", ")
-		return
+		return chat.Reply{}, fmt.Errorf("%w; supported: %s", err, strings.Join(levels, ", "))
 	}
-	p.dispatchLocked(t3client.ModelSelectionCommand(p.threadID, selection), "effort")
+	return b.dispatch("effort", t3client.ModelSelectionCommand(b.threadID, selection)), nil
 }
 
-func (p *Pane) effortSuggestions(prefix string) []suggestion {
-	d, problem := p.effortOptionLocked()
+func (b *Backend) effortSuggestions(prefix string) []chat.Suggestion {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	d, problem := b.effortOptionLocked()
 	if problem != "" {
-		return []suggestion{{label: problem}}
+		return []chat.Suggestion{{Label: problem}}
 	}
-	var out []suggestion
+	var out []chat.Suggestion
 	for _, o := range d.SelectableValues() {
 		if !strings.HasPrefix(strings.ToLower(o.ID), strings.ToLower(prefix)) {
 			continue
 		}
 		desc := o.Label
-		if o.ID == p.composerEffortLocked() {
+		if o.ID == b.effortLocked() {
 			desc += " · current"
 		}
-		out = append(out, suggestion{insert: "/effort " + o.ID, label: o.ID, desc: desc, runs: true})
+		out = append(out, chat.Suggestion{Insert: "/effort " + o.ID, Label: o.ID, Description: desc, Runs: true})
 	}
 	if len(out) == 0 {
-		return []suggestion{{label: "no supported effort matches " + prefix}}
+		return []chat.Suggestion{{Label: "no supported effort matches " + prefix}}
 	}
-	return exactFirst(out, prefix)
+	return out
+}
+
+// effortLocked is the effort the thread's model runs with, by its
+// provider's defaults; mu must be held.
+func (b *Backend) effortLocked() string {
+	m, _ := b.modelLocked()
+	return b.thread.model.Effort(m.Capabilities)
 }

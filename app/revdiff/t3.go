@@ -2,21 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"path/filepath"
-	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
+	"github.com/umputun/revdiff/app/t3palette"
 )
-
-// connectTimeout bounds reaching a T3 server, SSH login and tunnel included.
-const connectTimeout = 45 * time.Second
 
 // t3Mode reports whether this run reviews a T3 Code server.
 func (o options) t3Mode() bool {
@@ -29,6 +22,11 @@ func (o options) t3SourceKind() string {
 		return t3client.SourceWorkingTree
 	}
 	return t3client.SourceBranchRange
+}
+
+// t3ConnectOptions is how the T3 flags authenticate.
+func (o options) t3ConnectOptions() t3client.ConnectOptions {
+	return t3client.ConnectOptions{Store: t3TokenStore(), Token: o.T3Token, Pair: o.T3Pair}
 }
 
 // validateT3Flags rejects flags that pick a local diff alongside T3 mode.
@@ -58,138 +56,62 @@ func validateT3Flags(opts options) error {
 	return nil
 }
 
-// t3Review is a connected T3 session and the target it reviews.
-type t3Review struct {
-	session  *t3client.Session
-	target   t3client.Target
-	renderer *t3client.Renderer
-}
-
 // t3TokenStore keeps T3 tokens beside the config file.
 func t3TokenStore() t3client.TokenStore {
 	dir := filepath.Dir(defaultConfigPath())
 	return t3client.TokenStore{Path: filepath.Join(dir, "t3-tokens.json")}
 }
 
-// connectT3 reaches the server named by the T3 flags.
-func connectT3(opts options) (*t3client.Session, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+// setupT3Review connects to the server the T3 flags name and resolves the
+// thread to review.
+func setupT3Review(opts options) (*t3palette.Review, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), t3palette.ConnectTimeout)
 	defer cancel()
-	s, err := t3client.Connect(ctx, opts.T3, t3client.ConnectOptions{
-		Store: t3TokenStore(),
-		Token: opts.T3Token,
-		Pair:  opts.T3Pair,
-	})
+	r, err := t3palette.Open(ctx, opts.T3, opts.t3ConnectOptions(), opts.T3Thread)
 	if err != nil {
 		return nil, fmt.Errorf("t3: %w", err)
 	}
-	return s, nil
+	logT3Notices(r.Session)
+	return r, nil
 }
 
-// fetchT3Shell reads the connected server's projects and threads.
-func fetchT3Shell(s *t3client.Session) (t3client.Shell, error) {
-	sh, err := t3client.FetchShell(context.Background(), s.Conn)
-	if err != nil {
-		return t3client.Shell{}, fmt.Errorf("t3: list threads: %w", err)
-	}
-	return sh, nil
+// t3Source is where a T3 review's diff comes from: the server, which reads
+// it in the target's folder.
+func t3Source(opts options, r *t3palette.Review) sourceSetup {
+	renderer := t3client.NewRenderer(r.Session.Conn(), r.Target.Cwd, opts.t3SourceKind())
+	return sourceSetup{vcsSetup: vcsSetup{renderer: renderer}, t3: r}
 }
 
-// setupT3Review connects and resolves which thread to review.
-func setupT3Review(opts options) (*t3Review, error) {
-	s, err := connectT3(opts)
-	if err != nil {
-		return nil, err
-	}
-	sh, err := fetchT3Shell(s)
-	if err != nil {
-		_ = s.Close()
-		return nil, err
-	}
-	target, err := t3client.Resolve(sh, opts.T3Thread)
-	if err != nil {
-		_ = s.Close()
-		return nil, fmt.Errorf("t3: %w", err)
-	}
-	return &t3Review{
-		session:  s,
-		target:   target,
-		renderer: t3client.NewRenderer(s.Conn, target.Cwd, opts.t3SourceKind()),
-	}, nil
-}
-
-// description names the T3 thread in the info popup, ahead of any user text.
-func (r *t3Review) description(user string) string {
-	d := fmt.Sprintf("**T3 Code**: %s\n\n%#q on %s", r.target.Label(), r.target.Cwd, r.session.Label)
-	if r.target.Thread != nil {
-		d += fmt.Sprintf("\n\nthread %#q", r.target.Thread.ID)
-	}
-	if user != "" {
-		d += "\n\n" + user
-	}
-	return d
-}
-
-// watch refreshes the review whenever the thread's agent starts or finishes
-// a run. It returns a stop function.
-func (r *t3Review) watch(p *tea.Program) (stop func()) {
-	if r.target.Thread == nil {
-		return func() {}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		err := t3client.WatchThread(ctx, r.session.Conn, r.target.Thread.ID, func(t3client.Thread) {
-			go p.Send(splitview.FilesChangedMsg{}) // never block the connection's reader
-		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("[WARN] T3 live refresh stopped: %v", err)
-		}
-	}()
-	return cancel
+// t3HistoryPath files a T3 review's annotations by its server and folder:
+// history keeps them under the folder's name.
+func t3HistoryPath(r *t3palette.Review) string {
+	return r.Session.Label() + ":" + r.Target.Cwd
 }
 
 // listT3Threads prints the server's threads, most recently updated first.
 func listT3Threads(opts options, w io.Writer) error {
-	s, err := connectT3(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), t3palette.ConnectTimeout)
+	defer cancel()
+	s, err := t3palette.Connect(ctx, opts.T3, opts.t3ConnectOptions())
 	if err != nil {
-		return err
+		return fmt.Errorf("t3: %w", err)
 	}
 	defer s.Close()
-	sh, err := fetchT3Shell(s)
+	logT3Notices(s)
+	sh, err := s.Server().FetchShell(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("t3: list threads: %w", err)
 	}
-	threads := t3client.SortedThreads(sh)
-	if len(threads) == 0 {
-		if _, err := fmt.Fprintln(w, "no threads"); err != nil {
-			return fmt.Errorf("write threads: %w", err)
-		}
-		return nil
-	}
-	for _, t := range threads {
-		project := t.ProjectID
-		if p, ok := sh.Project(t.ProjectID); ok {
-			project = p.Title
-		}
-		state := "idle"
-		if t.Running() {
-			state = "running"
-		}
-		branch := "-"
-		if t.Branch != nil {
-			branch = *t.Branch
-		}
-		if _, err := fmt.Fprintf(w, "%s  %-7s  %-20s  %-24s  %s\n", t.ID, state, trunc(project, 20), trunc(branch, 24), t.Title); err != nil {
-			return fmt.Errorf("write threads: %w", err)
-		}
+	if err := t3palette.WriteThreads(w, sh); err != nil {
+		return fmt.Errorf("t3: %w", err)
 	}
 	return nil
 }
 
-func trunc(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+// logT3Notices reports, before the full-screen UI starts, what the user
+// should know about how s was reached.
+func logT3Notices(s t3palette.Session) {
+	for _, n := range s.Notices() {
+		log.Printf("[WARN] T3: %s", n)
 	}
-	return string(r[:n-1]) + "…"
 }

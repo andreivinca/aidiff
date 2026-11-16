@@ -44,19 +44,29 @@ func TestSubscribeThreadDecodes(t *testing.T) {
 		send(t, ws, map[string]any{"_tag": "Chunk", "requestId": req["id"], "values": append([]any{snapshot}, events...)})
 		send(t, ws, success(req["id"], nil))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 
 	var snap ThreadProjection
 	var items []TurnItem
 	var runs []Run
 	var reqs []RuntimeRequest
 	var threads []Thread
-	err := SubscribeThread(context.Background(), c, "th-1", ThreadEvents{
-		Snapshot: func(p ThreadProjection) { snap = p },
-		TurnItem: func(it TurnItem) { items = append(items, it) },
-		Run:      func(r Run) { runs = append(runs, r) },
-		Request:  func(r RuntimeRequest) { reqs = append(reqs, r) },
-		Thread:   func(th Thread) { threads = append(threads, th) },
+	err := c.SubscribeThread(context.Background(), "th-1", ThreadEvents{
+		Snapshot: func(p ThreadProjection) {
+			snap = p
+		},
+		TurnItem: func(it TurnItem) {
+			items = append(items, it)
+		},
+		Run: func(r Run) {
+			runs = append(runs, r)
+		},
+		Request: func(r RuntimeRequest) {
+			reqs = append(reqs, r)
+		},
+		Thread: func(th Thread) {
+			threads = append(threads, th)
+		},
 	})
 	require.NoError(t, err)
 
@@ -101,35 +111,35 @@ func TestCommandsAndDispatch(t *testing.T) {
 		got.add(req)
 		send(t, ws, success(req["id"], map[string]any{"sequence": 1}))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 	ctx := context.Background()
 
-	require.NoError(t, Dispatch(ctx, c, InterruptCommand("th-1", "run-1")))
+	require.NoError(t, c.Dispatch(ctx, InterruptCommand("th-1", "run-1")))
 	p := payloadOf(t, got.last())
 	assert.Equal(t, "orchestration.dispatchCommand", got.last()["tag"])
 	assert.Equal(t, "run.interrupt", p["type"])
 	assert.Equal(t, "run-1", p["runId"])
 	assert.Regexp(t, uuidRe, p["commandId"], "a command id is added")
 
-	require.NoError(t, RespondRequest(ctx, c, "th-1", "req-1", "accept"))
+	require.NoError(t, c.Dispatch(ctx, RespondCommand("th-1", "req-1", "accept")))
 	p = payloadOf(t, got.last())
 	assert.Equal(t, "runtime-request.respond", p["type"])
 	assert.Equal(t, "req-1", p["requestId"])
 	assert.Equal(t, "accept", p["decision"])
 
-	require.NoError(t, Dispatch(ctx, c, InteractionModeCommand("th-1", "plan")))
+	require.NoError(t, c.Dispatch(ctx, InteractionModeCommand("th-1", "plan")))
 	assert.Equal(t, "plan", payloadOf(t, got.last())["interactionMode"])
-	require.NoError(t, Dispatch(ctx, c, RuntimeModeCommand("th-1", "auto")))
+	require.NoError(t, c.Dispatch(ctx, RuntimeModeCommand("th-1", "auto")))
 	assert.Equal(t, "auto", payloadOf(t, got.last())["runtimeMode"])
 
-	require.NoError(t, Dispatch(ctx, c, Command{"type": "thread.visit", "threadId": "th-1", "commandId": "fixed"}))
+	require.NoError(t, c.Dispatch(ctx, Command{"type": "thread.visit", "threadId": "th-1", "commandId": "fixed"}))
 	assert.Equal(t, "fixed", payloadOf(t, got.last())["commandId"], "a given command id is kept")
 
-	require.NoError(t, Dispatch(ctx, c, AnswerCommand("th-1", "req-2", map[string]any{"q1": "Strict", "q2": []string{"a", "b"}})))
+	require.NoError(t, c.Dispatch(ctx, AnswerCommand("th-1", "req-2", map[string]any{"q1": "Strict", "q2": []string{"a", "b"}})))
 	p = payloadOf(t, got.last())
 	assert.Equal(t, "runtime-request.respond", p["type"])
 	assert.Equal(t, map[string]any{"q1": "Strict", "q2": []any{"a", "b"}}, p["answers"])
-	require.NoError(t, Dispatch(ctx, c, DismissQuestionCommand("th-1", "req-2")))
+	require.NoError(t, c.Dispatch(ctx, DismissQuestionCommand("th-1", "req-2")))
 	assert.Equal(t, "thread.user-input.dismiss", payloadOf(t, got.last())["type"])
 	assert.Equal(t, "label", QuestionOption{Label: "label"}.Answer())
 	assert.Equal(t, "v", QuestionOption{Label: "label", Value: "v"}.Answer())
@@ -143,8 +153,8 @@ func TestPersistImagesAndMessageWith(t *testing.T) {
 			map[string]any{"type": "image", "id": "att-1", "name": "shot.png", "mimeType": "image/png", "sizeBytes": 4},
 		}}))
 	})
-	c := dial(t, url)
-	atts, err := PersistImages(context.Background(), c, "th-1", "msg-1", []ImageUpload{{Name: "shot.png", MimeType: "image/png", Data: []byte("abcd")}})
+	c := dialFake(t, url)
+	atts, err := c.PersistImages(context.Background(), "th-1", "msg-1", []ImageUpload{{Name: "shot.png", MimeType: "image/png", Data: []byte("abcd")}})
 	require.NoError(t, err)
 	p := payloadOf(t, got.last())
 	assert.Equal(t, "assets.persistChatAttachments", got.last()["tag"])
@@ -157,13 +167,13 @@ func TestPersistImagesAndMessageWith(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,YWJjZA==", up["dataUrl"])
 	require.Len(t, atts, 1)
 
-	cmd := MessageCommandWith("th-1", "msg-1", "see", atts)
+	cmd := OutgoingMessage{ThreadID: "th-1", MessageID: "msg-1", Text: "see", Attachments: atts}.Command()
 	assert.Equal(t, "msg-1", cmd["messageId"])
 	raw, err := json.Marshal(cmd["attachments"])
 	require.NoError(t, err)
 	assert.JSONEq(t, `[{"type":"image","id":"att-1","name":"shot.png","mimeType":"image/png","sizeBytes":4}]`, string(raw))
 
-	_, err = PersistImages(context.Background(), c, "th-1", "msg-2", []ImageUpload{{Name: "huge.png", MimeType: "image/png", Data: make([]byte, MaxImageBytes+1)}})
+	_, err = c.PersistImages(context.Background(), "th-1", "msg-2", []ImageUpload{{Name: "huge.png", MimeType: "image/png", Data: make([]byte, MaxImageBytes+1)}})
 	require.Error(t, err, "over T3's limit")
 }
 
@@ -176,8 +186,10 @@ func TestTitleSeed(t *testing.T) {
 
 func TestQueuedMessageEvents(t *testing.T) {
 	var got Message
-	h := ThreadEvents{Message: func(m Message) { got = m }}
-	h.dispatch("message.updated", json.RawMessage(`{"id":"m-queued","role":"user","text":"follow up"}`))
+	h := ThreadEvents{Message: func(m Message) {
+		got = m
+	}}
+	h.stream().dispatch("message.updated", json.RawMessage(`{"id":"m-queued","role":"user","text":"follow up"}`))
 	assert.Equal(t, Message{ID: "m-queued", Role: "user", Text: "follow up"}, got)
 	var snapshot ThreadProjection
 	require.NoError(t, json.Unmarshal([]byte(`{"messages":[{"id":"m-queued","role":"user","text":"follow up"}],"visibleTurnItems":[{"position":1,"item":{"id":"row-1","messageId":"m-queued","type":"user_message","inputIntent":"queued_turn","status":"pending"}}]}`), &snapshot))

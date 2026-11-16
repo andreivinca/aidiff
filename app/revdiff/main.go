@@ -18,7 +18,6 @@ import (
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/fsutil"
 	"github.com/umputun/revdiff/app/keymap"
-	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 )
@@ -125,10 +124,7 @@ func run(opts options) (int, error) {
 	store := annotation.NewStore()
 	deps := newReviewDeps(opts)
 
-	// 120fps (Bubble Tea's cap) halves the wait between a frame being ready and
-	// it reaching the screen: up to 8ms instead of 16ms per terminal-pane echo.
-	// Idle ticks are free (the renderer skips an unchanged frame).
-	programOptions := []tea.ProgramOption{tea.WithAltScreen(), tea.WithoutSignalHandler(), tea.WithFPS(120)}
+	programOptions := []tea.ProgramOption{tea.WithAltScreen(), tea.WithoutSignalHandler()}
 	tuiOut, err := (tuiOutput{
 		stdout:     os.Stdout,
 		isTerminal: term.IsTerminal,
@@ -158,13 +154,12 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 	defer src.close()
+	t3p := newT3Palette(deps, description, src) // owns src's T3 session from here on
+	defer t3p.Close()
 	if src.tty != nil {
 		programOptions = append(programOptions, tea.WithInput(src.tty))
 	}
-	reviewDescription := description
-	if src.t3 != nil {
-		reviewDescription = src.t3.description(description)
-	}
+	reviewDescription := src.reviewDescription(description)
 
 	if opts.Annotations != "" {
 		if perr := preloadAnnotations(opts.Annotations, store, src.renderer, opts.ref(), opts.Staged,
@@ -174,36 +169,18 @@ func run(opts options) (int, error) {
 	}
 	preloaded := store.Count() > 0
 
-	model, err := deps.newModel(src.vcsSetup, store, reviewDescription)
+	model, err := deps.newModel(src, store, reviewDescription)
 	if err != nil {
 		return 0, err
 	}
 
-	// always wrapped: ctrl+p can open terminals even when none start open,
-	// and the T3 Code commands live there too
-	t3p := newT3Palette(opts, deps, description, src)
-	root := splitview.New(model, splitview.Config{
-		WidthPercent: opts.TerminalWidth,
-		OpenOnStart:  opts.Terminal,
-		Start:        t3p.startTerminal, // on the T3 session's machine when it is reached over ssh
-		RefreshMsg:   ui.RefreshMsg{},
-		Commands:     t3p.commands,
-	})
-
-	p := tea.NewProgram(root, programOptions...)
-	t3p.start(p, src.watch(opts, p))
-	defer t3p.close()
-	if !opts.NoChat && src.t3 != nil && src.t3.target.Thread != nil {
-		go p.Send(t3p.openChatMsg()) // the split holds the request until the window has a size
-	}
+	p := tea.NewProgram(newSplit(opts, model, t3p), append(programOptions, splitProgramOptions()...)...)
+	t3p.Start(p, src.watch(opts, p))
 	guard := &shutdownGuard{}
 	stop := guard.watch(p)
 	defer stop()
 	finalModel, runErr := p.Run()
-	if split, ok := finalModel.(splitview.Model); ok {
-		split.Close()
-		finalModel = split.Inner()
-	}
+	finalModel = closeSplit(finalModel)
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()
@@ -219,7 +196,7 @@ func run(opts options) (int, error) {
 	// EIO that races the guard's QuitMsg — so the history safety net must run
 	// whenever the model is available and the exit was graceful or signaled.
 	if m, ok := finalModel.(ui.Model); ok && (runErr == nil || signaled) {
-		hist := t3p.history() // the review on screen may not be the one the run opened
+		hist := src.history(opts, t3p.OnScreen()) // the review on screen may not be the one the run opened
 		return finalize(finalizeReq{
 			opts:        opts,
 			annotations: m.Store().FormatOutput(),
@@ -229,7 +206,7 @@ func run(opts options) (int, error) {
 			flushed:     m.OutputFlushed(),
 			gitRoot:     hist.gitRoot,
 			workDir:     hist.workDir,
-			t3:          hist.t3,
+			t3Path:      hist.t3Path,
 			signaled:    signaled,
 			loadErr:     m.LoadError(),
 			stdout:      os.Stdout,
@@ -269,7 +246,7 @@ type finalizeReq struct {
 	flushed     bool
 	gitRoot     string
 	workDir     string
-	t3          bool // the reviewed tree lives on a T3 host
+	t3Path      string // a T3 review: its server and folder, filed in place of a local path
 	signaled    bool
 	loadErr     error
 	stdout      io.Writer
@@ -304,7 +281,7 @@ func finalize(r finalizeReq) (int, error) {
 		}
 		return writeAnnotationOutput(annotationOutputReq{opts: r.opts, output: "", stdout: r.stdout})
 	}
-	saveHistory(histReq{opts: r.opts, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files, t3: r.t3})
+	saveHistory(histReq{opts: r.opts, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files, t3Path: r.t3Path})
 	if r.signaled {
 		return 0, nil
 	}

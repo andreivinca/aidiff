@@ -27,20 +27,33 @@ func TestSplit_VisibleResizeGrips(t *testing.T) {
 	}
 }
 
-func TestSplit_DragCommitsReleaseAndKeepsGrabOffset(t *testing.T) {
-	for _, grab := range []int{59, 60} {
-		hs := newHarness(t, 100, 20)
-		hs.send(tea.MouseMsg{X: grab, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-		require.True(t, hs.m.dragging)
-		hs.send(tea.MouseMsg{X: grab, Y: 10, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-		assert.Equal(t, 60, hs.m.leftW, "grabbing the adjacent cell does not shift the divider")
-		hs.send(tea.MouseMsg{X: grab, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
-		assert.True(t, hs.m.dragging, "an incidental wheel event does not lose the grab")
-		hs.send(tea.MouseMsg{X: grab - 20, Y: 10, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
-		assert.False(t, hs.m.dragging)
-		assert.Equal(t, 40, hs.m.leftW, "a release with no motion event still resizes the review")
-		assert.Equal(t, 60, hs.term(0).w)
-		assert.Equal(t, tea.WindowSizeMsg{Width: 40, Height: 20}, hs.lastInnerSize())
-		assert.Empty(t, hs.term(0).mice, "resize events stay in the wrapper")
-	}
+func TestSplit_DragCommitsRelease(t *testing.T) {
+	hs := newHarness(t, 100, 20)
+	hs.send(tea.MouseMsg{X: 59, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	require.True(t, hs.m.dragging)
+	hs.send(tea.MouseMsg{X: 59, Y: 10, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	assert.Equal(t, 60, hs.m.leftW, "a motion on the grip itself does not shift the divider")
+	hs.send(tea.MouseMsg{X: 59, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	assert.True(t, hs.m.dragging, "an incidental wheel event does not lose the grab")
+	hs.send(tea.MouseMsg{X: 39, Y: 10, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
+	assert.False(t, hs.m.dragging)
+	assert.Equal(t, 40, hs.m.leftW, "a release with no motion event still resizes the review")
+	assert.Equal(t, 60, hs.term(0).w)
+	assert.Equal(t, tea.WindowSizeMsg{Width: 40, Height: 20}, hs.lastInnerSize())
+	assert.Empty(t, hs.term(0).mice, "resize events stay in the wrapper")
+}
+
+func TestSplit_OnlyTheGripGrabs(t *testing.T) {
+	hs := newHarness(t, 100, 20)
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}) // focus the review
+
+	hs.send(tea.MouseMsg{X: 60, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	assert.False(t, hs.m.dragging, "the terminal's first column is the terminal's")
+	assert.Equal(t, 0, hs.m.focus, "a click there focuses it")
+	require.Len(t, hs.term(0).mice, 1, "and reaches it")
+	assert.Equal(t, 0, hs.term(0).mice[0].Mouse().X)
+
+	hs.send(tea.MouseMsg{X: 59, Y: 19, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	assert.False(t, hs.m.dragging, "the bottom row draws no grip: the review's status line keeps its column")
+	assert.Equal(t, focusDiff, hs.m.focus)
 }

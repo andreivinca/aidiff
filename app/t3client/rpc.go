@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/coder/websocket"
 )
@@ -31,82 +30,109 @@ const protocolVersion = "2"
 // so the websocket library's 32 KiB default is far too small.
 const maxFrameBytes = 256 << 20
 
-// pingInterval keeps idle connections alive through proxies and tunnels.
-const pingInterval = 25 * time.Second
-
-// Conn is one authenticated WebSocket session with a T3 Code server.
+// Conn is one authenticated WebSocket session with a T3 Code server. Its
+// methods are the server operations aidiff uses; a Session owns its lifetime.
+//
+// Writes: a request is written under the caller's context, so a caller's
+// deadline bounds a large upload too. The websocket library closes the
+// connection when a context ends mid-frame, since a half-written frame
+// corrupts the stream. Control frames (acks, pings, interrupts) never block
+// the goroutine that produces them: they queue for a writer of their own,
+// which bounds each write by controlWriteTimeout.
 type Conn struct {
 	ws     *websocket.Conn
-	ctx    context.Context
+	ctx    context.Context // canceled when the connection closes
 	cancel context.CancelFunc
 
-	writeMu sync.Mutex
+	// writeTurn serializes frames. It is a channel rather than a mutex so a
+	// writer waits for its turn under its own context, apart from the
+	// context bounding the write itself.
+	writeTurn chan struct{}
+	control   controlQueue
+	alive     liveness
 
 	mu      sync.Mutex
 	nextID  uint64
 	pending map[string]*call
+	cause   error // why the client ended the connection, if it did
 	err     error // set once the read loop ends
 	done    chan struct{}
 }
 
 // call routes the frames answering one request.
+//
+// A stream's chunks are delivered under mu, and finish takes mu too, so once
+// finish returns no chunk callback is running or will run again: a stream's
+// callback never outlives the subscribe call that registered it.
 type call struct {
-	chunk func(values []json.RawMessage) // nil for unary calls
-	exit  chan rpcExit
+	mu       sync.Mutex
+	finished bool
+	chunk    func(values []json.RawMessage) // nil for unary calls
+	result   chan outcome                   // receives exactly one outcome
 }
 
-// inbound is the union of server frames this client reads.
-type inbound struct {
-	Tag       string            `json:"_tag"`
-	RequestID string            `json:"requestId"`
-	Values    []json.RawMessage `json:"values"`
-	Exit      rpcExit           `json:"exit"`
+// outcome is how a request ended: the server's exit, or a client-side error.
+type outcome struct {
+	exit rpcExit
+	err  error
 }
 
-type rpcExit struct {
-	Tag   string          `json:"_tag"` // Success | Failure
-	Value json.RawMessage `json:"value"`
-	Cause json.RawMessage `json:"cause"`
-}
-
-// ErrUnauthorized means the server refused the access token.
-var ErrUnauthorized = errors.New("access token rejected")
-
-// RPCError is a failed request: a typed server error or a defect.
-type RPCError struct {
-	Method string
-	Tag    string // error tag, e.g. VcsRepositoryDetectionError; empty for defects
-	Detail string
-}
-
-func (e *RPCError) Error() string {
-	if e.Tag == "" {
-		return fmt.Sprintf("t3 %s: %s", e.Method, e.Detail)
+// deliver hands a chunk to the stream's callback unless the stream is
+// finished, reporting whether it did.
+func (cl *call) deliver(values []json.RawMessage) bool {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	if cl.finished || cl.chunk == nil {
+		return false
 	}
-	return fmt.Sprintf("t3 %s: %s: %s", e.Method, e.Tag, e.Detail)
+	cl.chunk(values)
+	return true
 }
 
-// Dial opens an authenticated session. baseURL is the server's HTTP origin
-// (http://host:port or https://host); token is a bearer access token.
-func Dial(ctx context.Context, baseURL, token string) (*Conn, error) {
-	wsURL, err := socketURL(baseURL)
+// finish marks the call over, waiting out a chunk callback in progress.
+func (cl *call) finish() {
+	cl.mu.Lock()
+	cl.finished = true
+	cl.mu.Unlock()
+}
+
+// frameHeader is the part of every server frame that routes it. It is
+// decoded on its own so a frame whose body does not decode still fails the
+// request it answers.
+type frameHeader struct {
+	Tag       string `json:"_tag"`
+	RequestID string `json:"requestId"`
+}
+
+// dial opens an authenticated session with the server at ep.
+func dial(ctx context.Context, ep endpoint, token string) (*Conn, error) {
+	wsURL, err := socketURL(ep.origin)
 	if err != nil {
 		return nil, err
 	}
 	hdr := http.Header{}
 	hdr.Set("Authorization", "Bearer "+token)
-	ws, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: hdr})
+	ws, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: ep.client, HTTPHeader: hdr})
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close() // the upgrade response carries nothing further
 	}
 	if err != nil {
-		return nil, dialError(baseURL, resp, err)
+		return nil, dialError(ep.origin, resp, err)
 	}
 	ws.SetReadLimit(maxFrameBytes)
 
 	cctx, cancel := context.WithCancel(context.Background())
-	c := &Conn{ws: ws, ctx: cctx, cancel: cancel, pending: map[string]*call{}, done: make(chan struct{})}
+	c := &Conn{
+		ws:        ws,
+		ctx:       cctx,
+		cancel:    cancel,
+		writeTurn: make(chan struct{}, 1),
+		control:   newControlQueue(),
+		pending:   map[string]*call{},
+		done:      make(chan struct{}),
+	}
 	go c.readLoop()
+	go c.controlLoop()
 	go c.pingLoop()
 	return c, nil
 }
@@ -138,15 +164,16 @@ func dialError(baseURL string, resp *http.Response, err error) error {
 	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("T3 at %s: HTTP %d: %w", baseURL, resp.StatusCode, ErrUnauthorized)
+		return fmt.Errorf("T3 at %s: HTTP %d: %w", baseURL, resp.StatusCode, errUnauthorized)
 	case http.StatusUpgradeRequired:
 		return fmt.Errorf("T3 at %s speaks a different orchestration protocol than this aidiff (%s); update one of them", baseURL, protocolVersion)
 	}
 	return fmt.Errorf("connect to T3 at %s: HTTP %d: %w", baseURL, resp.StatusCode, err)
 }
 
-// Close ends the session.
-func (c *Conn) Close() error {
+// close ends the connection. Session.Close is the public way to do it, since
+// a session may own an SSH tunnel as well.
+func (c *Conn) close() error {
 	err := c.ws.Close(websocket.StatusNormalClosure, "")
 	c.cancel()
 	if err != nil {
@@ -155,8 +182,21 @@ func (c *Conn) Close() error {
 	return nil
 }
 
+// abort ends the connection because of cause, which Err then reports.
+func (c *Conn) abort(cause error) {
+	c.mu.Lock()
+	if c.cause == nil {
+		c.cause = cause
+	}
+	c.mu.Unlock()
+	_ = c.ws.CloseNow()
+	c.cancel()
+}
+
 // Done is closed when the connection ends; Err then reports why.
-func (c *Conn) Done() <-chan struct{} { return c.done }
+func (c *Conn) Done() <-chan struct{} {
+	return c.done
+}
 
 // Err reports why the connection ended, or nil while it is open.
 func (c *Conn) Err() error {
@@ -165,30 +205,29 @@ func (c *Conn) Err() error {
 	return c.err
 }
 
-// Call sends a unary request and decodes its success value into out (may be nil).
-func (c *Conn) Call(ctx context.Context, method string, payload, out any) error {
-	cl := &call{exit: make(chan rpcExit, 1)}
+// call sends a unary request and decodes its success value into out (may be nil).
+func (c *Conn) call(ctx context.Context, method string, payload, out any) error {
+	cl := &call{result: make(chan outcome, 1)}
 	id := c.newID()
-	if err := c.send(id, method, payload, cl); err != nil {
+	if err := c.send(ctx, id, method, payload, cl); err != nil {
 		return err
 	}
 	return c.await(ctx, method, id, cl, out)
 }
 
-// Subscribe opens a server stream. onValue receives each streamed value in
-// order, on the connection's read goroutine, so it must not block. Subscribe
-// returns when the stream ends, the connection drops, or ctx is canceled.
-func (c *Conn) Subscribe(ctx context.Context, method string, payload any, onValue func(json.RawMessage)) error {
+// subscribe opens a server stream. onValue receives each streamed value in
+// order, on the connection's read goroutine, so it must not block. subscribe
+// returns when the stream ends, the connection drops, or ctx is canceled;
+// onValue is never called after it returns.
+func (c *Conn) subscribe(ctx context.Context, method string, payload any, onValue func(json.RawMessage)) error {
 	id := c.newID()
-	cl := &call{exit: make(chan rpcExit, 1)}
+	cl := &call{result: make(chan outcome, 1)}
 	cl.chunk = func(values []json.RawMessage) {
 		for _, v := range values {
 			onValue(v)
 		}
-		// the server holds a stream back after a few unacknowledged chunks
-		_ = c.write(map[string]any{"_tag": "Ack", "requestId": id})
 	}
-	if err := c.send(id, method, payload, cl); err != nil {
+	if err := c.send(ctx, id, method, payload, cl); err != nil {
 		return err
 	}
 	return c.await(ctx, method, id, cl, nil)
@@ -201,9 +240,15 @@ func (c *Conn) newID() string {
 	return strconv.FormatUint(c.nextID, 10)
 }
 
-func (c *Conn) send(id, method string, payload any, cl *call) error {
+func (c *Conn) send(ctx context.Context, id, method string, payload any, cl *call) error {
 	if payload == nil {
 		payload = struct{}{}
+	}
+	frame, err := json.Marshal(map[string]any{
+		"_tag": "Request", "id": id, "tag": method, "payload": payload, "headers": [][2]string{},
+	})
+	if err != nil {
+		return fmt.Errorf("t3 %s: encode request: %w", method, err)
 	}
 	c.mu.Lock()
 	if c.err != nil {
@@ -213,26 +258,29 @@ func (c *Conn) send(id, method string, payload any, cl *call) error {
 	}
 	c.pending[id] = cl
 	c.mu.Unlock()
-	err := c.write(map[string]any{
-		"_tag": "Request", "id": id, "tag": method, "payload": payload, "headers": [][2]string{},
-	})
-	if err != nil {
+	if err := c.write(ctx, ctx, frame); err != nil {
 		c.forget(id)
 		return fmt.Errorf("t3 %s: %w", method, err)
 	}
 	return nil
 }
 
+// await waits for the request's outcome. Whichever way it ends, the call is
+// finished before await returns, so a stream's callback cannot run after.
 func (c *Conn) await(ctx context.Context, method, id string, cl *call, out any) error {
+	defer cl.finish()
 	select {
-	case ex := <-cl.exit:
-		return decodeExit(method, ex, out)
+	case res := <-cl.result:
+		if res.err != nil {
+			return fmt.Errorf("t3 %s: %w", method, res.err)
+		}
+		return decodeExit(method, res.exit, out)
 	case <-c.done:
 		c.forget(id)
 		return fmt.Errorf("t3 %s: %w", method, c.Err())
 	case <-ctx.Done():
 		c.forget(id)
-		_ = c.write(map[string]any{"_tag": "Interrupt", "requestId": id})
+		c.control.push(controlFrame{Tag: "Interrupt", RequestID: id})
 		return fmt.Errorf("t3 %s: %w", method, ctx.Err())
 	}
 }
@@ -243,14 +291,30 @@ func (c *Conn) forget(id string) {
 	c.mu.Unlock()
 }
 
-func (c *Conn) write(msg any) error {
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("encode frame: %w", err)
+// take removes and returns the pending call with id, nil when there is none.
+func (c *Conn) take(id string) *call {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cl := c.pending[id]
+	delete(c.pending, id)
+	return cl
+}
+
+// write sends one frame: it waits for its turn under turnCtx, then writes
+// under writeCtx. An error while waiting leaves the connection intact; one
+// during the write closes it (see Conn).
+func (c *Conn) write(turnCtx, writeCtx context.Context, frame []byte) error {
+	select {
+	case c.writeTurn <- struct{}{}:
+	case <-turnCtx.Done():
+		return fmt.Errorf("write frame: %w", turnCtx.Err())
+	case <-c.ctx.Done():
+		return errors.New("write frame: connection closed")
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	if err := c.ws.Write(c.ctx, websocket.MessageText, b); err != nil {
+	defer func() {
+		<-c.writeTurn
+	}()
+	if err := c.ws.Write(writeCtx, websocket.MessageText, frame); err != nil {
 		return fmt.Errorf("write frame: %w", err)
 	}
 	return nil
@@ -260,11 +324,15 @@ func (c *Conn) readLoop() {
 	var err error
 	defer func() {
 		c.mu.Lock()
-		if err == nil || errors.Is(err, context.Canceled) {
+		switch {
+		case c.cause != nil:
+			err = c.cause
+		case err == nil || errors.Is(err, context.Canceled):
 			err = errors.New("connection closed")
 		}
 		c.err = err
 		c.mu.Unlock()
+		c.cancel() // release writers waiting for their turn
 		close(c.done)
 	}()
 	for {
@@ -273,94 +341,76 @@ func (c *Conn) readLoop() {
 		if err != nil {
 			return
 		}
-		var msg inbound
-		if json.Unmarshal(data, &msg) != nil {
-			continue // a frame we cannot read answers nothing we wait on
-		}
-		c.dispatch(msg)
+		c.alive.heard()
+		c.dispatch(data)
 	}
 }
 
-func (c *Conn) dispatch(msg inbound) {
-	switch msg.Tag {
+// dispatch routes one server frame. Effect RPC servers send Chunk and Exit
+// for a request, Pong for a ping, and Defect when the server itself failed;
+// a Defect ends every request, so it ends the connection. A frame naming a
+// pending request that cannot be read, or whose tag is unknown, fails that
+// request rather than leaving it waiting.
+func (c *Conn) dispatch(data []byte) {
+	var head frameHeader
+	if json.Unmarshal(data, &head) != nil {
+		return // not a frame at all: it answers nothing we could identify
+	}
+	switch head.Tag {
 	case "Chunk":
-		c.mu.Lock()
-		cl := c.pending[msg.RequestID]
-		c.mu.Unlock()
-		if cl != nil && cl.chunk != nil {
-			cl.chunk(msg.Values)
-		}
+		c.dispatchChunk(head.RequestID, data)
 	case "Exit":
-		c.mu.Lock()
-		cl := c.pending[msg.RequestID]
-		delete(c.pending, msg.RequestID)
-		c.mu.Unlock()
-		if cl != nil {
-			cl.exit <- msg.Exit
-		}
+		c.dispatchExit(head.RequestID, data)
+	case "Defect":
+		c.abort(defectError(data))
+	case "ClientProtocolError":
+		c.abort(fmt.Errorf("T3 protocol error: %s", compactJSON(data)))
+	case "Pong":
+	default:
+		c.failStream(head.RequestID, fmt.Errorf("unexpected %q frame from the server", head.Tag))
 	}
 }
 
-func (c *Conn) pingLoop() {
-	t := time.NewTicker(pingInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-c.done:
-			return
-		case <-t.C:
-			_ = c.write(map[string]string{"_tag": "Ping"})
-		}
+func (c *Conn) dispatchChunk(id string, data []byte) {
+	var msg struct {
+		Values []json.RawMessage `json:"values"`
 	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		c.failStream(id, fmt.Errorf("unreadable stream chunk: %w", err))
+		return
+	}
+	c.mu.Lock()
+	cl := c.pending[id]
+	c.mu.Unlock()
+	if cl == nil || !cl.deliver(msg.Values) {
+		return
+	}
+	// the server holds a stream back after a few unacknowledged chunks
+	c.control.push(controlFrame{Tag: "Ack", RequestID: id})
 }
 
-// decodeExit turns an Exit frame into the call's result.
-func decodeExit(method string, ex rpcExit, out any) error {
-	if ex.Tag == "Success" {
-		if out == nil || len(ex.Value) == 0 || string(ex.Value) == "null" {
-			return nil
-		}
-		if err := json.Unmarshal(ex.Value, out); err != nil {
-			return fmt.Errorf("t3 %s: decode result: %w", method, err)
-		}
-		return nil
+func (c *Conn) dispatchExit(id string, data []byte) {
+	cl := c.take(id)
+	if cl == nil {
+		return
 	}
-	return failureError(method, ex.Cause)
+	var msg struct {
+		Exit rpcExit `json:"exit"`
+	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		cl.result <- outcome{err: fmt.Errorf("unreadable result: %w", err)}
+		return
+	}
+	cl.result <- outcome{exit: msg.Exit}
 }
 
-// failureError reads the first entry of an Effect failure cause.
-func failureError(method string, raw json.RawMessage) error {
-	var causes []struct {
-		Tag    string          `json:"_tag"` // Fail | Die | Interrupt
-		Error  json.RawMessage `json:"error"`
-		Defect json.RawMessage `json:"defect"`
+// failStream fails the pending request id, if any, and interrupts it on the
+// server, whose side of it may still be running.
+func (c *Conn) failStream(id string, err error) {
+	cl := c.take(id)
+	if cl == nil {
+		return
 	}
-	if err := json.Unmarshal(raw, &causes); err != nil || len(causes) == 0 {
-		return &RPCError{Method: method, Detail: "request failed"}
-	}
-	c := causes[0]
-	switch c.Tag {
-	case "Fail":
-		var e struct {
-			Tag     string `json:"_tag"`
-			Detail  string `json:"detail"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(c.Error, &e)
-		detail := e.Detail
-		if detail == "" {
-			detail = e.Message
-		}
-		if detail == "" {
-			detail = string(c.Error)
-		}
-		return &RPCError{Method: method, Tag: e.Tag, Detail: detail}
-	case "Die":
-		var s string
-		if json.Unmarshal(c.Defect, &s) != nil {
-			s = string(c.Defect)
-		}
-		return &RPCError{Method: method, Detail: s}
-	}
-	return &RPCError{Method: method, Detail: strings.ToLower(c.Tag)}
+	cl.result <- outcome{err: err}
+	c.control.push(controlFrame{Tag: "Interrupt", RequestID: id})
 }

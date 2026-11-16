@@ -54,8 +54,3 @@ func TestParseArgs_T3Conflicts(t *testing.T) {
 	_, err := parseArgs(append(noConfigArgs(t), "--t3-thread", "x", "--staged"))
 	require.ErrorContains(t, err, "--t3 cannot be used with --staged", "--t3-thread alone selects T3 mode")
 }
-
-func TestT3Trunc(t *testing.T) {
-	assert.Equal(t, "short", trunc("short", 10))
-	assert.Equal(t, "abcd…", trunc("abcdefgh", 5))
-}

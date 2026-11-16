@@ -1,6 +1,7 @@
 package splitview
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -16,38 +17,71 @@ import (
 
 // fakeTerm records what the split sends to the terminal.
 type fakeTerm struct {
-	mu      sync.Mutex
-	text    []string
-	keys    []uv.KeyPressEvent
-	pastes  []string
-	mice    []vt.Mouse
-	w, h    int
-	exited  bool
-	closed  bool
-	updates chan struct{}
+	mu        sync.Mutex
+	text      []string
+	keys      []uv.KeyPressEvent
+	pastes    []string
+	mice      []vt.Mouse
+	w, h      int
+	exited    bool
+	closed    bool
+	updates   chan struct{}
+	closeOnce sync.Once
 }
 
 func newFakeTerm(w, h int) *fakeTerm {
 	return &fakeTerm{w: w, h: h, updates: make(chan struct{}, 1)}
 }
 
-func (f *fakeTerm) Updates() <-chan struct{} { return f.updates }
-func (f *fakeTerm) Exited() bool             { return f.exited }
-func (f *fakeTerm) SendText(s string)        { f.mu.Lock(); f.text = append(f.text, s); f.mu.Unlock() }
+func (f *fakeTerm) Updates() <-chan struct{} {
+	return f.updates
+}
+
+func (f *fakeTerm) Exited() bool {
+	return f.exited
+}
+
+func (f *fakeTerm) SendText(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.text = append(f.text, s)
+}
+
 func (f *fakeTerm) SendKey(k uv.KeyPressEvent) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.keys = append(f.keys, k)
-	f.mu.Unlock()
 }
-func (f *fakeTerm) Paste(s string)       { f.pastes = append(f.pastes, s) }
-func (f *fakeTerm) SendMouse(m vt.Mouse) { f.mice = append(f.mice, m) }
-func (f *fakeTerm) Resize(w, h int)      { f.w, f.h = w, h }
+
+func (f *fakeTerm) Paste(s string) {
+	f.pastes = append(f.pastes, s)
+}
+
+func (f *fakeTerm) SendMouse(m vt.Mouse) {
+	f.mice = append(f.mice, m)
+}
+
+func (f *fakeTerm) Resize(w, h int) {
+	f.w, f.h = w, h
+}
+
+// Close marks the fake closed and, as the Terminal contract asks, closes its
+// updates channel.
 func (f *fakeTerm) Close() {
-	f.mu.Lock()
-	f.closed = true
-	f.mu.Unlock()
+	f.closeOnce.Do(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.closed = true
+		close(f.updates)
+	})
 }
-func (f *fakeTerm) isClosed() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
+
+func (f *fakeTerm) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
 func (f *fakeTerm) Render(showCursor bool) string {
 	line := strings.Repeat("t", f.w)
 	if showCursor {
@@ -62,7 +96,10 @@ type innerModel struct {
 	quitKey string
 }
 
-func (i innerModel) Init() tea.Cmd { return nil }
+func (i innerModel) Init() tea.Cmd {
+	return nil
+}
+
 func (i innerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	*i.got = append(*i.got, msg)
 	if k, ok := msg.(tea.KeyMsg); ok && k.String() == i.quitKey {
@@ -70,7 +107,10 @@ func (i innerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return i, nil
 }
-func (i innerModel) View() string { return "inner" }
+
+func (i innerModel) View() string {
+	return "inner"
+}
 
 type harness struct {
 	m       Model
@@ -78,18 +118,34 @@ type harness struct {
 	inner   *[]tea.Msg
 }
 
-func newHarnessOpts(t *testing.T, w, h int, openOnStart bool) *harness {
-	t.Helper()
-	got := []tea.Msg{}
-	hs := &harness{inner: &got}
-	hs.m = New(innerModel{got: &got, quitKey: "q"}, Config{
+// config is a split whose Start opens fake terminals the harness records.
+func (hs *harness) config() Config {
+	return Config{
 		WidthPercent: 40,
-		OpenOnStart:  openOnStart,
 		Start: func(cw, ch int) (Terminal, error) {
 			ft := newFakeTerm(cw, ch)
 			hs.started = append(hs.started, ft)
 			return ft, nil
 		},
+		Quit: QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
+	}
+}
+
+// newSplit wraps a recording inner model, quitting on "q", in a split with
+// cfg (see harness.config), without sending a window size.
+func newSplit(cfg func(hs *harness) Config) *harness {
+	got := []tea.Msg{}
+	hs := &harness{inner: &got}
+	hs.m = New(innerModel{got: &got, quitKey: "q"}, cfg(hs))
+	return hs
+}
+
+func newHarnessOpts(t *testing.T, w, h int, openOnStart bool) *harness {
+	t.Helper()
+	hs := newSplit(func(hs *harness) Config {
+		cfg := hs.config()
+		cfg.OpenOnStart = openOnStart
+		return cfg
 	})
 	hs.send(tea.WindowSizeMsg{Width: w, Height: h})
 	return hs
@@ -113,7 +169,9 @@ func (hs *harness) key(s string) tea.Cmd {
 	return hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
 }
 
-func (hs *harness) term(i int) *fakeTerm { return hs.m.terms[i].(*fakeTerm) }
+func (hs *harness) term(i int) *fakeTerm {
+	return hs.m.terms[i].(*fakeTerm)
+}
 
 func (hs *harness) lastInnerSize() tea.WindowSizeMsg {
 	var size tea.WindowSizeMsg
@@ -263,7 +321,7 @@ func TestSplit_Palette(t *testing.T) {
 
 	hs.key("q")
 	assert.Empty(t, hs.term(0).text, "typing goes to the palette, not the terminal")
-	assert.Equal(t, []string{"Quit"}, names(hs.m.paletteItems()))
+	assert.Equal(t, []string{"Quit"}, names(hs.m.palette.rows))
 
 	hs.send(tea.KeyMsg{Type: tea.KeyBackspace})
 	hs.key("zzz")
@@ -284,7 +342,7 @@ func TestSplit_Palette(t *testing.T) {
 	assert.False(t, hs.m.palette.open)
 
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
-	assert.Equal(t, []string{"Open Terminal", "Quit"}, names(hs.m.paletteItems()),
+	assert.Equal(t, []string{"Open Terminal", "Quit"}, names(hs.m.palette.rows),
 		"Close Terminal only appears when there is one")
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
 	assert.False(t, hs.m.palette.open, "ctrl+p again closes")
@@ -480,62 +538,62 @@ func TestSplit_QuitAsksWhileTerminalRuns(t *testing.T) {
 
 	cmd := hs.key("q")
 	require.NotNil(t, cmd)
-	msg := cmd()
+	msg := hs.run(cmd)
 	assert.IsType(t, quitRequestMsg{}, msg, "the inner quit is intercepted")
 
 	hs.send(msg)
-	assert.True(t, hs.m.confirmQuit)
+	assert.True(t, hs.m.quitDialog)
 	view := ansi.Strip(hs.m.View())
 	assert.Contains(t, view, "Quit aidiff?", "shown as a popup dialog")
 	assert.Contains(t, view, "Closes the terminal and everything running in it.")
 	assert.Contains(t, view, "Cancel")
 
 	assert.Nil(t, hs.key("n"), "n cancels")
-	assert.False(t, hs.m.confirmQuit)
+	assert.False(t, hs.m.quitDialog)
 
 	hs.send(quitRequestMsg{})
 	cmd = hs.key("y")
 	require.NotNil(t, cmd)
-	assert.IsType(t, tea.QuitMsg{}, cmd(), "y quits")
+	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "y quits")
 
 	hs.runPalette("close")
 	cmd = hs.send(quitRequestMsg{})
 	require.NotNil(t, cmd)
-	assert.IsType(t, tea.QuitMsg{}, cmd(), "no dialog without running terminals")
+	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "no dialog without running terminals")
 }
 
 func TestSplit_QuitDialogKeys(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	hs.runPalette("open")
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
-	require.True(t, hs.m.confirmQuit)
+	require.True(t, hs.m.quitDialog)
 	assert.Equal(t, cancelButton, hs.m.quitSel, "Cancel is preselected")
 	assert.Contains(t, ansi.Strip(hs.m.View()), "Closes 2 terminals and everything running in them.")
 
 	assert.Nil(t, hs.key("x"), "other keys are ignored")
-	assert.True(t, hs.m.confirmQuit, "and keep the dialog open")
+	assert.True(t, hs.m.quitDialog, "and keep the dialog open")
 	assert.Empty(t, hs.term(1).text, "nothing typed into the terminal")
 
 	assert.Nil(t, hs.send(tea.KeyMsg{Type: tea.KeyEnter}), "enter on Cancel cancels")
-	assert.False(t, hs.m.confirmQuit)
+	assert.False(t, hs.m.quitDialog)
 
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	hs.send(tea.KeyMsg{Type: tea.KeyLeft})
 	assert.Equal(t, quitButton, hs.m.quitSel)
 	cmd := hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
-	assert.IsType(t, tea.QuitMsg{}, cmd(), "enter on Quit quits")
+	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "enter on Quit quits")
 
 	hs = newHarness(t, 100, 30)
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	cmd = hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	require.NotNil(t, cmd)
-	assert.IsType(t, tea.QuitMsg{}, cmd(), "ctrl+q twice quits")
+	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "ctrl+q twice quits")
 
 	hs = newHarness(t, 100, 30)
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
-	assert.False(t, hs.m.confirmQuit, "esc cancels")
+	assert.False(t, hs.m.quitDialog, "esc cancels")
 	hs.send(tea.MouseMsg{X: 70, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	before := len(hs.term(0).mice)
@@ -557,31 +615,194 @@ func TestSplit_CtrlQFromEitherPane(t *testing.T) {
 		before := len(*hs.inner)
 
 		assert.Nil(t, hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ}), "running terminal: ask, don't quit yet")
-		assert.True(t, hs.m.confirmQuit, "termFocused=%v", termFocused)
+		assert.True(t, hs.m.quitDialog, "termFocused=%v", termFocused)
 		assert.Empty(t, hs.term(0).text, "ctrl+q is not typed into the terminal")
 		assert.Len(t, *hs.inner, before, "ctrl+q is not passed to the diff")
 
 		cmd := hs.key("y")
 		require.NotNil(t, cmd)
-		assert.IsType(t, tea.QuitMsg{}, cmd())
+		assert.IsType(t, tea.QuitMsg{}, hs.run(cmd))
 	}
 }
 
-func TestSplit_GuardQuitInsideBatch(t *testing.T) {
-	m := New(innerModel{got: &[]tea.Msg{}}, Config{})
-	cmd := m.guardQuit(tea.Batch(func() tea.Msg { return nil }, tea.Quit))
-	batch, ok := cmd().(tea.BatchMsg)
-	require.True(t, ok)
-	var sawRequest bool
-	for _, c := range batch {
-		if c == nil {
-			continue
+// run runs cmd the way the program does with QuitGuard installed.
+func (hs *harness) run(cmd tea.Cmd) tea.Msg {
+	return filterQuit(hs.m, cmd())
+}
+
+func TestSplit_QuitGuardCatchesEveryQuit(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	assert.Equal(t, quitRequestMsg{}, filterQuit(hs.m, tea.QuitMsg{}),
+		"an unconfirmed quit becomes a request, whatever command sent it")
+	other := FlashMsg{Text: "x"}
+	assert.Equal(t, other, filterQuit(hs.m, other), "other messages pass untouched")
+	assert.Equal(t, tea.QuitMsg{}, filterQuit(innerModel{}, tea.QuitMsg{}), "another root model is left alone")
+}
+
+// sequenceQuitter quits through tea.Sequence, whose message Bubble Tea
+// unpacks itself, out of reach of anything wrapping commands.
+type sequenceQuitter struct {
+	innerModel
+}
+
+func (s sequenceQuitter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok && k.String() == s.quitKey {
+		noop := func() tea.Msg {
+			return nil
 		}
-		if _, ok := c().(quitRequestMsg); ok {
-			sawRequest = true
+		return s, tea.Sequence(noop, tea.Quit)
+	}
+	return s.innerModel.Update(msg)
+}
+
+func TestSplit_QuitGuardInAProgram(t *testing.T) {
+	got := []tea.Msg{}
+	m := New(sequenceQuitter{innerModel{got: &got, quitKey: "q"}}, Config{})
+	p := tea.NewProgram(m, QuitGuard(), tea.WithInput(strings.NewReader("q")), tea.WithOutput(io.Discard),
+		tea.WithoutRenderer(), tea.WithoutSignalHandler())
+	final := runProgram(t, p)
+	assert.True(t, final.(Model).quitConfirmed, "the sequence's quit went through the guard")
+}
+
+// runProgram runs p to its end, failing the test if it does not end in time.
+func runProgram(t *testing.T, p *tea.Program) tea.Model {
+	t.Helper()
+	type result struct {
+		model tea.Model
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		model, err := p.Run()
+		done <- result{model, err}
+	}()
+	select {
+	case r := <-done:
+		require.NoError(t, r.err)
+		return r.model
+	case <-time.After(testTimeout):
+		p.Kill()
+		t.Fatal("the program did not end")
+		return nil
+	}
+}
+
+func TestSplit_QuitDialogListsEveryPane(t *testing.T) {
+	hs := newHarness(t, 200, 30) // room for four panes
+	for _, note := range []string{"Closes the chat.", "Closes the log.", "Closes the chat."} {
+		hs.send(OpenPaneMsg{Start: func(w, h int) (Terminal, error) {
+			return notedTerm{newFakeTerm(w, h), note}, nil
+		}})
+	}
+	require.Len(t, hs.m.terms, 4)
+	hs.send(quitRequestMsg{})
+	require.True(t, hs.m.quitDialog)
+	view := ansi.Strip(hs.m.View())
+	assert.Contains(t, view, "Closes the terminal and everything running in it.", "the shell")
+	assert.Contains(t, view, "Closes the chat.", "and every other pane in its own words")
+	assert.Contains(t, view, "Closes the log.")
+	assert.Equal(t, 1, strings.Count(view, "Closes the chat."), "a repeated note is said once")
+	assert.NotContains(t, view, "Leaves the review.", "the idle text is only for nothing open")
+}
+
+// notedTerm is a pane with its own quit note.
+type notedTerm struct {
+	*fakeTerm
+	note string
+}
+
+func (n notedTerm) QuitNote() string {
+	return n.note
+}
+
+// blockingTerm's Close waits until release is closed.
+type blockingTerm struct {
+	*fakeTerm
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (b blockingTerm) Close() {
+	b.started <- struct{}{}
+	<-b.release
+	b.fakeTerm.Close()
+}
+
+func TestSplit_CloseClosesInParallelAndWaits(t *testing.T) {
+	hs := newHarnessOpts(t, 100, 30, false)
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var terms []blockingTerm
+	for range 3 {
+		hs.send(OpenPaneMsg{Start: func(w, h int) (Terminal, error) {
+			bt := blockingTerm{fakeTerm: newFakeTerm(w, h), started: started, release: release}
+			terms = append(terms, bt)
+			return bt, nil
+		}})
+	}
+	require.Len(t, hs.m.terms, 3)
+	terms[0].exited = true
+	hs.send(termUpdateMsg{term: terms[0]}) // closed in the background
+	require.Len(t, hs.m.terms, 2)
+
+	closed := make(chan struct{})
+	go func() {
+		hs.m.Close()
+		close(closed)
+	}()
+	for range 3 {
+		select {
+		case <-started:
+		case <-time.After(testTimeout):
+			t.Fatal("the panes are not closed in parallel")
 		}
 	}
-	assert.True(t, sawRequest, "a quit nested in a batch is intercepted too")
+	select {
+	case <-closed:
+		t.Fatal("Close returned before the panes finished closing")
+	case <-time.After(3 * testTick):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(testTimeout):
+		t.Fatal("Close did not return")
+	}
+	for i, bt := range terms {
+		assert.True(t, bt.isClosed(), "pane %d closed, the one closed earlier included", i)
+	}
+}
+
+func TestSplit_ClosedPaneEndsItsWait(t *testing.T) {
+	ft := newFakeTerm(10, 2)
+	wait := waitForUpdate(ft)
+	ft.Close()
+	assert.Nil(t, wait(), "a closed pane's wait ends without a message")
+}
+
+func TestSplit_ConfiguredKeys(t *testing.T) {
+	hs := newSplit(func(hs *harness) Config {
+		cfg := hs.config()
+		cfg.OpenOnStart = true
+		cfg.Keys = Keys{Focus: "alt+o", Quit: "alt+q", Palette: "alt+p"}
+		return cfg
+	})
+	hs.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	require.Len(t, hs.m.terms, 1)
+
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	assert.False(t, hs.m.palette.open, "the default palette key is just a key now")
+	assert.Equal(t, []string{"\x10"}, hs.term(0).text, "and reaches the terminal")
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p"), Alt: true})
+	assert.True(t, hs.m.palette.open, "the configured palette key opens it")
+	assert.Contains(t, ansi.Strip(hs.m.View()), "alt+q", "Quit shows the configured key")
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p"), Alt: true})
+	assert.False(t, hs.m.palette.open, "and closes it")
+
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o"), Alt: true})
+	assert.Equal(t, focusDiff, hs.m.focus, "the configured focus key cycles")
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q"), Alt: true})
+	assert.True(t, hs.m.quitDialog, "the configured quit key asks")
 }
 
 func TestSplit_CursorOnlyWhenTerminalFocused(t *testing.T) {
@@ -606,7 +827,9 @@ func (b busyInner) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	*b.got = append(*b.got, msg)
 	return b, nil
 }
-func (b busyInner) CanRefresh() bool { return !*b.busy }
+func (b busyInner) CanRefresh() bool {
+	return !*b.busy
+}
 
 type refreshMsg struct{}
 

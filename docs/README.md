@@ -14,7 +14,7 @@ aidiff is a terminal workspace for reviewing what coding agents change. It is bu
 | [T3_INTEGRATION.md](T3_INTEGRATION.md) | Connecting, auth, protocol, thread review, chat pane |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | How annotations get out, and the inherited agent plugins |
 | [SECURITY.md](SECURITY.md) | Trust model, protections, known risks |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Build, test, upstream merges, vendor patch, CI, releases |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Build, test, upstream merges, patched dependencies, CI, releases |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Gaps, limitations, unfinished rename |
 
 ## Naming

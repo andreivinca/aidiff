@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/keymap"
@@ -23,7 +22,7 @@ func (m Model) View() string {
 	// nil-populated and the diff pane has no file selected. Showing the empty two-pane
 	// layout here would flash a misleading "no changes" state for as long as ChangedFiles
 	// takes to return (can be 100-500ms on large repos).
-	if !m.filesLoaded {
+	if !m.filesLoaded && !m.refreshLoading() {
 		return "loading files..."
 	}
 
@@ -32,8 +31,7 @@ func (m Model) View() string {
 	// determine diff pane inner width up front so the header can be truncated
 	// to a single visual row before lipgloss renders. without truncation, a
 	// long filename causes lipgloss to soft-wrap the header onto multiple
-	// rows, which would push viewport rows past applyScrollbar's hardcoded
-	// diffScrollbarFirstViewportRow offset.
+	// rows, which would push the viewport rows down past the pane's height.
 	var diffPaneW int
 	if m.treePaneHidden() {
 		diffPaneW = m.layout.width - 2
@@ -61,7 +59,7 @@ func (m Model) View() string {
 			Width(diffPaneW).
 			Height(ph).
 			Render(diffContent)
-		mainView = diffPane
+		mainView = diffPane // aidiff draws no diff scrollbar (chrome.go)
 
 	case m.file.singleFile && m.file.mdTOC != nil:
 		// single-file markdown with TOC: two-pane layout with TOC in left pane
@@ -116,19 +114,6 @@ func (m Model) renderTwoPaneLayout(leftContent, diffContent string, leftScroll s
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, diffPane)
 }
 
-// withDividerHandle marks the draggable separator without changing its width.
-func withDividerHandle(rendered string) string {
-	rows := strings.Split(rendered, "\n")
-	middle := len(rows) / 2
-	row := rows[middle]
-	// The separator may contain either the track or the scrollbar thumb.
-	idx := max(strings.LastIndex(row, "│"), strings.LastIndex(row, "┃"))
-	if idx >= 0 {
-		rows[middle] = row[:idx] + "↔" + row[idx+len("│"):]
-	}
-	return strings.Join(rows, "\n")
-}
-
 // truncateHeaderTitle returns the diff pane header text shortened to fit
 // in exactly one visual row of width paneW, prefixed with the leading
 // single-cell space the header always renders with. control characters
@@ -148,28 +133,6 @@ func (m Model) truncateHeaderTitle(title string, paneW int) string {
 	}
 	// paneW >= 2: " " + truncateLeftToWidth(clean, paneW-1) fits in paneW
 	return " " + style.TruncateLeftToWidth(clean, paneW-1)
-}
-
-// statusBarWithMachine reserves space for the hostname before rendering status
-// details, including temporary hints and search input.
-func (m Model) statusBarWithMachine() string {
-	identity := m.machineName
-	if m.t3Mode {
-		if identity != "" {
-			identity += m.renderer.StatusBarSeparator()
-		}
-		identity += "T3"
-	}
-	if identity == "" {
-		return m.statusBarText()
-	}
-	available := max(m.layout.width-2, 0)
-	prefix := identity + m.renderer.StatusBarSeparator()
-	if lipgloss.Width(prefix) >= available {
-		return ansi.Truncate(identity, available, "…")
-	}
-	m.layout.width -= lipgloss.Width(prefix)
-	return prefix + ansi.Truncate(m.statusBarText(), available-lipgloss.Width(prefix), "…")
 }
 
 // transientHint returns the first non-empty transient status-bar hint. hints

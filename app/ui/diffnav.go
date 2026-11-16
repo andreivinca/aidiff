@@ -1088,8 +1088,8 @@ func (m *Model) applyDiffMovement(action keymap.Action) bool {
 // When markdown TOC is active, routes to TOC navigation so chord-resolved and
 // keymap-resolved actions reach the TOC without re-resolving from the raw key.
 func (m Model) handleTreeAction(action keymap.Action) (tea.Model, tea.Cmd) {
-	if m.selectedDirectory() != "" && m.isDirectoryAction(action) {
-		return m.handleDirectoryAction(action)
+	if model, cmd, handled := m.handleFolderAction(action); handled {
+		return model, cmd
 	}
 
 	// the scroll_diff_* actions scroll the diff pane while the tree (or TOC) keeps

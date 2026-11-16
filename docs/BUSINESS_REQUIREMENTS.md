@@ -103,4 +103,4 @@ Our requirement on it: **we use it unchanged** and keep the ability to merge ups
 - Users work on Linux or macOS in a terminal with true color and, ideally, mouse support.
 - T3 Code's RPC protocol is internal to T3 and can change. aidiff pins orchestration protocol version 2 (see [T3_INTEGRATION.md](T3_INTEGRATION.md)).
 - SSH access to remote T3 hosts uses key or agent auth. The tunnel runs in batch mode and cannot prompt for a password.
-- aidiff is a fork and regularly merges upstream revdiff. Fork code is kept in separate packages (`splitview`, `termpane`, `watch`, `t3client`, `t3chat`, `clipboard`) to keep merges cheap.
+- aidiff is a fork and regularly merges upstream revdiff. Fork code is kept in separate packages (`splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard`, `imagefile`) to keep merges cheap.

@@ -1,48 +1,53 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/termpane"
 )
 
-// startTerminal opens a terminal pane on the machine the review comes from:
-// a shell over ssh when the live T3 session tunnels through an SSH host,
-// otherwise a local one. Either starts in the reviewed folder when known.
-func (t *t3Palette) startTerminal(width, height int) (splitview.Terminal, error) {
-	host, dir := t.terminalTarget()
+// terminalLauncher starts terminal panes on the machine the review comes
+// from: a shell over ssh when the T3 session tunnels through an SSH host,
+// otherwise a local one, either in the reviewed folder when it is known.
+type terminalLauncher struct {
+	command string                       // --terminal-command, a shell command line; empty runs a login shell
+	place   func() (sshHost, dir string) // where a new terminal opens; see t3palette.Palette.TerminalPlace
+}
+
+// start opens a terminal pane of the given size.
+func (l terminalLauncher) start(width, height int) (splitview.Terminal, error) {
+	argv, dir := l.argv()
+	pane, err := termpane.Start(argv, dir, width, height)
+	if err != nil {
+		return nil, fmt.Errorf("start terminal: %w", err)
+	}
+	return pane, nil
+}
+
+// argv is what a new terminal runs, and the local folder it runs in. The
+// command line goes to a shell, here or on the SSH host, so it is quoted the
+// way a shell reads it; an empty argv runs $SHELL.
+func (l terminalLauncher) argv() (argv []string, localDir string) {
+	host, dir := l.place()
 	if host != "" {
-		return termpane.Start(remoteShellArgv(host, dir), "", width, height)
+		return l.remoteArgv(host, dir), ""
 	}
-	return termpane.Start(strings.Fields(t.opts.TerminalCommand), dir, width, height)
+	if l.command == "" {
+		return nil, dir
+	}
+	return []string{"/bin/sh", "-c", l.command}, dir
 }
 
-// terminalTarget is the live session's SSH host (empty when local) and the
-// folder a new terminal starts in: the reviewed worktree, else the selected
-// project's root, else empty.
-func (t *t3Palette) terminalTarget() (host, dir string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.cur == nil {
-		return "", ""
-	}
-	if t.cur.session != nil {
-		host = t.cur.session.SSHHost()
-	}
-	switch {
-	case t.cur.target.Cwd != "":
-		dir = t.cur.target.Cwd
-	case t.project != nil:
-		dir = t.project.WorkspaceRoot
-	}
-	return host, dir
-}
-
-// remoteShellArgv runs an interactive login shell on host, in dir when it
-// exists there. No BatchMode: the pane is a real terminal, so ssh may prompt.
-func remoteShellArgv(host, dir string) []string {
+// remoteArgv runs the command, by default an interactive login shell, on
+// host, in dir when it exists there. No BatchMode: the pane is a real
+// terminal, so ssh may prompt.
+func (l terminalLauncher) remoteArgv(host, dir string) []string {
 	script := `exec "${SHELL:-/bin/sh}" -l`
+	if l.command != "" {
+		script = l.command
+	}
 	if dir != "" {
 		script = "cd " + shellQuote(dir) + " 2>/dev/null; " + script
 	}

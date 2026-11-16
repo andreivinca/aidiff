@@ -57,8 +57,9 @@ The review reloads by itself when its source changes:
 
 Behavior:
 - **Annotations and reviewed marks are kept**, unlike revdiff's `R` reload.
-- The cursor stays on the same content and the same screen row.
-- The refresh waits while the user is typing an annotation or a search, a prompt or chord is pending, or a popup is open. It runs as soon as the user is done.
+- The cursor stays on the same content and the same screen row. The search, the horizontal scroll and the hunks expanded in collapsed mode are kept too.
+- A burst of changes refreshes once, 150 ms after it stops.
+- The refresh waits while the user is typing an annotation or a search, a prompt or chord is pending, a popup is open, a file the user selected is still loading, a "mark reviewed" is in progress, or a jump to another file is under way. It runs as soon as that is over.
 - It does not run for hg, jj, stdin, compare, or `--only` outside a repository.
 - `--no-watch` turns it off. If watching can't start, a warning is logged and the review continues.
 
@@ -82,9 +83,9 @@ Behavior:
 ## 6. Terminal pane
 
 - Opened with ctrl+p → **Open Terminal**, or at startup with `--terminal`. Several can be open at once. **Close Terminal** in the palette closes one.
-- It runs `--terminal-command` (default `$SHELL`). The command is split on spaces, with no shell quoting.
-- **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root.
-- **Remote:** when the T3 session goes through SSH, the pane opens `ssh -t <host>` with a login shell in the thread's directory. ssh can prompt inside the pane.
+- It runs `--terminal-command` (default `$SHELL`). The command is a shell command line, run by `/bin/sh`, so shell quoting works.
+- **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root. A T3 server reached by URL on another machine has folders that are not this machine's, so the pane starts in aidiff's own directory.
+- **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.
 - It is a full xterm-256color terminal: colors, application cursor keys, bracketed paste, and mouse support for programs that ask for it.
 - While it has focus, every key except ctrl+], ctrl+p and ctrl+q goes to the terminal.
 - Scrollback is kept but cannot be scrolled yet (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).

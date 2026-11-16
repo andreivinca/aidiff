@@ -25,16 +25,16 @@ func TestBrowseAndCreateProject(t *testing.T) {
 				"workspaceRoot": p["workspaceRoot"], "defaultModelSelection": nil, "scripts": []any{}}))
 		}
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 	ctx := context.Background()
 
-	parent, entries, err := Browse(ctx, c, "/home/me/Projects/")
+	parent, entries, err := c.Browse(ctx, "/home/me/Projects/")
 	require.NoError(t, err)
 	assert.Equal(t, "/home/me/Projects/", payloadOf(t, got.last())["partialPath"])
 	assert.Equal(t, "/home/me/Projects", parent)
 	assert.Equal(t, []DirEntry{{Name: "aidiff", Path: "/home/me/Projects/aidiff"}, {Name: "sabra2", Path: "/home/me/Projects/sabra2"}}, entries)
 
-	p, err := CreateProject(ctx, c, "sabra2", "/home/me/Projects/sabra2")
+	p, err := c.CreateProject(ctx, "sabra2", "/home/me/Projects/sabra2")
 	require.NoError(t, err)
 	payload := payloadOf(t, got.last())
 	assert.Equal(t, "projects.mutate", got.last()["tag"])

@@ -16,6 +16,9 @@ func TestModelSelectionEffort(t *testing.T) {
 		{ID: "effort", Type: "select", Options: []ModelOptionValue{{ID: "low"}, {ID: "medium", IsDefault: true}, {ID: "max"}}},
 		{ID: "fastMode", Type: "boolean"},
 	}}
+	acp := ModelCapabilities{OptionDescriptors: []ModelOptionDescriptor{
+		{ID: "thought_level", Type: "select", Role: "reasoning", Options: []ModelOptionValue{{ID: "deep", IsDefault: true}}},
+	}}
 	for _, tt := range []struct {
 		name, options, want string
 		caps                ModelCapabilities
@@ -29,7 +32,8 @@ func TestModelSelectionEffort(t *testing.T) {
 		{"claude default", `[]`, "medium", claude},
 		{"claude missing", ``, "medium", claude},
 		{"claude ignores codex leftover", `[{"id":"reasoningEffort","value":"low"}]`, "medium", claude},
-		{"no catalog yet", `[{"id":"effort","value":"max"}]`, "max", ModelCapabilities{}},
+		{"agent's own id with the reasoning role", `[{"id":"thought_level","value":"shallow"}]`, "shallow", acp},
+		{"no catalog yet: unknown", `[{"id":"effort","value":"max"}]`, "", ModelCapabilities{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &ModelSelection{Options: json.RawMessage(tt.options)}
@@ -40,33 +44,46 @@ func TestModelSelectionEffort(t *testing.T) {
 	assert.Empty(t, (&ModelSelection{}).Effort(ModelCapabilities{}))
 }
 
-func TestWithEffortPreservesOptions(t *testing.T) {
+func TestWithEffortPreservesOptionsInTheirForm(t *testing.T) {
 	for _, key := range []string{"effort", "reasoningEffort"} {
 		d := ModelOptionDescriptor{ID: key, Type: "select", Options: []ModelOptionValue{{ID: "high"}, {ID: "ultrathink"}}, PromptInjectedValues: []string{"ultrathink"}}
-		for _, raw := range []string{`[{"id":"serviceTier","value":"priority"},{"id":"fastMode","value":true}]`, `{"serviceTier":"priority","fastMode":true}`} {
-			m := ModelSelection{InstanceID: "provider", Model: "model", Options: json.RawMessage(raw)}
-			changed, err := m.WithEffort(d, "HIGH")
-			require.NoError(t, err)
-			assert.Equal(t, m.InstanceID, changed.InstanceID)
-			assert.Equal(t, m.Model, changed.Model)
-			assert.Equal(t, "high", changed.Effort(ModelCapabilities{}))
-			var options []struct {
-				ID    string
-				Value any
-			}
-			require.NoError(t, json.Unmarshal(changed.Options, &options))
-			values := map[string]any{}
-			for _, o := range options {
-				values[o.ID] = o.Value
-			}
-			assert.Equal(t, map[string]any{key: "high", "serviceTier": "priority", "fastMode": true}, values)
-			assert.Equal(t, raw, string(m.Options), "original selection is not mutated")
-			_, err = m.WithEffort(d, "invalid")
-			require.Error(t, err)
-			_, err = m.WithEffort(d, "ultrathink")
-			require.Error(t, err)
+		caps := ModelCapabilities{OptionDescriptors: []ModelOptionDescriptor{d}}
+		for _, tt := range []struct {
+			name, raw, want string
+		}{
+			{"array", `[{"id":"serviceTier","value":"priority"},{"id":"fastMode","value":true}]`,
+				`[{"id":"serviceTier","value":"priority"},{"id":"fastMode","value":true},{"id":"` + key + `","value":"high"}]`},
+			{"object from an older server", `{"serviceTier":"priority","fastMode":true}`,
+				`{"serviceTier":"priority","fastMode":true,"` + key + `":"high"}`},
+			{"none yet", ``, `[{"id":"` + key + `","value":"high"}]`},
+		} {
+			t.Run(key+" "+tt.name, func(t *testing.T) {
+				m := ModelSelection{InstanceID: "provider", Model: "model", Options: json.RawMessage(tt.raw)}
+				changed, err := m.WithEffort(d, "HIGH")
+				require.NoError(t, err)
+				assert.Equal(t, m.InstanceID, changed.InstanceID)
+				assert.Equal(t, m.Model, changed.Model)
+				assert.Equal(t, "high", changed.Effort(caps))
+				assert.JSONEq(t, tt.want, string(changed.Options))
+				assert.Equal(t, tt.raw, string(m.Options), "original selection is not mutated")
+				_, err = m.WithEffort(d, "invalid")
+				require.Error(t, err)
+				_, err = m.WithEffort(d, "ultrathink")
+				require.Error(t, err, "a prompt-injected value is not an effort level")
+			})
 		}
-		_, err := (ModelSelection{Options: json.RawMessage(`broken`)}).WithEffort(d, "high")
+		broken := ModelSelection{Options: json.RawMessage(`broken`)}
+		_, err := broken.WithEffort(d, "high")
 		require.Error(t, err)
 	}
+	_, err := (*ModelSelection)(nil).WithEffort(ModelOptionDescriptor{}, "high")
+	require.Error(t, err)
+}
+
+func TestWithEffortReplacesAnEarlierLevel(t *testing.T) {
+	d := ModelOptionDescriptor{ID: "effort", Type: "select", Options: []ModelOptionValue{{ID: "low"}, {ID: "max"}}}
+	m := ModelSelection{Options: json.RawMessage(`[{"id":"effort","value":"low"},{"id":"fastMode","value":true}]`)}
+	changed, err := m.WithEffort(d, "max")
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"id":"fastMode","value":true},{"id":"effort","value":"max"}]`, string(changed.Options))
 }

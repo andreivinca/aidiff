@@ -2,7 +2,7 @@
 
 ## 1. Setup
 
-- Go 1.26. Dependencies are vendored (`vendor/` is committed). After changing them, run `go mod vendor`, then **reapply the vendor patch** (§5).
+- Go 1.26. Dependencies are vendored (`vendor/` is committed). After changing them, run `go mod vendor`. The patched termenv (§5) comes from `third_party/termenv` through a `replace`, so re-vendoring keeps the patch.
 - `nix develop` gives a shell with Go (`flake.nix`).
 - The project conventions in [`CLAUDE.md`](../CLAUDE.md) apply.
 
@@ -26,10 +26,14 @@
 | `app/termpane` | Embedded terminal |
 | `app/watch` | Live refresh |
 | `app/t3client` | T3 Code client |
-| `app/t3chat` | Chat pane |
+| `app/chat` | Chat pane, a library behind its `Backend` interface; knows no agent system |
+| `app/t3chat` | The chat pane's T3 backend: a thread's events as conversations, T3's commands |
+| `app/t3palette` | T3 palette commands: sessions, thread reviews, chat panes |
 | `app/clipboard` | Linux clipboard |
-| `app/revdiff/t3.go`, `t3_palette.go`, `t3_terminal.go`, `watch.go` | Wiring in the composition root |
-| `app/ui/refresh.go`, `app/ui/folder.go`, `app/diff/folder.go`, `app/diff/watchdirs.go` | Hooks inside revdiff code |
+| `app/imagefile` | Reads image files attached to chat messages |
+| `app/revdiff/t3.go`, `t3_palette.go`, `t3_terminal.go`, `chat.go`, `split.go`, `watch.go`, `source_setup.go`, `review_model.go` | Wiring in the composition root |
+| `app/ui/refresh.go`, `folder.go`, `chrome.go`, `identity.go`, `treedrag.go`; `app/ui/sidepane/foldertree.go`, `scroll.go`; `app/diff/folder.go`, `gitmeta.go`, `watchdirs.go` | Our code inside revdiff packages, reached through one-line hooks in revdiff files |
+| `third_party/termenv` | Patched termenv (§5) |
 
 Everything else is revdiff. Avoid changing it: each change there becomes a possible conflict on the next upstream merge. If a feature needs the review model to do something new, add a small, explicit hook, like `RefreshMsg` and `CanRefresh()`, and keep the logic in our packages.
 
@@ -37,22 +41,24 @@ Everything else is revdiff. Avoid changing it: each change there becomes a possi
 
 1. `git fetch` from the upstream remote (`github.com/umputun/revdiff`) and merge into `main`.
 2. Resolve conflicts. They are usually in `app/revdiff/main.go`, `config.go` and `renderer_setup.go`, and in the hook files above.
-3. If `vendor/` changed, reapply the termenv patch (§5).
+3. If upstream moved termenv to a new version, update `third_party/termenv` to it and keep the patch (§5).
 4. Run `make race` and `make lint`.
 
-## 5. Vendor patches
+## 5. Patched dependencies
 
-`vendor/github.com/muesli/termenv/termenv_unix.go`: the OSC color-query timeout is **150 ms** instead of upstream's 5 s.
+termenv v0.16.0 is replaced by the copy in `third_party/termenv` (`replace` in `go.mod`), whose `termenv_unix.go` sets the OSC color-query timeout to **150 ms** instead of upstream's 5 s. `go mod vendor` vendors the copy, patch included; never edit `vendor/` directly, as the next re-vendoring would undo it.
 
 Bubble Tea v1 queries the terminal background in its package initializer, before application code can configure anything. A terminal that doesn't answer OSC queries would delay every launch by 5 seconds. The COLORFGBG/default-color fallback still applies, and responsive terminals still report their real color.
 
-Reapply this patch after every `go mod vendor` until the dependency bounds the startup query or stops making it during init. `TestStartupSilentTerminal` (`app/revdiff/main_test.go`) checks startup against a terminal that never answers.
+Keep the copy until the dependency bounds the startup query or stops making it during init. `TestStartupSilentTerminal` (`app/revdiff/startup_test.go`) checks startup against a terminal that never answers.
+
+Trade-off: a terminal that answers after 150 ms (a slow SSH link) answers after termenv gave up. The late reply reaches Bubble Tea as input and is parsed as keys: `alt+]`, a runes key `11;rgb:…`, `alt+\`, and an unknown CSI sequence for the cursor report. None is bound by default, so the review ignores them.
 
 ## 6. Tests
 
 - Every package has unit tests, written with testify. Mocks are generated with moq, never edited by hand.
-- aidiff's packages have their own `_test.go` files. They use injectable `Config` hooks (`Dispatch`, `Subscribe`, `Catalog`, `Clipboard`, …), so T3 chat tests run without a server.
-- **PTY subprocess tests** in `app/revdiff/main_test.go` re-run the test binary under `script(1)` to get a real TTY. Among them is `TestStartupSilentTerminal`, which uses `AIDIFF_SILENT_TERMINAL_HELPER`.
+- aidiff's packages have their own `_test.go` files and run without a server. The chat pane's tests drive it through a fake `chat.Backend` and fake clipboard and image files; the T3 backend's tests use a fake server and a fake `chat.Viewer`, plus a few that drive a real pane over the T3 backend. No test sleeps: they wait on the pane's `Updates` and on what the fakes record.
+- **PTY subprocess tests** in `app/revdiff/main_test.go` re-run the test binary under `script(1)` to get a real TTY. `TestStartupSilentTerminal` (`startup_test.go`) does the same through a PTY, with `AIDIFF_SILENT_TERMINAL_HELPER`.
 - The inherited plugin and launcher tests (`plugin_exit_code_test.go`) still run, since the plugins ship in this repository.
 
 ## 7. CI

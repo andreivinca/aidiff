@@ -4,42 +4,57 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/umputun/revdiff/app/t3client"
 )
 
-func TestT3PaletteTerminalTarget(t *testing.T) {
-	t.Run("no session runs locally", func(t *testing.T) {
-		host, dir := (&t3Palette{}).terminalTarget()
-		assert.Empty(t, host)
-		assert.Empty(t, dir)
-	})
-	t.Run("ssh session opens in the reviewed worktree", func(t *testing.T) {
-		p := &t3Palette{cur: &t3Review{
-			session: &t3client.Session{Label: "ssh://box"},
-			target:  t3client.Target{Cwd: "/srv/wt", Project: t3client.Project{WorkspaceRoot: "/srv/repo"}},
-		}}
-		host, dir := p.terminalTarget()
-		assert.Equal(t, "box", host)
-		assert.Equal(t, "/srv/wt", dir)
-	})
-	t.Run("connected without a thread uses the selected project", func(t *testing.T) {
-		p := &t3Palette{cur: &t3Review{session: &t3client.Session{Label: "ssh://box"}},
-			project: &t3client.Project{WorkspaceRoot: "/srv/repo"}}
-		host, dir := p.terminalTarget()
-		assert.Equal(t, "box", host)
-		assert.Equal(t, "/srv/repo", dir)
-	})
-	t.Run("local session stays local", func(t *testing.T) {
-		p := &t3Palette{cur: &t3Review{session: &t3client.Session{Label: "local"}, target: t3client.Target{Cwd: "/home/me/wt"}}}
-		host, dir := p.terminalTarget()
-		assert.Empty(t, host)
-		assert.Equal(t, "/home/me/wt", dir)
-	})
-}
-
-func TestRemoteShellArgv(t *testing.T) {
-	assert.Equal(t, []string{"ssh", "-t", "--", "box", `exec "${SHELL:-/bin/sh}" -l`}, remoteShellArgv("box", ""))
-	assert.Equal(t, []string{"ssh", "-t", "--", "box", `cd '/srv/it'\''s' 2>/dev/null; exec "${SHELL:-/bin/sh}" -l`},
-		remoteShellArgv("box", "/srv/it's"))
+func TestTerminalLauncher_Argv(t *testing.T) {
+	at := func(host, dir string) func() (string, string) {
+		return func() (string, string) {
+			return host, dir
+		}
+	}
+	tests := []struct {
+		name     string
+		launcher terminalLauncher
+		argv     []string
+		dir      string
+	}{
+		{
+			name:     "local shell in the reviewed folder",
+			launcher: terminalLauncher{place: at("", "/home/me/wt")},
+			dir:      "/home/me/wt",
+		},
+		{
+			name:     "local command is read by a shell",
+			launcher: terminalLauncher{command: `tmux new -A -s 'my review'`, place: at("", "/home/me/wt")},
+			argv:     []string{"/bin/sh", "-c", `tmux new -A -s 'my review'`},
+			dir:      "/home/me/wt",
+		},
+		{
+			name:     "no folder known, e.g. a remote server without ssh",
+			launcher: terminalLauncher{command: "zsh -l", place: at("", "")},
+			argv:     []string{"/bin/sh", "-c", "zsh -l"},
+		},
+		{
+			name:     "ssh login shell",
+			launcher: terminalLauncher{place: at("box", "")},
+			argv:     []string{"ssh", "-t", "--", "box", `exec "${SHELL:-/bin/sh}" -l`},
+		},
+		{
+			name:     "ssh in a folder, quoted for the remote shell",
+			launcher: terminalLauncher{place: at("box", "/srv/it's")},
+			argv:     []string{"ssh", "-t", "--", "box", `cd '/srv/it'\''s' 2>/dev/null; exec "${SHELL:-/bin/sh}" -l`},
+		},
+		{
+			name:     "ssh runs the terminal command",
+			launcher: terminalLauncher{command: `tmux new -A -s 'my review'`, place: at("box", "/srv/wt")},
+			argv:     []string{"ssh", "-t", "--", "box", `cd '/srv/wt' 2>/dev/null; tmux new -A -s 'my review'`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			argv, dir := tt.launcher.argv()
+			assert.Equal(t, tt.argv, argv)
+			assert.Equal(t, tt.dir, dir)
+		})
+	}
 }

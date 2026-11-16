@@ -30,14 +30,20 @@ func TestSubscribeThread_Activity(t *testing.T) {
 		}})
 		send(t, ws, success(req["id"], nil))
 	})
-	c := dial(t, url)
+	c := dialFake(t, url)
 	var snapshot ThreadProjection
 	var agents []Subagent
 	var providers []ProviderThread
-	err := SubscribeThread(context.Background(), c, "th-1", ThreadEvents{
-		Snapshot:       func(pr ThreadProjection) { snapshot = pr },
-		Subagent:       func(a Subagent) { agents = append(agents, a) },
-		ProviderThread: func(p ProviderThread) { providers = append(providers, p) },
+	err := c.SubscribeThread(context.Background(), "th-1", ThreadEvents{
+		Snapshot: func(pr ThreadProjection) {
+			snapshot = pr
+		},
+		Subagent: func(a Subagent) {
+			agents = append(agents, a)
+		},
+		ProviderThread: func(p ProviderThread) {
+			providers = append(providers, p)
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, snapshot.Thread.ActiveProviderThreadID)
@@ -58,10 +64,16 @@ func TestSubscribeThread_Activity(t *testing.T) {
 	require.Len(t, providers, 1)
 	assert.Empty(t, providers[0].PendingBackgroundTasks, "an empty update clears finished background work")
 
-	h := ThreadEvents{Subagent: func(Subagent) { t.Fatal("invalid subagent dispatched") },
-		ProviderThread: func(ProviderThread) { t.Fatal("invalid provider thread dispatched") }}
+	h := ThreadEvents{
+		Subagent: func(Subagent) {
+			t.Fatal("invalid subagent dispatched")
+		},
+		ProviderThread: func(ProviderThread) {
+			t.Fatal("invalid provider thread dispatched")
+		},
+	}
 	for _, event := range []string{"subagent.updated", "provider-thread.updated"} {
-		h.dispatch(event, json.RawMessage(`{"status":"running"}`))
-		h.dispatch(event, json.RawMessage(`{`))
+		h.stream().dispatch(event, json.RawMessage(`{"status":"running"}`))
+		h.stream().dispatch(event, json.RawMessage(`{`))
 	}
 }

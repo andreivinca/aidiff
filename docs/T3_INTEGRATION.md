@@ -2,7 +2,7 @@
 
 [T3 Code](https://github.com/pingdotgg/t3code) is a server that runs coding agents in threads, one thread per project and conversation. aidiff can act as a T3 client. It shows a thread's changes in the review UI, chats with the agent in a pane, and opens terminals where the agent runs.
 
-The code lives in `app/t3client` (protocol and connection), `app/t3chat` (chat pane), and `app/revdiff/t3*.go` (wiring, palette and terminal start-up).
+The code lives in `app/t3client` (protocol and connection), `app/t3chat` (the T3 backend of the chat pane), `app/t3palette` (palette commands and the sessions they own), and `app/revdiff/t3*.go` (wiring and terminal start-up). The chat pane itself is `app/chat`, a library that knows nothing of T3: `t3chat` turns a thread's events into the conversations it shows and carries out what the user asks (see [ARCHITECTURE.md](ARCHITECTURE.md#9-chat-pane-appchat-and-its-t3-backend-appt3chat)).
 
 ## 1. Ways in
 
@@ -24,21 +24,26 @@ In T3 mode the connection is made **before** the full-screen UI starts, so SSH a
 ### Server discovery
 - **local:** reads `$T3CODE_HOME/userdata/server-runtime.json` (default `~/.t3`), which holds `{pid, host, port, origin}`, and checks that the PID is alive.
 - **ssh://host:**
-  1. The host is validated: it must not start with `-`, and must not contain whitespace, `/`, quotes, `` ` ``, `$`, `;`, `&` or `|`.
-  2. `ssh -o BatchMode=yes -- host` reads the remote runtime file and checks the PID on the remote side.
-  3. The client picks a free local port and starts `ssh -N -L 127.0.0.1:<port>:<remote host>:<remote port>` with `ExitOnForwardFailure=yes`, in its own process group.
-  4. It waits up to 15 s for the port to start listening. If ssh exits first, its stderr is reported.
-  5. The tunnel lasts for the whole session.
+  1. The host is validated against an allowlist: letters, digits and `. _ @ : -`, not starting with `-`.
+  2. One `ssh -- host` login reads the remote runtime file and checks the PID on the remote side (exit 3: no state, exit 4: not running).
+  3. The client creates a private (0700) temp directory and starts `ssh -N -L <dir>/t3.sock:<remote host>:<remote port>` with `ExitOnForwardFailure=yes` and `StreamLocalBindUnlink=yes`, in its own process group. Only this user can create a socket there, so the bearer token cannot reach another local process the way a reused TCP port could.
+  4. It waits up to 15 s for the socket to accept connections. If ssh exits first, its stderr is reported.
+  5. The tunnel lasts for the whole session; closing the session kills ssh and removes the directory.
+  Every ssh command runs with `BatchMode=yes`, `ServerAliveInterval=15` and `ServerAliveCountMax=3`, so a dead link is noticed within about 45 s.
 - **http(s)://:** used as given.
 
 ### Authentication
 The client tries tokens in this order:
 1. `--t3-token` / `REVDIFF_T3_TOKEN`.
-2. A `--t3-pair` exchange: `POST /oauth/token`, an OAuth token exchange with `subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap`, `client_label=aidiff` and `client_device_type=bot`. The token is saved afterwards.
+2. A `--t3-pair` exchange: `POST /oauth/token`, an OAuth token exchange with `subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap`, `client_label=aidiff` and `client_device_type=bot`. Redirects are never followed, so the credential cannot be carried elsewhere. The token is saved afterwards.
 3. A token saved earlier in `t3-tokens.json`.
 4. A freshly minted token. This is allowed only for local, loopback and SSH servers. aidiff runs `t3 auth session issue --label aidiff --ttl 30d --token-only --scope orchestration:read --scope orchestration:operate --scope filesystem:read`, locally or over SSH (adding `~/.local/bin` and `~/.t3/bin` to PATH).
 
 If a saved token is rejected, the client mints one new token and retries once. If it can't mint, the error tells the user to run `t3 pair` and pass `--t3-pair`.
+
+A token that cannot be saved (`t3-tokens.json` unwritable) does not fail the connection: the session keeps it and reports a notice (`Session.Notices`). A plain `http://` server that is not on loopback also gets a notice, since the token travels unencrypted. Notices are logged to stderr when the run connects at startup, and flashed on the bottom row after a palette connect or reconnect. Saves to `t3-tokens.json` take an exclusive `flock` on `t3-tokens.json.lock`, and its directory is kept at 0700.
+
+`Session.Redial` connects again with the spec and options the session was made with; after a pairing it uses the token the pairing produced, since the credential is spent.
 
 ## 3. Protocol
 
@@ -52,7 +57,9 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 | Responses | `Chunk` (`values[]`) and `Exit` (`Success` or `Failure` with an Effect cause) |
 | Flow control | `{"_tag":"Ack","requestId":…}` after every chunk |
 | Cancel | `{"_tag":"Interrupt","requestId":…}` when the caller's context ends |
-| Keep-alive | `{"_tag":"Ping"}` every 25 s |
+| Keep-alive | `{"_tag":"Ping"}` every 25 s; a ping left unanswered for 50 s (no inbound frame of any kind) ends the connection |
+| Server failure | A `Defect` frame ends the connection. A frame for a pending request that cannot be decoded, or has an unknown tag, fails that request. |
+| Writes | A request is written under the caller's context. Acks, pings and interrupts queue for a writer goroutine of their own (10 s per frame), so the read loop never waits on the socket. |
 | Errors | 401/403 → unauthorized. 426 → protocol mismatch ("update one of them"). |
 | Max frame | 256 MiB (a diff preview arrives in a single frame) |
 
@@ -62,7 +69,7 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 | `orchestration.subscribeShell` | Projects and threads snapshot (`FetchShell`), and run start/finish notifications (`WatchThread`) |
 | `orchestration.subscribeThread` | The full transcript stream for the chat pane |
 | `review.getDiffPreview` | File list (`metadataOnly`) and per-file diffs. `sourceKind` is `branch-range` or `working-tree`. |
-| `orchestration.launchThread` | New thread. Always sent with `runtimeMode: full-access`, `interactionMode: default` and workspace root. |
+| `orchestration.launchThread` | New thread, with the caller's `runtimeMode` (the palette sends `full-access`), `interactionMode: default` and workspace root. |
 | `orchestration.dispatchCommand` | Every thread command (below), each with a UUIDv4 `commandId` |
 | `server.getConfig` | Provider catalog: models, capabilities, slash commands, default model |
 | `assets.persistChatAttachments` | Image uploads |
@@ -80,7 +87,8 @@ Commands sent through `dispatchCommand`:
 
 ### Stream model
 A thread stream starts with a `snapshot` (messages, runs, runtime requests, turn items, subagents, provider threads), followed by `event`s:
-- `message.updated`, `turn-item.updated`, `thread.*`
+- `message.updated`, `turn-item.updated`
+- the `thread.*` events whose payload is the whole thread (`thread.created`, `thread.metadata-updated`, `thread.runtime-mode-updated`, …; the list is `threadEventTypes`). Other `thread.*` events, such as `thread.pull-request-link-updated`, are ignored.
 - `run.created`, `run.updated`
 - `runtime-request.updated`, `subagent.updated`, `provider-thread.updated`
 
@@ -91,12 +99,12 @@ The server re-sends whole entities, so streaming text arrives as the same item w
 
 ## 4. Reviewing threads
 
-`t3client.Renderer` implements the review's `Renderer` interface, so everything in [FUNCTIONAL_SPECIFICATION.md](FUNCTIONAL_SPECIFICATION.md) works on T3 diffs. File diffs are fetched one at a time, when opened. `WatchThread` sends a refresh when a run starts or finishes, so the diff follows the agent.
+`t3client.Renderer` implements the review's `Renderer` interface, so everything in [FUNCTIONAL_SPECIFICATION.md](FUNCTIONAL_SPECIFICATION.md) works on T3 diffs. File diffs are fetched one at a time, when opened, once per listing however many views ask at the same time; a fetch that finishes after a reload never lands in the new listing. A preview that lacks the requested source kind is an error, not a fallback to another kind. `WatchThread` sends a refresh when a run starts or finishes, so the diff follows the agent.
 
 Switching thread from the palette:
 1. Builds a new review with an empty annotation store.
-2. Saves the old review's annotations to history (under `t3`).
-3. Restarts the watch.
+2. Saves the old review's annotations to history, filed as `<server>:<folder>` (e.g. `ssh://devbox:/srv/wt`) under the folder's name.
+3. Restarts the watch, unless `--no-watch` is given.
 4. Points open chat panes at the new thread. If none is open and auto-chat is on, a chat pane opens.
 
 **T3: New thread…** gets the default model, launches the thread, and waits for it to appear, polling up to 5 times, 300 ms apart. **T3: Projects…** → **New project…** browses the server filesystem (`..`, typed paths, "Use this folder") and creates a project named after the folder.
@@ -104,6 +112,8 @@ Switching thread from the palette:
 **T3: Send annotations to agent** sends the formatted annotations as a message that starts with `Review annotations from aidiff:`.
 
 ## 5. Chat pane
+
+The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog, the activity view and the prompts; the T3 backend (`app/t3chat`) owns what they show of a thread and the commands marked *T3* below.
 
 ### Layout
 ```
@@ -120,12 +130,12 @@ Switching thread from the palette:
 ```
 
 ### State and status
-- **Thread state:**
+- **Thread state** (backend):
   - `waiting for you` when there is a pending approval or question, or the latest run is waiting
   - `running` when the latest run is active
   - `idle` otherwise
-- **Status line:** `Working` while a run is active, or while subagents or processes are still alive, followed by counts. Connection problems (`connecting…`, `disconnected…`, `not connected`) take precedence.
-- **Activity sources:**
+- **Status line** (pane): `Working` while a run is active, or while subagents or processes are still alive, followed by counts. Connection problems (`connecting…`, `disconnected…`, `not connected`) take precedence.
+- **Activity sources** (backend):
   - subagents
   - `command_execution` and `subagent` turn items
   - background tasks of the **active** provider thread (subagent, process, monitor)
@@ -141,13 +151,14 @@ Switching thread from the palette:
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, text is inserted |
 | ↑ / ↓ | Move in the slash popup, otherwise scroll |
 | PgUp / PgDn | Scroll by a page |
+| End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |
 | ← (empty input) | Activity view |
 | Esc | Close the popup, or ask to stop the run |
 
-Pasting a single line that is a path to an image file attaches that file. When a send fails, the text and images go back into the input.
+Pasting a single line that is a path to an image file attaches that file. The backend turns down an image over T3's 10 MB limit, a file before it is read. When a send fails, the text and images go back into the input. A command or message that is turned down (bad argument, nothing to approve, not connected, another request still being sent) stays in the input, with the reason underneath. Commands that send nothing, such as `/help` or `/work`, work while a request is in flight. Switching threads keeps the draft and its images.
 
-**Queued messages:** the server queues a message that arrives during a run (`queue_after_active`), and it becomes the next turn. Local cards and the server's queue are merged **by message ID only**, never by text. A card is labeled "Sending…", "Queued" or "Sent". Up to 8 rows of cards are shown.
+**Queued messages:** the server queues a message that arrives during a run (`queue_after_active`), and it becomes the next turn. The pane names each message it sends with a UUID, which T3 takes as the message id. Its local cards and the server's queue are merged **by message ID only**, never by text; a local card goes once the backend reports the message delivered (the transcript shows it, or its run ended). A card is labeled "Sending…", "Queued" or "Sent". Up to 8 rows of cards are shown.
 
 ### Slash commands
 | Command | Effect |
@@ -155,19 +166,19 @@ Pasting a single line that is a path to an image file attaches that file. When a
 | `/help` | List commands |
 | `/stop` | Stop the run (asks for confirmation) |
 | `/accept` (`/yes`, `/y`), `/decline` (`/no`, `/n`), `/cancel` | Answer the newest pending approval |
-| `/answer <n \| 1,3 \| text>`, `/1`…`/9` | Answer a question. Answers to multi-question prompts are collected until all questions are answered. |
+| `/answer <n \| 1,3 \| text>`, `/1`…`/9` | Answer a question. Answers to multi-question prompts are collected until all questions are answered. If sending them fails, only the last answer has to be given again. |
 | `/dismiss` | Dismiss a user-input request |
-| `/model <model>` | Switch model, by slug, `instance:slug`, or a unique part of the name |
-| `/effort [level]` | Show or set the reasoning effort, if the model offers one |
-| `/plan`, `/build` (`/default`) | Interaction mode |
-| `/mode approval-required\|auto-accept-edits\|auto\|full-access` | Runtime mode |
-| `/clear` | The next message starts a fresh provider context; the transcript stays |
-| `/side` (`/btw`) `<question>` | Fork a side chat and ask it |
+| `/model <model>` *(T3)* | Switch model, by slug, `instance:slug`, or a unique part of the name |
+| `/effort [level]` *(T3)* | Show or set the reasoning effort, if the model offers one |
+| `/plan`, `/build` (`/default`) *(T3)* | Interaction mode |
+| `/mode approval-required\|auto-accept-edits\|auto\|full-access` *(T3)* | Runtime mode |
+| `/clear` *(T3)* | The next message starts a fresh provider context; the transcript stays |
+| `/side` (`/btw`) `<question>` *(T3)* | Fork a side chat and ask it |
 | `/attach <image>` | Attach an image file |
 | `/work` | Toggle between expanded and summarized agent work |
 | `/activity` | Open the activity view |
 
-The provider's own slash commands come from the catalog and appear in the popup too. When names clash, aidiff's command wins. An unknown `/command` is sent to the agent as text. The popup ranks matches as exact, then prefix, alias, substring, then description; provider commands come last. It shows at most 6 rows.
+The popup lists the pane's own commands, then T3's, then the provider's own slash commands from the catalog (for the thread's provider). When names clash, the pane's command wins over T3's, and both over the provider's. An unknown `/command` is sent to the agent as text. The popup ranks matches as exact, then prefix, alias, substring, then description; provider commands come last. It shows at most 6 rows. The catalog is fetched once per connection, shared by the threads a pane follows on it; a failed fetch is said under the composer and retried only by a command that needs it.
 
 ### Stop guard
 - Esc (with no popup open) or `/stop` during an active run opens **Stop agent?**, with **Keep working** selected.
@@ -187,13 +198,13 @@ Closing the chat doesn't stop the agent. The quit dialog says: "Closes the chat.
 
 ## 6. Remote terminals
 
-When the live T3 session goes through SSH, **Open Terminal** runs:
+A terminal opens where the review on screen lives: the thread on screen, or with none the connected server in its selected project. When that session goes through SSH, **Open Terminal** runs:
 
 ```
 ssh -t -- <host> 'cd '<thread cwd>' 2>/dev/null; exec "${SHELL:-/bin/sh}" -l'
 ```
 
-The directory is single-quote escaped. BatchMode is left off so ssh can prompt inside the pane. Without SSH the pane runs `--terminal-command` locally, in the thread cwd or the project's workspace root.
+The directory is single-quote escaped. A `--terminal-command` replaces the `exec …` part and is read by the remote login shell. BatchMode is left off so ssh can prompt inside the pane. Without SSH the pane runs `--terminal-command` locally (through `/bin/sh`), in the thread cwd or the project's workspace root when the server runs on this machine, else in aidiff's own directory.
 
 ## 7. Timeouts
 

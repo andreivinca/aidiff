@@ -171,8 +171,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleOverlayMouse(msg)
 	}
 
-	if mm, ok := m.treeDividerMouse(msg); ok {
-		return mm, nil
+	if model, handled := m.treeDividerMouse(msg); handled {
+		return model, nil
 	}
 
 	// reload, output, compact-mode, editor and reviewed hints persist for exactly
@@ -252,7 +252,9 @@ func (m Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // wheelStepFor returns the wheel scroll step for the diff pane. Plain wheel
 // scrolls by the wheelStep constant; Shift+wheel scrolls by half the
-// viewport height to match the keyboard half-page shortcut. The file tree also uses this delta; the TOC keeps single-step navigation.
+// viewport height to match the keyboard half-page shortcut. The file tree
+// scrolls its window by the same delta; the TOC path in handleWheel ignores
+// the magnitude and uses single-step cursor navigation regardless.
 func (m Model) wheelStepFor(shift bool) int {
 	if !shift {
 		return wheelStep
@@ -301,6 +303,10 @@ func (m Model) handleWheel(zone hitZone, delta int) (tea.Model, tea.Cmd) {
 		m.wheel.tickInFlight = true
 		return m, m.wheelTick()
 	case hitTree:
+		// TOC wheel = direct cursor navigation, one entry per notch.
+		// no debounce, no shift-half-page tricks (those are diff-pane things);
+		// the TOC is small and cheap so single-step matches j/k semantics.
+		// the file tree instead scrolls its window and leaves the selection.
 		motion := sidepane.MotionDown
 		if delta < 0 {
 			motion = sidepane.MotionUp
@@ -401,8 +407,8 @@ func (m Model) clickTree(y int) (tea.Model, tea.Cmd) {
 	if !m.tree.SelectByVisibleRow(row) {
 		return m, nil
 	}
-	if m.selectedDirectory() != "" {
-		return m.toggleSelectedDirectory()
+	if model, cmd, handled := m.toggleFocusedFolder(); handled {
+		return model, cmd
 	}
 	m.clearPendingJumps()
 	return m.loadSelectedIfChanged()
@@ -539,24 +545,4 @@ func (m Model) clickDiff(y int) (tea.Model, tea.Cmd) {
 	m.syncViewportToCursor()
 	m.syncTOCActiveSection()
 	return m, nil
-}
-
-// treeDividerMouse handles the tree/diff divider: a press on the tree's right
-// border starts a drag, motion moves it, anything else ends it. ok reports
-// whether the event was the divider's.
-func (m Model) treeDividerMouse(msg tea.MouseMsg) (Model, bool) {
-	if m.layout.treeDrag {
-		if msg.Action == tea.MouseActionMotion {
-			return m.dragTreeTo(msg.X), true
-		}
-		m.layout.treeDrag = false
-		return m, true
-	}
-	onBorder := !m.treePaneHidden() && msg.X == m.layout.treeWidth+1 &&
-		msg.Y >= 0 && msg.Y < m.layout.height-m.statusBarHeight()
-	if onBorder && msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
-		m.layout.treeDrag = true
-		return m, true
-	}
-	return m, false
 }

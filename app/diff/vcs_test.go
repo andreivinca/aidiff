@@ -105,6 +105,28 @@ func TestDetectVCS_InvalidGitMetadata(t *testing.T) {
 	}
 }
 
+func TestDetectVCS_BrokenGitInsideRepoResolvesToParent(t *testing.T) {
+	repo := setupTestRepo(t)
+	nested := filepath.Join(repo, "nested")
+	require.NoError(t, os.MkdirAll(filepath.Join(nested, ".git"), 0o750))
+
+	vcs, root := DetectVCS(nested)
+	assert.Equal(t, VCSGit, vcs)
+	assert.Equal(t, repo, root, "an empty .git directory is not a repository root")
+}
+
+func TestDetectVCS_RelativeGitdirFile(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "store", "wt"), 0o750))
+	work := filepath.Join(dir, "work")
+	require.NoError(t, os.Mkdir(work, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(work, ".git"), []byte("gitdir: ../store/wt\n"), 0o600))
+
+	vcs, root := DetectVCS(work)
+	assert.Equal(t, VCSGit, vcs)
+	assert.Equal(t, work, root)
+}
+
 func TestDetectVCS_None(t *testing.T) {
 	dir := t.TempDir()
 	vcs, root := DetectVCS(dir)

@@ -8,122 +8,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
+	"regexp"
 	"strings"
-	"time"
-
-	"github.com/umputun/revdiff/app/fsutil"
 )
 
-// TokenStore keeps one bearer token per T3 server origin in a 0600 JSON file.
-type TokenStore struct {
-	Path string
-}
+// maxErrorBody bounds how much of a failed response an error quotes.
+const maxErrorBody = 200
 
-type tokenFile struct {
-	Servers map[string]storedToken `json:"servers"`
-}
-
-type storedToken struct {
-	Token   string    `json:"token"`
-	SavedAt time.Time `json:"savedAt"`
-}
-
-// Get returns the saved token for baseURL, or "" when none is saved.
-func (s TokenStore) Get(baseURL string) (string, error) {
-	f, err := s.load()
-	if err != nil {
-		return "", err
-	}
-	return f.Servers[NormalizeURL(baseURL)].Token, nil
-}
-
-// Put saves token for baseURL, replacing any earlier one.
-func (s TokenStore) Put(baseURL, token string) error {
-	f, err := s.load()
-	if err != nil {
-		return err
-	}
-	f.Servers[NormalizeURL(baseURL)] = storedToken{Token: token, SavedAt: time.Now().UTC()}
-	return s.save(f)
-}
-
-// Servers lists the servers with a saved token, most recently saved first.
-func (s TokenStore) Servers() ([]string, error) {
-	f, err := s.load()
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0, len(f.Servers))
-	for k := range f.Servers {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		a, b := f.Servers[keys[i]].SavedAt, f.Servers[keys[j]].SavedAt
-		if a.Equal(b) {
-			return keys[i] < keys[j]
-		}
-		return a.After(b)
-	})
-	return keys, nil
-}
-
-// Delete forgets the token for baseURL.
-func (s TokenStore) Delete(baseURL string) error {
-	f, err := s.load()
-	if err != nil {
-		return err
-	}
-	key := NormalizeURL(baseURL)
-	if _, ok := f.Servers[key]; !ok {
-		return nil
-	}
-	delete(f.Servers, key)
-	return s.save(f)
-}
-
-func (s TokenStore) save(f tokenFile) error {
-	b, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode T3 tokens: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
-		return fmt.Errorf("create token directory: %w", err)
-	}
-	if err := fsutil.AtomicWriteFile(s.Path, append(b, '\n')); err != nil {
-		return fmt.Errorf("save T3 token: %w", err)
-	}
-	return nil
-}
-
-func (s TokenStore) load() (tokenFile, error) {
-	f := tokenFile{Servers: map[string]storedToken{}}
-	b, err := os.ReadFile(s.Path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return f, nil
-	}
-	if err != nil {
-		return f, fmt.Errorf("read T3 tokens: %w", err)
-	}
-	if err := json.Unmarshal(b, &f); err != nil {
-		return f, fmt.Errorf("parse T3 tokens %s: %w", s.Path, err)
-	}
-	if f.Servers == nil {
-		f.Servers = map[string]storedToken{}
-	}
-	return f, nil
-}
-
-// NormalizeURL reduces a server URL to its origin (scheme://host[:port]),
+// normalizeURL reduces a server URL to its origin (scheme://host[:port]),
 // the key tokens are saved under.
-func NormalizeURL(baseURL string) string {
+func normalizeURL(baseURL string) string {
 	u, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || u.Host == "" {
 		return strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -131,8 +29,8 @@ func NormalizeURL(baseURL string) string {
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
-// IsLoopback reports whether baseURL points at this machine.
-func IsLoopback(baseURL string) bool {
+// isLoopback reports whether baseURL points at this machine.
+func isLoopback(baseURL string) bool {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return false
@@ -145,10 +43,10 @@ func IsLoopback(baseURL string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// PairingCredential extracts the one-time credential from what `t3 pair`
+// pairingCredential extracts the one-time credential from what `t3 pair`
 // prints: either the bare credential or a URL ending in #token=<credential>.
 // It also returns the origin of that URL, or "" for a bare credential.
-func PairingCredential(s string) (credential, origin string) {
+func pairingCredential(s string) (credential, origin string) {
 	s = strings.TrimSpace(s)
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
@@ -162,9 +60,10 @@ func PairingCredential(s string) (credential, origin string) {
 	return cred, u.Scheme + "://" + u.Host
 }
 
-// Pair exchanges a one-time pairing credential for a bearer access token
-// (OAuth token exchange at POST /oauth/token).
-func Pair(ctx context.Context, baseURL, credential string) (string, error) {
+// pair exchanges a one-time pairing credential for a bearer access token
+// (OAuth token exchange at POST /oauth/token). The endpoint's client never
+// follows a redirect, which would carry the credential elsewhere.
+func pair(ctx context.Context, ep endpoint, credential string) (string, error) {
 	if credential == "" {
 		return "", errors.New("empty T3 pairing credential")
 	}
@@ -176,21 +75,24 @@ func Pair(ctx context.Context, baseURL, credential string) (string, error) {
 		"client_label":         {"aidiff"},
 		"client_device_type":   {"bot"},
 	}
-	endpoint := strings.TrimRight(baseURL, "/") + "/oauth/token"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	endpointURL := strings.TrimRight(ep.origin, "/") + "/oauth/token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("pair with T3: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ep.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("pair with T3 at %s: %w", baseURL, err)
+		return "", fmt.Errorf("pair with T3 at %s: %w", ep.origin, err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("pair with T3 at %s: read response: %w", ep.origin, err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("pair with T3 at %s: HTTP %d: %s", baseURL, resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("pair with T3 at %s: HTTP %d: %s", ep.origin, resp.StatusCode, errorExcerpt(body))
 	}
 	var out struct {
 		AccessToken string `json:"access_token"`
@@ -206,6 +108,15 @@ func Pair(ctx context.Context, baseURL, credential string) (string, error) {
 		return "", fmt.Errorf("pair with T3: server issued a %s token; aidiff needs a Bearer token", out.TokenType)
 	}
 	return out.AccessToken, nil
+}
+
+// errorExcerpt is the start of a failed response's body, enough to explain it.
+func errorExcerpt(body []byte) string {
+	text := []rune(strings.TrimSpace(string(body)))
+	if len(text) <= maxErrorBody {
+		return string(text)
+	}
+	return string(text[:maxErrorBody]) + "…"
 }
 
 // issueArgs asks `t3 auth session issue` for a token with just the scopes a
@@ -235,16 +146,26 @@ func runIssue(cmd *exec.Cmd) (string, error) {
 	return firstToken(out)
 }
 
-// firstToken picks the token out of `t3 auth session issue --token-only`
-// output. The t3 launcher can append runtime warnings after it.
+// tokenFormat is what an issued token looks like: base64url segments joined
+// by dots.
+var tokenFormat = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+
+// firstToken reads the token out of `t3 auth session issue --token-only`
+// output: its first non-empty line, which the t3 launcher may follow with
+// runtime warnings. A first line that is not a token is an error, not a
+// reason to look further.
 func firstToken(out []byte) (string, error) {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 64*1024), 64*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line != "" && !strings.ContainsAny(line, " \t[]:") {
-			return line, nil
+		if line == "" {
+			continue
 		}
+		if !tokenFormat.MatchString(line) {
+			return "", fmt.Errorf("t3 auth session issue printed %q where a token belongs", errorExcerpt([]byte(line)))
+		}
+		return line, nil
 	}
 	return "", errors.New("t3 auth session issue printed no token")
 }

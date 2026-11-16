@@ -12,12 +12,12 @@ aidiff is a fork of [revdiff](https://github.com/umputun/revdiff). We use revdif
                      │  ┌──────────── splitview.Model (root tea.Model) ──────────────────┐  │
                      │  │  palette · quit guard · focus · drag-resize · refresh gating    │  │
                      │  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐          │  │
-                     │  │  │ revdiff review │  │ termpane     │  │ t3chat       │  …       │  │
-                     │  │  │ (ui.Model)     │  │ PTY + vt     │  │ T3 transcript│          │  │
+                     │  │  │ revdiff review │  │ termpane     │  │ chat.Pane    │  …       │  │
+                     │  │  │ (ui.Model)     │  │ PTY + vt     │  │ conversation │          │  │
                      │  │  └───────┬────────┘  └──────┬───────┘  └──────┬───────┘          │  │
                      │  └──────────┼──────────────────┼─────────────────┼──────────────────┘  │
-                     │   revdiff renderer        $SHELL / ssh       t3client.Conn             │
-                     │   or t3client.Renderer                                                 │
+                     │   revdiff renderer        $SHELL / ssh    chat.Backend: t3chat        │
+                     │   or t3client.Renderer                       over t3client.Conn       │
                      │   app/watch ──FilesChangedMsg──▶ splitview ──RefreshMsg──▶ review     │
                      └────────────────────────────────────────────────────────────────────────┘
                                                           ▼                    ▼
@@ -33,15 +33,20 @@ aidiff is a fork of [revdiff](https://github.com/umputun/revdiff). We use revdif
 | Embedded terminal | `app/termpane` | **aidiff** |
 | Live refresh | `app/watch` | **aidiff** |
 | T3 Code client | `app/t3client` | **aidiff** |
-| T3 chat pane | `app/t3chat` | **aidiff** |
+| Chat pane, a library that knows no agent system | `app/chat` | **aidiff** |
+| T3 side of the chat: a `chat.Backend` over a T3 thread | `app/t3chat` | **aidiff** |
 | Clipboard | `app/clipboard` | **aidiff** |
-| Wiring | `app/revdiff/t3*.go`, `watch.go`, parts of `main.go`, `config.go`, `renderer_setup.go` | **aidiff** additions to the upstream root |
+| Image files for chat attachments | `app/imagefile` | **aidiff** |
+| T3 palette: sessions, thread reviews, chat panes | `app/t3palette` | **aidiff** |
+| Wiring | `app/revdiff/t3*.go`, `chat.go`, `split.go`, `watch.go`, `source_setup.go`, `review_model.go`, parts of `main.go` and `config.go` | **aidiff** additions to the upstream root |
 
-Small hooks we added inside revdiff code:
-- `app/ui/refresh.go`: `RefreshMsg` and `CanRefresh()`
-- `app/ui/folder.go`, and folder rows in `app/ui/sidepane`: folder browsing
-- `MachineIdentityMsg` / `T3Mode` in `app/ui`: status-bar identity
+Our code inside revdiff packages lives in files of its own; the revdiff files only call into it through one-line hooks:
+- `app/ui/refresh.go`: `RefreshMsg`, `CanRefresh()` and the quiet reload's anchor (cursor line, search, horizontal scroll, expanded hunks)
+- `app/ui/folder.go` (the `folderBrowser` hooks) and `app/ui/sidepane/foldertree.go` (`FolderTree`, injected through `ModelConfig.NewFileTree` for a plain folder): folder browsing
+- `app/ui/identity.go` (`MachineIdentityMsg`, `ModelConfig.MachineName`/`T3Mode`) and `app/ui/chrome.go` (status-bar identity, divider handle): pane chrome
+- `app/ui/treedrag.go` and `app/ui/sidepane/scroll.go`: dragging the tree/diff divider, wheel-scrolling the tree
 - `app/diff/folder.go`: `FolderReader`, the lazy folder source
+- `app/diff/gitmeta.go`: `DetectVCS` accepts a `.git` only when it is real repository metadata
 - `app/diff/watchdirs.go`: which directories to watch in a git repo
 
 **Rule:** keep fork code in our own packages and keep the hooks into revdiff as small as possible, so upstream merges stay cheap.
@@ -60,12 +65,13 @@ Because `t3client.Renderer` implements the same interface, a T3 thread opens in 
 
 `app/revdiff/main.go`, `run()`:
 1. Parse options: the revdiff flags plus ours (terminal, chat, watch, T3).
-2. Pick the source in this order: **T3**, then compare, then stdin, then VCS detection. With no repository it uses **FolderReader** (no `--only`) or the file reader (`--only`). In T3 mode the connection is made here, before the full-screen UI starts, so connection errors print as plain text.
-3. Build the revdiff review model.
-4. Build the T3 palette state (`newT3Palette`) and wrap the review: `splitview.New(review, {WidthPercent, OpenOnStart, Start, RefreshMsg, Commands})`. The review is always wrapped, so ctrl+p works in every mode.
-5. Start Bubble Tea at 120 FPS, for terminal-pane responsiveness.
-6. Start the watcher for the source (`src.watch`). In T3 mode with a thread selected, open the chat pane.
-7. On exit, unwrap splitview, close every pane, and hand the review back to revdiff's finalization. `t3p.history()` decides which review's annotations are saved, because the user may have switched T3 threads.
+2. Pick the source (`setupSource`, `source_setup.go`) in this order: **T3**, then compare, then stdin, then a plain folder (no repository and no `--only`: **FolderReader**), then revdiff's own VCS detection (`setupVCSRenderer`), which reviews `--only` files outside a repository. In T3 mode the connection is made here, before the full-screen UI starts, so connection errors print as plain text.
+3. Build the T3 palette (`newT3Palette`, `t3_palette.go`) right away: from here on it owns the T3 session the source opened, so an error in a later step still closes it.
+4. Build the revdiff review model.
+5. Wrap the review (`newSplit`, `split.go`): `splitview.New(review, {WidthPercent, OpenOnStart, Start, RefreshMsg, Commands, Quit})`. The review is always wrapped, so ctrl+p works in every mode.
+6. Start Bubble Tea with the split's options (`splitProgramOptions`): 120 FPS, for terminal-pane responsiveness, and `splitview.QuitGuard()`.
+7. Start the watcher for the source (`src.watch`) and hand it to the palette (`t3p.Start`). A git repository's watcher is set up in the background, so listing ignored trees and walking the worktree never delays the first frame. A T3 thread's watch is the palette's, since it follows the thread on screen; in T3 mode with a thread selected, `Start` also opens the chat pane.
+8. On exit, unwrap splitview, close every pane (`closeSplit`), and hand the review back to revdiff's finalization. The palette's `OnScreen()` decides how its annotations are filed, because the user may have switched T3 threads.
 
 ## 5. Split view (`app/splitview`)
 
@@ -74,21 +80,21 @@ Because `t3client.Renderer` implements the same interface, a T3 thread opens in 
 ```go
 type Terminal interface {
     Updates() <-chan struct{}; Exited() bool
-    SendText(string); SendKey(uv.KeyPressEvent); Paste(string); SendMouse(uv.MouseEvent)
-    Resize(w, h int); Render() string; Close()
+    SendText(string); SendKey(uv.KeyPressEvent); Paste(string); SendMouse(vt.Mouse)
+    Resize(w, h int); Render(showCursor bool) string; Close()
 }
 ```
 
-`termpane.Pane` and `t3chat.Pane` implement it. A pane can also implement `QuitNoted` (a note for the quit dialog) and `MouseCaptured` (the pane keeps the mouse while dragging).
+`termpane.Pane` and `chat.Pane` implement it. The interface's doc states the contract: `Updates` is closed once the pane is closed (the split's wait on it ends with the pane), and `Close` may block, so the split calls it off the UI goroutine. A pane can also implement `QuitNote() string` (its words in the quit dialog) and `MouseCaptured() bool` (the pane keeps the mouse while dragging); both are named consumer-side interfaces in `terminal.go`.
 
 How it works:
 - **The review sees only its own column.** It is told the window is the left column's width, so its layout and click handling are unchanged.
-- **Global keys come first:** ctrl+] cycles focus, ctrl+p opens the palette, ctrl+q opens the quit guard. All other keys go to the focused pane. For a terminal pane they are re-encoded as terminal bytes (`keys.go`).
-- **Layout:** panes are full-height columns. Together they take `--terminal-width` percent (default 45). A new pane gets an equal share and the others shrink proportionally. Minimum widths are 20 columns for the review and 10 per pane. Every separator can be dragged. A pane whose program exits is removed.
-- **Quit guard:** a `tea.Quit` from the review, including one inside a batch, becomes a confirmation dialog whenever panes are open.
-- **Refresh gating:** a `FilesChangedMsg` marks a refresh as pending. It is delivered as `RefreshMsg` only when the review's `CanRefresh()` is true, which is not the case while the user is typing, a popup is open, or a reload is running.
+- **Global keys come first:** ctrl+] cycles focus, ctrl+p opens the palette, ctrl+q opens the quit guard (defaults of `Config.Keys`). All other keys go to the focused pane. For a terminal pane they are re-encoded as terminal bytes (`keys.go`).
+- **Layout:** panes are full-height columns. Together they take `--terminal-width` percent (default 45). A new pane gets an equal share and the others shrink proportionally. Minimum widths are 20 columns for the review and 10 per pane. Every separator can be dragged by its grip column. A pane whose program exits is removed. `Model.Close` closes all panes in parallel and waits for them, including panes closed earlier in the background.
+- **Quit guard:** `splitview.QuitGuard()` is a `tea.WithFilter` that turns every unconfirmed `tea.QuitMsg` into a quit request, whoever sent it (the review, a palette command, a batch or a sequence). The request quits at once with no pane open and opens the confirmation dialog otherwise; the dialog lists the shells and every other pane's note.
+- **Refresh gating:** a `FilesChangedMsg` marks a refresh as pending. It is delivered as `RefreshMsg` only when the review's `CanRefresh()` is true, which is not the case while the user is typing, a popup is open, a reload (a refresh's included) or a selected file is loading, a mark-reviewed fingerprint is pending, or a cross-file jump waits for its file.
 - **Replacing the review:** `ReplaceInnerMsg{Model, Retire}` swaps in a different review. This is how T3 thread switching works, and `Retire` saves the old review's history.
-- **Palette:** `Config.Commands()` is evaluated every time the palette renders, so its entries reflect live state. A command can open a picker, a prompt, or a flash message.
+- **Palette:** `Config.Commands()` is evaluated when the palette opens, when its filter changes and when the review handles a message while it is open, so its entries follow live state without being rebuilt on every frame. A command can open a picker, a prompt, or a flash message.
 - **Caching:** the review's view is cached until the review gets a message, so typing in a terminal doesn't redraw the diff.
 
 ## 6. Terminal pane (`app/termpane`)
@@ -98,12 +104,13 @@ How it works:
  child ─▶ pty ──▶ emulator (under mutex) ──▶ notify (≤ 1 per 16 ms) ──▶ Updates()
 ```
 
-- Uses `creack/pty` and `charmbracelet/x/vt`, with `TERM=xterm-256color` and 5000 lines of scrollback.
+- Uses `creack/pty` and `charmbracelet/x/vt`, with `TERM=xterm-256color`. Scrollback is kept at the emulator's minimum of one line, since nothing shows it.
+- Input never waits on the child: keys, pastes and the emulator's replies drain from its pipe into an unbounded queue, and a separate goroutine writes the queue to the pty. A child that stops reading (or a paste larger than the pty buffer) stalls only that writer, never the UI.
 - Redraws are capped at one per 16 ms, but the first change after a quiet spell is shown at once. `Render` is cached until the screen changes.
-- `Close` sends SIGHUP to every process in the child's session, waits 1 s, then sends SIGKILL. On macOS, where there is no `/proc`, it signals the process group instead.
-- The start command and directory come from `app/revdiff/t3_terminal.go`:
-  - When the live T3 session goes through SSH, it runs `ssh -t host` and starts a login shell in the thread's directory.
-  - Otherwise it runs `--terminal-command` in the reviewed directory.
+- `Close` sends SIGHUP to every process in the child's session, waits 1 s, then sends SIGKILL. Session members are listed from `/proc` on Linux and from `kern.proc.all` plus `getsid` on macOS (`session_linux.go`, `session_darwin.go`). The child is reaped only after that: its exit is observed without reaping (`waitid(WNOWAIT)` on Linux, kqueue on macOS), so its pid, which is also the session id, cannot be reused while the session is signalled.
+- The start command and directory come from `app/revdiff/t3_terminal.go`, at the place `t3palette.Palette.TerminalPlace` names (the review on screen's machine and folder):
+  - When that T3 session goes through SSH, it runs `ssh -t host` with `--terminal-command`, by default a login shell, in the thread's directory.
+  - Otherwise it runs `--terminal-command` through `/bin/sh` in the reviewed directory, or in aidiff's own when that directory is on another machine.
 
 ## 7. Live refresh (`app/watch`)
 
@@ -114,17 +121,39 @@ How it works:
 | T3 thread | No filesystem watch. `t3client.WatchThread` fires when a run starts or finishes. |
 | hg, jj, stdin, compare, `--only` without a repository | None |
 
-There is no timer debounce. A burst of changes collapses into one pending notification, and splitview's gating plus revdiff's quiet reload handle the rest. The reload keeps annotations and the cursor position. If the watcher can't start, aidiff logs a warning and the review works without live refresh. `--no-watch` turns it off.
+Changes are reported once they have paused for 150 ms (`watch.Config.Settle`), so a burst (a save, a checkout, a build) refreshes once. splitview holds the refresh while `CanRefresh()` is false, which includes while a previous refresh is still loading. The reload keeps annotations, the cursor line, the search, the horizontal scroll and expanded hunks. A watcher that runs out of inotify watches logs one warning. If the watcher can't start, aidiff logs a warning and the review works without live refresh. `--no-watch` turns it off.
 
-## 8. T3 client and chat
+## 8. T3 client and palette
 
 [T3_INTEGRATION.md](T3_INTEGRATION.md) has the full detail.
-- **`t3client.Conn`:** a WebSocket with a read goroutine and a ping goroutine. Stream callbacks run on the read goroutine and must not block, so callers hand work off with `go p.Send(...)`.
+- **`t3client.Conn`:** a WebSocket with a read goroutine, a control-frame writer (acks, pings, interrupts) and a ping goroutine that ends a connection whose server stopped answering. Stream callbacks run on the read goroutine and must not block, so callers hand work off with `go p.Send(...)`; none runs after its subscription returns. The server operations are methods on `Conn`; a `Session` owns its lifetime (and any SSH tunnel).
 - **`t3client.Renderer`:** adapts a thread's diff preview to revdiff's renderer interface.
-- **`t3chat.Pane`:** one mutex guards its state. Each subscription has an ID, and events from a replaced subscription are dropped. Network calls run in goroutines that re-check the subscription ID before applying their result.
-- **Palette commands:** connect, threads, projects, open chat, send message, send annotations, reconnect. They are built in `app/revdiff/t3_palette.go`.
+- **Palette commands (`app/t3palette`):** connect, threads, projects, open chat, send message, send annotations, reconnect. The composition root hands it what it cannot reach itself (`Config.NewReview`, `Config.SaveHistory`, the flags) in `app/revdiff/t3_palette.go`. It reaches servers through its own `Session`/`Server` interfaces, which `*t3client.Session` and `*t3client.Conn` satisfy through a small adapter.
+- **Session ownership:** the palette tracks the live session (the one commands use), the session of the T3 review on screen, and the sessions of reviews on their way to the screen in a `ReplaceInnerMsg`. A session none of them uses is closed. The review on screen changes only in `Retire`, at the moment the split swaps models, so a connection that lands while a thread opens never strands a session or leaves the palette pointing at the wrong review. Closing sessions, stopping a refresh and saving history run in the background; `Close` waits for them, and anything that lands after `Close` closes its own session.
 
-## 9. Design decisions
+## 9. Chat pane (`app/chat`) and its T3 backend (`app/t3chat`)
+
+```
+ keys, mouse ─▶ chat.Pane ──Send / Interrupt / Decide / Answer / Dismiss, Command.Run──▶ chat.Backend
+                    ▲                                                                       │
+                    └──── mailbox ◀── Viewer.Show(Conversation), Viewer.Note ◀──────────────┘
+                                                        t3chat.Backend: thread events → Conversation
+```
+
+`app/chat` is a chat pane for a coding agent that knows no agent system. It owns the generic chat UX: the transcript (the user's messages, the agent's markdown, its work steps summed up in a line until `/work`, todo lists, plans, failures), the queued messages above the composer, the grapheme-aware composer with image tokens, the slash-command popup, scrolling, mouse selection and copy, the stop dialog, the activity view, and the agent's prompts (an approval, or questions answered one by one). It imports no other aidiff package.
+
+- **`chat.Backend`** (consumer-side, in `chat.go`) is what the pane needs of an agent system: `Subscribe(ctx, Viewer)` shows the conversation until ctx ends; `Send`, `Interrupt`, `Decide`, `Answer` and `Dismiss` carry out the user's requests; `Commands()` adds the backend's slash commands to the pane's own; `CheckImage` turns down an image the backend cannot take.
+- **`chat.Conversation`** is an immutable snapshot: title, the agent's state, the running turns, the entries (`UserMessage`, `AgentMessage`, `Plan`, `TodoList`, `Approval`, `Questions`, `Failure`, `Step`), the queued messages, the messages it took over (`Delivered`), the background work (`Activity`) and the settings line. A backend builds a new one for every change.
+- **Commands.** The pane's own (`/help`, `/stop`, `/accept`, `/decline`, `/cancel`, `/answer` and `/1`…`/9`, `/dismiss`, `/attach`, `/work`, `/activity`) win over a backend's of the same name. A backend's `Command.Run` runs with the pane's lock held and returns a `Reply`: a note now, or a `Send` the composer waits on as on a message, with the note once it succeeded; an error turns the input down. A command without `Run` is the agent's own: listed last and sent as a message, like any unknown `/command`.
+- **Locking.** One mutex guards the pane. A backend delivers through a mailbox with a lock of its own, so `Viewer.Show` and `Viewer.Note` never wait on the pane: a backend may call them from any goroutine with its own locks held, even from a command's `Run`. The pane takes the newest delivery whenever it takes its lock (`lock()`), so a frame shows what was delivered last. Each subscription has an id; what an older one delivers is dropped, and so are the results of requests, clipboard and file reads (`goLocked`) started before the pane followed another backend.
+- **OS concerns are injected.** `Config.Clipboard` and `Config.Files` are consumer-side interfaces with the pane's own `Clip` and `Image` types; the composition root adapts `clipboard.System` and `imagefile.Reader` to them (`app/revdiff/chat.go`). `ImageFiles.Read` asks the backend's check before it reads a file. The host's own shortcuts (aidiff's palette key) reach the hint row through `Config.HostKeys`, so the pane names no key it does not handle itself.
+- Rendering changes no state: each frame records its `layout` (page size, selectable rows, scroll limits), which keys and the mouse read.
+
+`app/t3chat` is the T3 layer. `t3chat.Chats` serves the threads of one connection and holds the server's catalog (models, provider commands), which its backends share: it is fetched once, and after a failure again only by a command that needs it. `Chats.Thread(id)` is a `*t3chat.Backend`: it follows `orchestration.subscribeThread`, keeps the thread's items, runs, requests, subagents and provider threads, and shows the pane a new `Conversation` after every event: turn items become entries and steps, the server's queue and the messages it took over are matched by message id, the activity list joins subagents, command rows and the active provider thread's background tasks, and the thread's model, effort, interaction and runtime modes make the settings line. It owns T3's commands (`/model`, `/effort`, `/plan`, `/build`, `/mode`, `/clear`, `/side`, and the provider's from the catalog), the title seed of a thread's first message, image uploads (`assets.persistChatAttachments` before `message.dispatch`) and T3's 10 MB image limit.
+
+`app/t3palette` wires the two: it opens a `chat.Pane` on the thread on screen and, when the thread changes, points each open pane at a new backend (`Pane.Follow`), keeping the `Chats` of a connection so its catalog is fetched once.
+
+## 10. Design decisions
 
 | Decision | Rationale |
 |---|---|
@@ -133,8 +162,10 @@ There is no timer debounce. A burst of changes collapses into one pending notifi
 | T3 thread exposed as a revdiff renderer | T3 reuses the whole review UI with no special cases. |
 | Quiet refresh separate from revdiff's `R` reload | `R` drops annotations on purpose. An automatic refresh must never lose work. |
 | Refresh waits on `CanRefresh()` | The view must not reload while the user is typing or has a popup open. |
-| No debounce timer in the watcher | Gating plus coalescing already limit how often it reloads, without adding latency. |
+| 150 ms settle in the watcher | Without it every event of a burst started a full reload, each one bumping every load sequence while the previous git processes kept running. |
 | Stop guard defaults to "Keep working"; letters cancel it | Interrupting an agent run is costly, and a stray key must not do it. |
+| The chat pane is a library behind `chat.Backend` | The pane can serve other agent systems; everything T3 lives in `app/t3chat`. |
+| Backends deliver through a mailbox | A backend may show the conversation from anywhere, its own commands included, without lock-order rules between it and the pane. |
 | Mint T3 tokens with the `t3` CLI when possible | No setup for local, loopback and SSH servers. Remote http(s) needs explicit pairing. |
 | Remote terminals follow the T3 SSH host | The shell opens where the agent's files are. |
-| Vendor patch on termenv | Avoids a 5 s startup stall on terminals that don't answer color queries. See [DEVELOPMENT.md](DEVELOPMENT.md#5-vendor-patches). |
+| Patched termenv in `third_party/` | Avoids a 5 s startup stall on terminals that don't answer color queries. A `replace` survives `go mod vendor`. See [DEVELOPMENT.md](DEVELOPMENT.md#5-patched-dependencies). |
