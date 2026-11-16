@@ -57,6 +57,11 @@ func TestRawSequence_BubbleTeaType(t *testing.T) {
 	require.True(t, ok, "Bubble Tea's message for an unknown CSI sequence is recognized: %T", msg)
 	assert.Equal(t, []byte("\x1b[13;2u"), seq)
 
+	// ctrl+delete has no Bubble Tea name either: it reaches a chat pane raw
+	seq, ok = rawSequence(unknownCSIMsg(t, "\x1b[3;5~"))
+	require.True(t, ok)
+	assert.Equal(t, []byte("\x1b[3;5~"), seq)
+
 	_, ok = rawSequence(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.False(t, ok, "named keys are not raw sequences")
 	_, ok = rawSequence(nil)

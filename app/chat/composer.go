@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -163,22 +164,58 @@ func (p *Pane) inputRowsLocked(w, limit int, showCursor bool) []string {
 		return []string{cursor + c.muted.Render(ansi.Truncate(placeholder, max(0, w-ansi.StringWidth(cursor)), "…"))}
 	}
 	text := p.input.wrap(w)
+	lo, hi, _ := p.input.selection()
 	first := min(max(0, text.curRow-limit+1), max(0, len(text.rows)-limit))
 	out := make([]string, 0, limit)
 	for i := first; i < len(text.rows) && i < first+limit; i++ {
-		row := text.rows[i]
-		if !showCursor || i != text.curRow {
-			out = append(out, c.text.Render(strings.Join(row, "")))
-			continue
+		col := -1
+		if showCursor && i == text.curRow {
+			col = text.curCol
 		}
-		col := text.curCol
-		if col < len(row) {
-			out = append(out, c.text.Render(strings.Join(row[:col], ""))+c.cursor.Render(row[col])+c.text.Render(strings.Join(row[col+1:], "")))
-		} else {
-			out = append(out, c.text.Render(strings.Join(row, "")+"█"))
-		}
+		out = append(out, p.inputRowLocked(text.rows[i], text.starts[i], col, lo, hi))
 	}
 	return out
+}
+
+// inputRowLocked draws one row of the draft, whose first character is
+// character start of the text: the cursor on column col (none when col < 0,
+// a block after the text when col is past it), and characters lo to hi
+// selected. Neighbors of one style are drawn together. mu must be held.
+func (p *Pane) inputRowLocked(row []string, start, col, lo, hi int) string {
+	c := p.composer
+	styleOf := [...]lipgloss.Style{c.text, c.selected, c.cursor}
+	const (
+		plain = iota
+		selected
+		cursor
+	)
+	var b, run strings.Builder
+	kind := plain
+	flush := func() {
+		if run.Len() > 0 {
+			b.WriteString(styleOf[kind].Render(run.String()))
+			run.Reset()
+		}
+	}
+	for j, ch := range row {
+		k := plain
+		switch idx := start + j; {
+		case j == col:
+			k = cursor
+		case idx >= lo && idx < hi:
+			k = selected
+		}
+		if k != kind || k == cursor {
+			flush()
+			kind = k
+		}
+		run.WriteString(ch)
+	}
+	flush()
+	if col >= len(row) {
+		b.WriteString(c.text.Render("█"))
+	}
+	return b.String()
 }
 
 // suggestionRowsLocked renders a window of the slash-command popup above the

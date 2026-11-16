@@ -147,14 +147,18 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 |---|---|
 | Enter | Send; becomes "queue" while a run is active |
 | shift+enter, ctrl+enter, alt+enter, ctrl+j | New line (shift+enter and ctrl+enter need a terminal with modifyOtherKeys) |
-| ctrl+a / ctrl+e / ctrl+u / ctrl+w | Line start / end / clear / delete word |
+| ctrl+a / ctrl+e / ctrl+u / ctrl+w | Line start / end / clear / delete word before the cursor |
+| ctrl+← / ctrl+→ (or alt) | Move by a word |
+| ctrl+delete (or alt) | Delete the word after the cursor |
+| shift+← / shift+→ / shift+home / shift+end | Select; typing or pasting replaces the selection, backspace and delete remove it |
+| ctrl+shift+← / ctrl+shift+→ | Select a word at a time |
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, text is inserted |
 | ↑ / ↓ | Move in the slash popup, otherwise scroll |
 | PgUp / PgDn | Scroll by a page |
 | End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |
 | ← (empty input) | Activity view |
-| Esc | Close the popup, or ask to stop the run |
+| Esc | Drop the selection, close the popup, or ask to stop the run |
 
 Pasting a single line that is a path to an image file attaches that file. The backend turns down an image over T3's 10 MB limit, a file before it is read. When a send fails, the text and images go back into the input. A command or message that is turned down (bad argument, nothing to approve, not connected, another request still being sent) stays in the input, with the reason underneath. Commands that send nothing, such as `/help` or `/work`, work while a request is in flight. Switching threads keeps the draft and its images.
 

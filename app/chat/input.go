@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 
 	uv "github.com/charmbracelet/ultraviolet"
@@ -8,7 +10,9 @@ import (
 )
 
 // SendText takes typed bytes: text goes into the input line, control bytes
-// edit it (backspace, ctrl+a, ctrl+e, ctrl+u, ctrl+w) or send it (enter).
+// edit it (backspace, ctrl+a, ctrl+e, ctrl+u, ctrl+w) or send it (enter), and
+// the escape sequences of modified arrows, home, end and delete move by word
+// and select (see editKeyLocked).
 // With the slash-command popup open, tab completes the selected row, enter
 // completes it and runs a complete command, esc closes the popup. Alt chords
 // are dropped, except alt+enter, which inserts a line break (shift+enter
@@ -25,7 +29,7 @@ func (p *Pane) SendText(s string) {
 	}
 	p.note = ""
 	p.gen++
-	if p.modalTextLocked(s) || p.modifiedTextLocked(s) {
+	if p.modalTextLocked(s) || p.editKeyLocked(s) || p.modifiedTextLocked(s) {
 		return
 	}
 	for _, r := range s {
@@ -43,6 +47,10 @@ func (p *Pane) typeLocked(r rune) {
 	case '\t':
 		p.applySuggestionLocked(false)
 	case '\x1b':
+		if _, _, ok := p.input.selection(); ok {
+			p.input.deselect()
+			return
+		}
 		p.escapeLocked()
 	case '\n':
 		p.insertLocked("\n")
@@ -71,6 +79,69 @@ func (p *Pane) typeLocked(r rune) {
 func (p *Pane) insertLocked(text string) {
 	p.input.insert(text)
 	p.inputChanged()
+}
+
+// editKeySeq is a modified arrow, home or end ("CSI 1 ; mod X") or delete
+// ("CSI 3 ; mod ~"), as xterm encodes them.
+var editKeySeq = regexp.MustCompile(`^\x1b\[(?:1;(\d+)([ABCDHF])|3;(\d+)~)$`)
+
+// xterm modifier bits in the parameter "1 + bits".
+const (
+	modShift = 1 << iota
+	modAlt
+	modCtrl
+)
+
+// editKeyLocked takes a modified editing key and reports whether s was one:
+// ctrl (or alt) with ← → moves by word and with delete deletes the word
+// after the cursor; shift with ← → home end extends the selection. A
+// modified ↑ ↓ is dropped. mu must be held.
+func (p *Pane) editKeyLocked(s string) bool {
+	m := editKeySeq.FindStringSubmatch(s)
+	if m == nil {
+		return false
+	}
+	param, key := m[1], m[2]
+	if key == "" {
+		param, key = m[3], "~"
+	}
+	n, err := strconv.Atoi(param)
+	if err != nil || n < 1 {
+		return true
+	}
+	bits := n - 1
+	word, extend := bits&(modCtrl|modAlt) != 0, bits&modShift != 0
+	e := &p.input
+	switch key {
+	case "D":
+		if word {
+			e.moveTo(e.wordLeft(), extend)
+		} else if extend {
+			e.moveTo(e.cur-1, true)
+		} else {
+			e.left()
+		}
+	case "C":
+		if word {
+			e.moveTo(e.wordRight(), extend)
+		} else if extend {
+			e.moveTo(e.cur+1, true)
+		} else {
+			e.right()
+		}
+	case "H":
+		e.moveTo(0, extend)
+	case "F":
+		e.moveTo(len(e.clusters), extend)
+	case "~":
+		if word {
+			e.deleteWordRight()
+		} else {
+			e.del()
+		}
+		p.inputChanged()
+	}
+	return true
 }
 
 // modifiedTextLocked handles alt chords typed as text: alt+enter inserts a

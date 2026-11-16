@@ -292,3 +292,100 @@ func TestPane_SendModifiedKeyTakesOnlyModifiedEnter(t *testing.T) {
 	assert.False(t, p.SendModifiedKey(uv.KeyPressEvent{Code: uv.KeyEnter, Mod: uv.ModShift}),
 		"the activity view takes enter as itself")
 }
+
+// Escape sequences of modified editing keys, as the split forwards them.
+const (
+	ctrlLeft       = "\x1b[1;5D"
+	ctrlRight      = "\x1b[1;5C"
+	shiftLeft      = "\x1b[1;2D"
+	shiftRight     = "\x1b[1;2C"
+	ctrlShiftLeft  = "\x1b[1;6D"
+	ctrlShiftRight = "\x1b[1;6C"
+	shiftHome      = "\x1b[1;2H"
+	ctrlDelete     = "\x1b[3;5~"
+)
+
+// press sends each key on its own, as the split does.
+func press(p *Pane, keys ...string) {
+	for _, k := range keys {
+		p.SendText(k)
+	}
+}
+
+func TestPane_WordMoves(t *testing.T) {
+	p, _ := newTestPane(t, 60, 10, fixture())
+	p.SendText("fix the_login, now")
+	p.SendText(ctrlLeft)
+	assert.Equal(t, 15, p.input.cur, "to the start of the last word")
+	p.SendText(ctrlLeft)
+	assert.Equal(t, 13, p.input.cur, "punctuation is a word of its own")
+	p.SendText(ctrlLeft)
+	assert.Equal(t, 4, p.input.cur, "an underscore belongs to the word")
+	press(p, ctrlLeft, ctrlLeft, ctrlLeft)
+	assert.Equal(t, 0, p.input.cur, "and stops at the start")
+	p.SendText(ctrlRight)
+	assert.Equal(t, 3, p.input.cur, "to the end of the next word")
+	p.SendText("\x1b[1;3C")
+	assert.Equal(t, 13, p.input.cur, "alt moves by word too")
+
+	p.SendText(ctrlDelete)
+	assert.Equal(t, "fix the_login now", p.input.text(), "ctrl+delete deletes the word after the cursor")
+	p.SendText(ctrlDelete)
+	assert.Equal(t, "fix the_login", p.input.text(), "with the space before it")
+
+	p.SendText("\x15one\ntwo")
+	press(p, ctrlLeft, ctrlLeft)
+	assert.Equal(t, 0, p.input.cur, "a line break is space between words")
+	p.SendText("\x1b[1;5A")
+	assert.Equal(t, "one\ntwo", p.input.text(), "a modified ↑ is dropped, not typed")
+}
+
+func TestPane_SelectAndEdit(t *testing.T) {
+	p, _ := newTestPane(t, 60, 10, fixture())
+	p.SendText("hello brave world")
+	press(p, shiftLeft, shiftLeft)
+	lo, hi, ok := p.input.selection()
+	require.True(t, ok)
+	assert.Equal(t, [2]int{15, 17}, [2]int{lo, hi}, "shift+← selects a character at a time")
+	p.SendText("LD")
+	assert.Equal(t, "hello brave worLD", p.input.text(), "typing replaces the selection")
+
+	press(p, ctrlLeft, ctrlShiftLeft)
+	lo, hi, _ = p.input.selection()
+	assert.Equal(t, "brave ", strings.Join(p.input.clusters[lo:hi], ""), "ctrl+shift+← selects a word")
+	p.SendText("\x7f")
+	assert.Equal(t, "hello worLD", p.input.text(), "backspace deletes the selection")
+
+	press(p, ctrlShiftRight, shiftRight)
+	lo, hi, _ = p.input.selection()
+	assert.Equal(t, "worLD", strings.Join(p.input.clusters[lo:hi], ""), "a selection grows from its anchor")
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
+	_, _, ok = p.input.selection()
+	assert.False(t, ok, "← drops the selection")
+	assert.Equal(t, 6, p.input.cur, "at its start")
+
+	p.SendText(shiftHome)
+	p.SendText(ctrlDelete)
+	assert.Equal(t, "worLD", p.input.text(), "ctrl+delete deletes a selection")
+
+	p.SendText(shiftRight)
+	p.SendText("\x1b")
+	_, _, ok = p.input.selection()
+	assert.False(t, ok, "esc drops the selection")
+	assert.Equal(t, "worLD", p.input.text())
+	assert.False(t, p.stop.turn != "", "and does nothing else")
+
+	p.SendText(shiftLeft)
+	p.Paste("H")
+	assert.Equal(t, "HorLD", p.input.text(), "a paste replaces the selection")
+}
+
+func TestPane_SelectionIsDrawn(t *testing.T) {
+	f := newFakeBackend(fixture())
+	p := New(f, "Fix login", 60, 10, Config{Clipboard: f.clip, Files: f.files})
+	t.Cleanup(p.Close)
+	p.lock()
+	row := p.inputRowLocked([]string{"a", "b", "c"}, 0, 3, 1, 3)
+	p.mu.Unlock()
+	assert.Equal(t, p.composer.text.Render("a")+p.composer.selected.Render("bc")+p.composer.text.Render("█"), row)
+}

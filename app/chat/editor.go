@@ -12,10 +12,14 @@ import (
 
 // editor is the input: its text as grapheme clusters, the characters a user
 // sees (an emoji sequence, a flag, a letter with its accents), and a cursor
-// between them. Moving and deleting go a whole cluster at a time.
+// between them. Moving and deleting go a whole cluster at a time. A selection
+// runs from the anchor to the cursor; typing replaces it and deleting removes
+// it.
 type editor struct {
-	clusters []string
-	cur      int // the cursor, in clusters from the start
+	clusters  []string
+	cur       int  // the cursor, in clusters from the start
+	selecting bool // a selection runs from anchor to cur
+	anchor    int
 }
 
 func (e *editor) text() string {
@@ -39,13 +43,52 @@ func (e *editor) before() string {
 }
 
 func (e *editor) clear() {
-	e.clusters, e.cur = e.clusters[:0], 0
+	e.clusters, e.cur, e.selecting = e.clusters[:0], 0, false
 }
 
-// insert puts s at the cursor and moves the cursor past it. The text is
-// split into clusters again, since s may join a neighbor, as a combining
-// accent joins the letter before it.
+// selection is the selected range of clusters, [lo, hi), when there is one.
+func (e *editor) selection() (lo, hi int, ok bool) {
+	if !e.selecting || e.anchor == e.cur {
+		return 0, 0, false
+	}
+	return min(e.anchor, e.cur), max(e.anchor, e.cur), true
+}
+
+// deselect drops the selection, leaving the text and cursor as they are.
+func (e *editor) deselect() {
+	e.selecting = false
+}
+
+// moveTo puts the cursor at i. With extend the selection grows from where
+// the cursor was, or from the selection's anchor; without, it is dropped.
+func (e *editor) moveTo(i int, extend bool) {
+	if extend && !e.selecting {
+		e.selecting, e.anchor = true, e.cur
+	}
+	if !extend {
+		e.selecting = false
+	}
+	e.cur = max(0, min(i, len(e.clusters)))
+}
+
+// deleteSelection removes the selected text and reports whether there was
+// any.
+func (e *editor) deleteSelection() bool {
+	lo, hi, ok := e.selection()
+	e.selecting = false
+	if !ok {
+		return false
+	}
+	e.clusters = slices.Delete(e.clusters, lo, hi)
+	e.cur = lo
+	return true
+}
+
+// insert puts s at the cursor, in place of the selection, and moves the
+// cursor past it. The text is split into clusters again, since s may join a
+// neighbor, as a combining accent joins the letter before it.
 func (e *editor) insert(s string) {
+	e.deleteSelection()
 	head := strings.Join(e.clusters[:e.cur], "") + s
 	e.set(head + strings.Join(e.clusters[e.cur:], ""))
 	e.cur = e.cursorAt(len(head))
@@ -74,6 +117,9 @@ func (e *editor) cursorAt(n int) int {
 }
 
 func (e *editor) backspace() {
+	if e.deleteSelection() {
+		return
+	}
 	if e.cur > 0 {
 		e.clusters = slices.Delete(e.clusters, e.cur-1, e.cur)
 		e.cur--
@@ -81,33 +127,48 @@ func (e *editor) backspace() {
 }
 
 func (e *editor) del() {
+	if e.deleteSelection() {
+		return
+	}
 	if e.cur < len(e.clusters) {
 		e.clusters = slices.Delete(e.clusters, e.cur, e.cur+1)
 	}
 }
 
+// left moves the cursor back one character, or to the start of the
+// selection, which it drops.
 func (e *editor) left() {
-	if e.cur > 0 {
-		e.cur--
+	if lo, _, ok := e.selection(); ok {
+		e.moveTo(lo, false)
+		return
 	}
+	e.moveTo(e.cur-1, false)
 }
 
+// right moves the cursor on one character, or to the end of the selection,
+// which it drops.
 func (e *editor) right() {
-	if e.cur < len(e.clusters) {
-		e.cur++
+	if _, hi, ok := e.selection(); ok {
+		e.moveTo(hi, false)
+		return
 	}
+	e.moveTo(e.cur+1, false)
 }
 
 func (e *editor) home() {
-	e.cur = 0
+	e.moveTo(0, false)
 }
 
 func (e *editor) end() {
-	e.cur = len(e.clusters)
+	e.moveTo(len(e.clusters), false)
 }
 
-// killWord deletes back to the start of the word before the cursor.
+// killWord deletes back to the start of the word before the cursor, or
+// deletes the selection.
 func (e *editor) killWord() {
+	if e.deleteSelection() {
+		return
+	}
 	i := e.cur
 	for i > 0 && e.space(i-1) {
 		i--
@@ -119,6 +180,72 @@ func (e *editor) killWord() {
 	e.cur = i
 }
 
+// deleteWordRight deletes on to the end of the word after the cursor, or
+// deletes the selection.
+func (e *editor) deleteWordRight() {
+	if e.deleteSelection() {
+		return
+	}
+	e.clusters = slices.Delete(e.clusters, e.cur, e.wordRight())
+}
+
+// charClass sorts characters for word moves: a word is a run of one class
+// other than space.
+type charClass int
+
+const (
+	classSpace charClass = iota
+	classWord            // letters, digits and _
+	classPunct           // anything else: punctuation, symbols, emoji
+)
+
+// class is the class of character i.
+func (e *editor) class(i int) charClass {
+	r, _ := utf8.DecodeRuneInString(e.clusters[i])
+	switch {
+	case unicode.IsSpace(r):
+		return classSpace
+	case r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r):
+		return classWord
+	default:
+		return classPunct
+	}
+}
+
+// wordLeft is the start of the word before the cursor: back over spaces and
+// line breaks, then over one run of word characters or of punctuation.
+func (e *editor) wordLeft() int {
+	i := e.cur
+	for i > 0 && e.class(i-1) == classSpace {
+		i--
+	}
+	if i == 0 {
+		return 0
+	}
+	c := e.class(i - 1)
+	for i > 0 && e.class(i-1) == c {
+		i--
+	}
+	return i
+}
+
+// wordRight is the end of the word after the cursor: on over spaces and line
+// breaks, then over one run of word characters or of punctuation.
+func (e *editor) wordRight() int {
+	i, n := e.cur, len(e.clusters)
+	for i < n && e.class(i) == classSpace {
+		i++
+	}
+	if i == n {
+		return n
+	}
+	c := e.class(i)
+	for i < n && e.class(i) == c {
+		i++
+	}
+	return i
+}
+
 // space reports whether character i is white space.
 func (e *editor) space(i int) bool {
 	r, _ := utf8.DecodeRuneInString(e.clusters[i])
@@ -127,9 +254,12 @@ func (e *editor) space(i int) bool {
 
 // wrapped is the text broken into rows of at most w cells, at line breaks
 // and where a row is full, with the cursor's row and column. One cell is kept
-// free for the block cursor at the end of a full row.
+// free for the block cursor at the end of a full row. starts holds the index
+// of each row's first character in the text, so a row's characters can be
+// matched to the selection.
 type wrapped struct {
 	rows           [][]string
+	starts         []int
 	curRow, curCol int
 }
 
@@ -137,20 +267,22 @@ type wrapped struct {
 func (e *editor) wrap(w int) wrapped {
 	var out wrapped
 	var row []string
-	width := 0
+	width, start := 0, 0
+	breakRow := func(next int) {
+		out.rows, out.starts = append(out.rows, row), append(out.starts, start)
+		row, width, start = nil, 0, next
+	}
 	for i, c := range e.clusters {
 		if i == e.cur {
 			out.curRow, out.curCol = len(out.rows), len(row)
 		}
 		if c == "\n" {
-			out.rows = append(out.rows, row)
-			row, width = nil, 0
+			breakRow(i + 1)
 			continue
 		}
 		cw := ansi.StringWidth(c)
 		if width > 0 && width+cw > max(1, w-1) {
-			out.rows = append(out.rows, row)
-			row, width = nil, 0
+			breakRow(i)
 			if i == e.cur {
 				out.curRow, out.curCol = len(out.rows), 0
 			}
@@ -160,11 +292,10 @@ func (e *editor) wrap(w int) wrapped {
 	}
 	if e.atEnd() {
 		if width >= w {
-			out.rows = append(out.rows, row)
-			row = nil
+			breakRow(len(e.clusters))
 		}
 		out.curRow, out.curCol = len(out.rows), len(row)
 	}
-	out.rows = append(out.rows, row)
+	breakRow(0)
 	return out
 }
