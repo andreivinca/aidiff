@@ -139,6 +139,10 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
  > _                                         enter queue · / commands
 ```
 
+**Queued messages** above the composer are drawn in the muted grey of their `Queued` row, on the panel's background in vertical stripes a cell wide (the panel's shade and one barely lighter), with a blank row between two of them, so they read apart from the sent messages in the transcript.
+
+**Sticky message.** Once one of your messages scrolls above the top of the transcript, it stays pinned there, over the rows below it, while you read the turn that answers it; the next message of yours takes its place once it scrolls up too. It shows its text lines without the panel's padding, with a blank row under it. A message of more than four lines is compact while its end is out of view: its first three lines and a `…` row. Scrolling back up to it brings its end in under the `…`, one line per row as its lines really come into view, until the gap closes and the whole message shows; then it is back in its place. A pane too short to keep three transcript rows below it shows none.
+
 ### State and status
 - **Thread state** (backend):
   - `waiting for you` when there is a pending approval or question, or the latest run is waiting

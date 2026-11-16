@@ -20,7 +20,21 @@ const (
 // steps collapses to one summary line unless /work expanded it; mu must be
 // held.
 func (p *Pane) transcriptLocked(w int) []string {
+	lines, _ := p.transcriptPanelsLocked(w)
+	return lines
+}
+
+// panelSpan is where one of the user's messages sits in the transcript's
+// rows: its panel's first row and how many rows it takes.
+type panelSpan struct {
+	start, n int
+}
+
+// transcriptPanelsLocked is the transcript's rows and where the user's
+// messages sit in them, in order; mu must be held.
+func (p *Pane) transcriptPanelsLocked(w int) ([]string, []panelSpan) {
 	var out []string
+	var spans []panelSpan
 	var work []Step
 	for _, e := range p.conv.Entries {
 		if s, ok := e.(Step); ok {
@@ -36,9 +50,12 @@ func (p *Pane) transcriptLocked(w int) []string {
 		if len(out) > 0 {
 			out = append(out, "")
 		}
+		if _, user := e.(UserMessage); user {
+			spans = append(spans, panelSpan{start: len(out), n: len(lines)})
+		}
 		out = append(out, lines...)
 	}
-	return append(out, p.workRows(work, w)...)
+	return append(out, p.workRows(work, w)...), spans
 }
 
 // entryRowsLocked turns one entry other than a step into rows of at most w
@@ -186,6 +203,16 @@ func (s Step) suffix() string {
 // userPanel is the user's message as OpenCode draws it: a raised panel with
 // a rail in the agent's color, one blank row above and below the text.
 func userPanel(text string, w int, st styles) []string {
+	rows := panelLines(text, w)
+	for i, r := range rows {
+		rows[i] = st.rail.Render(rail) + st.panel.Render(panelText(r, w))
+	}
+	return rows
+}
+
+// panelLines is the user's message wrapped for a panel w cells wide, one
+// blank row above and below it, without styles.
+func panelLines(text string, w int) []string {
 	inner := max(1, w-4)
 	rows := []string{""}
 	for para := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
@@ -195,11 +222,13 @@ func userPanel(text string, w int, st styles) []string {
 		}
 		rows = append(rows, strings.Split(ansi.Wrap(para, inner, ""), "\n")...)
 	}
-	rows = append(rows, "")
-	for i, r := range rows {
-		rows[i] = st.rail.Render(rail) + st.panel.Render(fit("  "+r, max(1, w-1)))
-	}
-	return rows
+	return append(rows, "")
+}
+
+// panelText is one row of a panel's text, indented and filling the panel,
+// which takes the pane's width but the rail's cell.
+func panelText(r string, w int) string {
+	return fit("  "+r, max(1, w-1))
 }
 
 func todoRows(list TodoList, w int, st styles) []string {

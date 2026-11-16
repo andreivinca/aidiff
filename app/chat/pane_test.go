@@ -13,10 +13,10 @@ import (
 )
 
 func TestPane_RendersTranscript(t *testing.T) {
-	p, f := newTestPane(t, 50, 19, fixture())
+	p, f := newTestPane(t, 50, 24, fixture())
 	v := view(p)
 	lines := strings.Split(v, "\n")
-	require.Len(t, lines, 19)
+	require.Len(t, lines, 24)
 	for i, l := range lines {
 		assert.Equal(t, 50, ansi.StringWidth(l), "row %d keeps the width", i)
 	}

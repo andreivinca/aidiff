@@ -10,6 +10,8 @@ import (
 const (
 	textColor          = lipgloss.Color("#eeeeee")
 	composerBackground = lipgloss.Color("#202020")
+	panelBackground    = lipgloss.Color("#141414") // the user's messages
+	mutedColor         = lipgloss.Color("#808080") // hints, and a queued message, not sent yet
 )
 
 // styles are the pane's colors, OpenCode's default palette; plain when color
@@ -19,6 +21,9 @@ const (
 type styles struct {
 	text, muted, rail, panel, cursor, heading, code, warn, bad, bold lipgloss.Style
 	selected, atom                                                   lipgloss.Style
+	// queued and queuedStripe draw a queued message's panel: its text muted,
+	// on the panel's background and, every other cell, a shade lighter
+	queued, queuedStripe lipgloss.Style
 }
 
 // newStyles is the pane's palette, and the same palette on the composer's
@@ -29,20 +34,23 @@ func newStyles(color bool) (base, composer styles) {
 	if !color {
 		plain := lipgloss.NewStyle()
 		base = styles{text: plain, muted: plain, rail: plain, panel: plain, cursor: plain, heading: plain, code: plain,
-			warn: plain, bad: plain, bold: plain, selected: plain, atom: plain}
+			warn: plain, bad: plain, bold: plain, selected: plain, atom: plain, queued: plain, queuedStripe: plain}
 		return base, base
 	}
 	base = styles{
-		text:    lipgloss.NewStyle().Foreground(textColor),
-		muted:   lipgloss.NewStyle().Foreground(lipgloss.Color("#808080")),
-		rail:    lipgloss.NewStyle().Foreground(lipgloss.Color("#5c9cf5")),
-		panel:   lipgloss.NewStyle().Foreground(textColor).Background(lipgloss.Color("#141414")),
-		cursor:  lipgloss.NewStyle().Reverse(true),
-		heading: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9d7cd8")),
-		code:    lipgloss.NewStyle().Foreground(lipgloss.Color("#7fd88f")),
-		warn:    lipgloss.NewStyle().Foreground(lipgloss.Color("#f5a742")),
-		bad:     lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75")),
-		bold:    lipgloss.NewStyle().Bold(true),
+		text:  lipgloss.NewStyle().Foreground(textColor),
+		muted: lipgloss.NewStyle().Foreground(mutedColor),
+		rail:  lipgloss.NewStyle().Foreground(lipgloss.Color("#5c9cf5")),
+		panel: lipgloss.NewStyle().Foreground(textColor).Background(panelBackground),
+		// queued: the text muted, as its state row, on the panel and a barely lighter stripe
+		queued:       lipgloss.NewStyle().Foreground(mutedColor).Background(panelBackground),
+		queuedStripe: lipgloss.NewStyle().Foreground(mutedColor).Background(lipgloss.Color("#161616")),
+		cursor:       lipgloss.NewStyle().Reverse(true),
+		heading:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9d7cd8")),
+		code:         lipgloss.NewStyle().Foreground(lipgloss.Color("#7fd88f")),
+		warn:         lipgloss.NewStyle().Foreground(lipgloss.Color("#f5a742")),
+		bad:          lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75")),
+		bold:         lipgloss.NewStyle().Bold(true),
 		// selected: OpenCode's selection color, the same on any background
 		selected: lipgloss.NewStyle().Foreground(textColor).Background(lipgloss.Color("#3a4a6b")),
 		// atom: a chip in the heading's purple, apart from the selection's blue

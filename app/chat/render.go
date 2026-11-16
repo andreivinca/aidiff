@@ -76,16 +76,63 @@ func fitRows(rows []string, w, h int) []string {
 
 // transcriptWindowLocked is the part of the transcript that fills h rows at
 // the scroll asked for, with blank rows above a short transcript, and the
-// scroll it shows within the most there is. mu must be held.
+// scroll it shows within the most there is. The user's message the rows
+// below it answer stays on top once it scrolled out of view (see
+// stickyRows). mu must be held.
 func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, scroll, maxScroll int) {
-	lines := p.transcriptLocked(w)
+	lines, spans := p.transcriptPanelsLocked(w)
 	maxScroll = max(0, len(lines)-h)
 	scroll = min(p.scroll, maxScroll)
 	end := len(lines) - scroll
 	start := max(0, end-h)
 	rows = make([]string, h-(end-start), h)
 	rows = append(rows, lines[start:end]...)
+	if sticky := p.stickyLocked(lines, spans, start, w); len(sticky) > 0 && len(sticky)+minBelowSticky <= h {
+		copy(rows, sticky)
+	}
 	return rows, scroll, maxScroll
+}
+
+// Sticky message sizes: the lines a compact sticky message keeps from its
+// start, and the transcript rows left visible below it, or it is not shown.
+const (
+	stickyHead     = 3
+	minBelowSticky = 3
+)
+
+// stickyLocked is the user's message to keep on top of a window whose first
+// row is transcript row top: the last one whose panel starts above it. nil
+// when none does. mu must be held.
+func (p *Pane) stickyLocked(lines []string, spans []panelSpan, top, w int) []string {
+	for i := len(spans) - 1; i >= 0; i-- {
+		s := spans[i]
+		if s.start < top {
+			return stickyRows(lines[s.start:s.start+s.n], top-s.start, w, p.styles)
+		}
+	}
+	return nil
+}
+
+// stickyRows is a user's message kept on top of the transcript, its text
+// lines without the panel's padding and a blank row under them, off rows of
+// its panel scrolled above the window. A message of more than four lines is
+// compact while its end is out of view: its first three lines and a "…" row.
+// Scrolling back to it brings its end in under the "…", one line a row, as
+// its lines really come into view, until nothing is left out and the whole
+// message shows. The panel's first and last rows are padding.
+func stickyRows(panel []string, off, w int, st styles) []string {
+	n := len(panel)
+	text := panel[1 : n-1]
+	tail := max(0, n-1-off) // its lines in view below the window's top
+	out := make([]string, 0, len(text)+1)
+	if len(text) <= stickyHead+1 || stickyHead+1+tail >= len(text) {
+		out = append(out, text...)
+	} else {
+		out = append(out, text[:stickyHead]...)
+		out = append(out, st.rail.Render(rail)+st.panel.Render(fit("  …", max(1, w-1))))
+		out = append(out, text[len(text)-tail:]...)
+	}
+	return append(out, "") // apart from the transcript under it
 }
 
 // headerLocked is the title and the agent's state, with how far the

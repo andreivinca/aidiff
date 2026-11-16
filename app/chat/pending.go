@@ -3,8 +3,10 @@ package chat
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/clipperhouse/uax29/v2/graphemes"
 )
 
 // maxPendingRows bounds the queued messages above the composer.
@@ -67,7 +69,10 @@ func (p *Pane) pendingRowsLocked(queued []queuedMessage, w, budget int) []string
 		budget -= 2
 	}
 	var rows []string
-	for _, m := range queued {
+	for i, m := range queued {
+		if i > 0 {
+			rows = append(rows, "") // a blank row under each card's state and above the next card
+		}
 		rows = append(rows, p.pendingCard(m, w)...)
 	}
 	if len(rows) > budget {
@@ -91,10 +96,34 @@ func (p *Pane) pendingCard(m queuedMessage, w int) []string {
 	if m.sending {
 		label = "Sending…"
 	}
-	panel := userPanel(m.text, w, p.styles)
-	panel = panel[1 : len(panel)-1] // compact cards omit transcript padding
-	if len(panel) > 2 {
+	lines := panelLines(m.text, w)
+	lines = lines[1 : len(lines)-1] // compact cards omit transcript padding
+	var panel []string
+	for _, l := range lines[:min(len(lines), 2)] {
+		panel = append(panel, p.styles.rail.Render(rail)+stripedPanel(panelText(l, w), p.styles))
+	}
+	if len(lines) > 2 {
 		panel = append(panel[:1], p.styles.muted.Render(inset+"…"))
 	}
 	return append(panel, p.styles.muted.Render(inset+label))
+}
+
+// stripedPanel paints a queued message's panel row: its text dimmed, in
+// vertical stripes a cell wide, the panel's background then a shade lighter,
+// from the panel's first cell. A wide character takes the shade of the cell
+// it starts on.
+func stripedPanel(row string, st styles) string {
+	var b strings.Builder
+	col := 0
+	g := graphemes.FromString(row)
+	for g.Next() {
+		cell := g.Value()
+		style := st.queued
+		if col%2 == 1 {
+			style = st.queuedStripe
+		}
+		b.WriteString(style.Render(cell))
+		col += max(1, ansi.StringWidth(cell))
+	}
+	return b.String()
 }
