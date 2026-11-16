@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -143,11 +144,31 @@ type sshTunnel struct {
 	dir       string // 0700 directory holding the sockets
 	socket    string
 	control   string          // the ControlMaster socket
+	lifeline  io.Closer       // the watchdog's stdin; the tunnel ends when it closes
 	transport *http.Transport // carries HTTP through the socket
 	stderr    *strings.Builder
 	exited    chan struct{}
 	err       error // valid once exited is closed
 }
+
+// tunnelWatchdog runs the tunnel's ssh ("$@") and kills it once the shell's
+// stdin, a pipe only this process writes to, reaches EOF. The kernel closes
+// that pipe when this process ends for any reason, a crash or SIGKILL
+// included, so the tunnel and every terminal sharing its connection end with
+// it: ssh sits in its own process group, out of reach of the terminal's
+// signals, and would otherwise stay connected forever. A background job's
+// stdin is /dev/null, so the pipe reaches the watcher as fd 3, and ssh holds
+// no copy of it. The shell exits with ssh's status, and stop kills the group.
+const tunnelWatchdog = `exec 3<&0 </dev/null
+"$@" 3<&- &
+ssh=$!
+{ read -r _ <&3; kill "$ssh" 2>/dev/null; } &
+watch=$!
+exec 3<&-
+wait "$ssh"
+status=$?
+kill "$watch" 2>/dev/null
+exit "$status"`
 
 // startTunnel forwards a fresh local socket to remoteAddr through host. The
 // tunnel outlives the connect timeout, so it is not tied to a context.
@@ -166,11 +187,17 @@ func startTunnel(host, remoteAddr string) (*sshTunnel, error) {
 		"-o", "ClearAllForwardings=no", "-o", "ExitOnForwardFailure=yes", "-o", "StreamLocalBindUnlink=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no", "-o", "ControlPath="+control,
 		"-L", socket+":"+remoteAddr, "--", host)
-	cmd := exec.Command("ssh", args...)                   //nolint:gosec,noctx // host validated by validSSHHost; lives for the session
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // keep terminal signals away from it
+	cmd := exec.Command("/bin/sh", append([]string{"-c", tunnelWatchdog, "sh", "ssh"}, args...)...) //nolint:gosec,noctx // host validated by validSSHHost; lives for the session
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}                                           // keep terminal signals away from it
 	t := &sshTunnel{cmd: cmd, dir: dir, socket: socket, control: control, stderr: &strings.Builder{}, exited: make(chan struct{})}
 	t.transport = &http.Transport{DialContext: t.dialSocket}
 	cmd.Stderr = t.stderr
+	lifeline, err := cmd.StdinPipe()
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
+	}
+	t.lifeline = lifeline
 	if err := cmd.Start(); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
@@ -195,10 +222,12 @@ func (t *sshTunnel) controlPath() string {
 	}
 }
 
-// stop ends the tunnel, waits for ssh to exit and removes its socket.
+// stop ends the tunnel, waits for ssh to exit and removes its socket. The
+// watchdog shell leads ssh's process group, so killing the group ends both.
 func (t *sshTunnel) stop() {
 	t.transport.CloseIdleConnections()
-	_ = t.cmd.Process.Kill()
+	_ = t.lifeline.Close()
+	_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
 	<-t.exited
 	_ = os.RemoveAll(t.dir)
 }

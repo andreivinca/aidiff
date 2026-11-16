@@ -96,3 +96,36 @@ func TestSSHTunnel_WaitReportsSSHExiting(t *testing.T) {
 	err := tun.waitListening(context.Background(), time.Second)
 	require.ErrorContains(t, err, "ssh exited: Permission denied (publickey).")
 }
+
+func TestTunnelWatchdogEndsCommandOnStdinEOF(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", tunnelWatchdog, "sh", "sleep", "30")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	select {
+	case <-exited:
+		t.Fatal("watchdog exited while its stdin was open")
+	case <-time.After(200 * time.Millisecond):
+	}
+	require.NoError(t, stdin.Close())
+	select {
+	case err := <-exited:
+		require.Error(t, err, "the command was killed, not finished")
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchdog did not end the command after stdin EOF")
+	}
+}
+
+func TestTunnelWatchdogExitsWithCommandStatus(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", tunnelWatchdog, "sh", "sh", "-c", "exit 7")
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	defer stdin.Close()
+	err = cmd.Run()
+	exit, ok := errors.AsType[*exec.ExitError](err)
+	require.True(t, ok, "got %v", err)
+	assert.Equal(t, 7, exit.ExitCode())
+}

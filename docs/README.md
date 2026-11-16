@@ -2,7 +2,7 @@
 
 aidiff is a terminal workspace for reviewing what coding agents change. It is built on [revdiff](https://github.com/umputun/revdiff), which provides the review engine: diffs, annotations, themes and review keys. aidiff adds the workspace around it: terminal panes, a command palette, live refresh, folder browsing, and a [T3 Code](https://github.com/pingdotgg/t3code) client with an agent chat.
 
-**Scope.** These docs cover aidiff's own features and how it uses revdiff. They do not explain how revdiff works internally; for that, see the upstream project. The content was written from the code at tag `v0.0.10`.
+**Scope.** These docs cover aidiff's own features and how it uses revdiff. They do not explain how revdiff works internally; for that, see the upstream project. The content was written from the code at tag `v0.0.11`.
 
 | Document | Contents |
 |---|---|
