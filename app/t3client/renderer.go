@@ -15,6 +15,14 @@ const (
 	SourceBranchRange = "branch-range" // the branch against its base, uncommitted included
 )
 
+// DiffSource is what a review compares: a source kind and, for a branch
+// range, the ref it is compared against ("" lets the server pick the
+// default branch).
+type DiffSource struct {
+	Kind    string
+	BaseRef string
+}
+
 // diffPreview is the part of review.getDiffPreview's result aidiff reads.
 type diffPreview struct {
 	Sources []diffSource `json:"sources"`
@@ -129,9 +137,10 @@ type patchFetch struct {
 // one file's patch when the file is opened, so a large change is complete.
 // A server that lists no files gets the old treatment: its one patch.
 type Renderer struct {
-	conn   *Conn
-	cwd    string
-	source string
+	conn    *Conn
+	cwd     string
+	source  string
+	baseRef string // the branch range's base; "" for the server's default
 
 	mu        sync.Mutex
 	stats     map[string]diffFileStat // the latest listing, by path
@@ -143,7 +152,20 @@ type Renderer struct {
 // NewRenderer reviews cwd on the T3 host. source is SourceWorkingTree or
 // SourceBranchRange.
 func NewRenderer(c *Conn, cwd, source string) *Renderer {
-	return &Renderer{conn: c, cwd: cwd, source: source}
+	return NewSourceRenderer(c, cwd, DiffSource{Kind: source})
+}
+
+// NewSourceRenderer reviews cwd on the T3 host as src says.
+func NewSourceRenderer(c *Conn, cwd string, src DiffSource) *Renderer {
+	return &Renderer{conn: c, cwd: cwd, source: src.Kind, baseRef: src.BaseRef}
+}
+
+// withBase adds the branch range's base to a getDiffPreview payload.
+func (r *Renderer) withBase(payload map[string]any) map[string]any {
+	if r.baseRef != "" {
+		payload["baseRef"] = r.baseRef
+	}
+	return payload
 }
 
 // ChangedFiles fetches the listing and forgets the patches of the previous
@@ -153,7 +175,7 @@ func (r *Renderer) ChangedFiles(_ string, _ bool) ([]diff.FileEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	var res diffPreview
-	payload := map[string]any{"cwd": r.cwd, "sourceKind": r.source, "metadataOnly": true}
+	payload := r.withBase(map[string]any{"cwd": r.cwd, "sourceKind": r.source, "metadataOnly": true})
 	if err := r.conn.call(ctx, "review.getDiffPreview", payload, &res); err != nil {
 		return nil, err
 	}
@@ -245,7 +267,7 @@ func (r *Renderer) fetchPatch(stat diffFileStat) (p patch, truncated bool, err e
 		"sourceKind": r.source,
 		"file":       map[string]any{"path": stat.Path, "previousPath": stat.PreviousPath, "sourceKind": r.source},
 	}
-	if err = r.conn.call(ctx, "review.getDiffPreview", payload, &res); err != nil {
+	if err = r.conn.call(ctx, "review.getDiffPreview", r.withBase(payload), &res); err != nil {
 		return patch{}, false, fmt.Errorf("T3 diff for %s: %w", stat.Path, err)
 	}
 	src, err := res.source(r.source)

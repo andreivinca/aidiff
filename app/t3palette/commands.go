@@ -1,6 +1,7 @@
 package t3palette
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"time"
@@ -38,6 +39,9 @@ func (t *Palette) Commands() []splitview.Command {
 		{Name: "T3: Projects…", Detail: server, Run: t.projectsCmd},
 	}
 	cmds = append(cmds, t.threadCommands(v, scope)...)
+	if v.onScreen != nil {
+		cmds = append(cmds, splitview.Command{Name: "T3: Diff…", Detail: cmp.Or(v.onScreen.sourceLabel(), t.cfg.DiffLabel), Run: t.diffCmd})
+	}
 	if th := v.onScreen.thread(); th != nil {
 		cmds = append(cmds, splitview.Command{Name: "T3: Send annotations to agent", Detail: threadTitle(*th), Run: t.sendAnnotations})
 	}

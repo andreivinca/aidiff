@@ -78,7 +78,11 @@ func setupT3Review(opts options) (*t3palette.Review, error) {
 // t3Source is where a T3 review's diff comes from: the server, which reads
 // it in the target's folder.
 func t3Source(opts options, r *t3palette.Review) sourceSetup {
-	renderer := t3client.NewRenderer(r.Session.Conn(), r.Target.Cwd, opts.t3SourceKind())
+	src := r.Source
+	if src.Kind == "" {
+		src = t3client.DiffSource{Kind: opts.t3SourceKind()}
+	}
+	renderer := t3client.NewSourceRenderer(r.Session.Conn(), r.Target.Cwd, src)
 	return sourceSetup{vcsSetup: vcsSetup{renderer: renderer}, t3: r}
 }
 

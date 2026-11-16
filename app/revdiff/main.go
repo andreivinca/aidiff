@@ -178,7 +178,7 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 
-	p := tea.NewProgram(newSplit(opts, model, t3p), append(programOptions, splitProgramOptions()...)...)
+	p := tea.NewProgram(newSplit(opts, model, t3p, newLocalDiff(deps, src, reviewDescription)), append(programOptions, splitProgramOptions()...)...)
 	t3p.Start(p, src.watch(opts, p))
 	guard := &shutdownGuard{deadline: deadline} // a signal bounds the exit even when the quit never lands
 	stop := guard.watch(forceQuitter{p})

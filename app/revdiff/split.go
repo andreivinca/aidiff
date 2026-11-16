@@ -17,17 +17,29 @@ const paletteKey = "ctrl+p"
 // newSplit wraps the review in the split view. It always does: ctrl+p can
 // open terminals even when none start open, and the T3 commands live there
 // too.
-func newSplit(opts options, review tea.Model, t3p *t3palette.Palette) splitview.Model {
+func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
 		OpenOnStart:  opts.Terminal,
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
-		Commands:     t3p.Commands,
+		Commands:     paletteCommands(t3p, local),
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
 		Keys:         splitview.Keys{Palette: paletteKey},
 	})
+}
+
+// paletteCommands are the palette's own entries: Diff… while the run's local
+// review is on screen, then the T3 commands.
+func paletteCommands(t3p *t3palette.Palette, local *localDiff) func() []splitview.Command {
+	return func() []splitview.Command {
+		cmds := t3p.Commands()
+		if local == nil || t3p.OnScreen() != nil {
+			return cmds
+		}
+		return append([]splitview.Command{local.command()}, cmds...)
+	}
 }
 
 // splitProgramOptions are the program options the split view needs.

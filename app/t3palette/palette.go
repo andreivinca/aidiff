@@ -28,9 +28,12 @@ type Config struct {
 	// that review, nil for the run's own local one. It runs in the
 	// background.
 	SaveHistory func(r *Review, annotations string, files []string)
-	NoChat      bool        // never open a chat pane along with a thread
-	NoWatch     bool        // no live refresh of the thread on screen
-	Chat        chat.Config // how chat panes look and what they reach on this machine
+	NoChat      bool // never open a chat pane along with a thread
+	NoWatch     bool // no live refresh of the thread on screen
+	// DiffLabel names what a review compares by default (the run's
+	// --t3-source), for a review T3: Diff… did not change.
+	DiffLabel string
+	Chat      chat.Config // how chat panes look and what they reach on this machine
 }
 
 // Program receives what the palette sends outside a command: the refreshes
@@ -67,6 +70,7 @@ type Palette struct {
 	shellAt    time.Time         // when shell was fetched
 	refreshing Session           // the session a background fetch of shell runs for
 	project    *t3client.Project // the live server's project new threads start in; nil until chosen
+	diff       diffChoice        // what T3: Diff… chose for the reviews of its folder
 }
 
 // New builds the palette. start is the T3 review the run opens with, nil for

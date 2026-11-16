@@ -68,7 +68,8 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 |---|---|
 | `orchestration.subscribeShell` | Projects and threads snapshot (`FetchShell`), and run start/finish notifications (`WatchThread`) |
 | `orchestration.subscribeThread` | The full transcript stream for the chat pane |
-| `review.getDiffPreview` | File list (`metadataOnly`) and per-file diffs. `sourceKind` is `branch-range` or `working-tree`. |
+| `review.getDiffPreview` | File list (`metadataOnly`) and per-file diffs. `sourceKind` is `branch-range` or `working-tree`; a branch range takes the `baseRef` **T3: Diff…** chose, else the server compares with the default branch. |
+| `vcs.listRefs` | The repository's branches, local and remote, for **T3: Diff…** (`refKind: all`, up to 200) |
 | `orchestration.launchThread` | New thread, with the caller's `runtimeMode` (the palette sends `full-access`), `interactionMode: default` and workspace root. |
 | `orchestration.dispatchCommand` | Every thread command (below), each with a UUIDv4 `commandId` |
 | `server.getConfig` | Provider catalog: models, capabilities, slash commands, default model |
@@ -111,6 +112,14 @@ Switching thread from the palette:
 **T3: New thread…** gets the default model, launches the thread, and waits for it to appear, polling up to 5 times, 300 ms apart. **T3: Projects…** → **New project…** browses the server filesystem (`..`, typed paths, "Use this folder") and creates a project named after the folder.
 
 **T3: Send annotations to agent** sends the formatted annotations as a message that starts with `Review annotations from aidiff:`.
+
+**T3: Diff…** changes what the review on screen compares; its detail names the current choice. It offers:
+- **Uncommitted changes**: the working tree.
+- **Unpushed changes**: the branch against its upstream (`origin/<branch>`), uncommitted included. Listed only when the branch has an upstream.
+- **Branch changes**: the branch against the default branch, uncommitted included.
+- **Against a branch…**: every branch but the current one, local and remote; a typed ref (a tag, a commit) is taken too.
+
+The review is rebuilt in place with its annotations, and the info popup names the diff. The choice applies to the reviews of that folder, so threads in other folders compare what `--t3-source` says. A T3 project whose folder is no git repository (`vcs.listRefs` answers `isRepo: false`) has nothing to choose; the command says so.
 
 ## 5. Chat pane
 

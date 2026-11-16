@@ -269,7 +269,7 @@ func (t *Palette) openMsg(s Session, sh t3client.Shell, threadID string) tea.Msg
 	if err != nil {
 		return t3Error("open thread", err)
 	}
-	r := &Review{Session: s, Target: target}
+	r := t.newReview(s, target)
 	show := t.showMsg(r, annotation.NewStore(), "open thread")
 	if _, ok := show.(splitview.ReplaceInnerMsg); !ok {
 		return show

@@ -53,6 +53,7 @@ type Server interface {
 	DefaultModel(ctx context.Context, p t3client.Project) (t3client.ModelSelection, error)
 	LaunchThread(ctx context.Context, req t3client.LaunchRequest) (string, error)
 	SendMessage(ctx context.Context, threadID, text string) error
+	ListRefs(ctx context.Context, cwd string) ([]t3client.Ref, error)
 }
 
 // Connect reaches the server named by spec, authenticating as o says (see

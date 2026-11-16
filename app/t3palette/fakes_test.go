@@ -97,6 +97,8 @@ type fakeServer struct {
 	sent     []string // the messages sent
 	launches []t3client.LaunchRequest
 	launchAs string // the id a launched thread gets; empty refuses launches
+	refs     []t3client.Ref
+	refsErr  error
 }
 
 func (f *fakeServer) FetchShell(context.Context) (t3client.Shell, error) {
@@ -134,6 +136,12 @@ func (f *fakeServer) LaunchThread(_ context.Context, req t3client.LaunchRequest)
 	f.launches = append(f.launches, req)
 	f.shell.Threads = append(f.shell.Threads, t3client.Thread{ID: f.launchAs, ProjectID: req.ProjectID, Title: "New thread"})
 	return f.launchAs, nil
+}
+
+func (f *fakeServer) ListRefs(context.Context, string) ([]t3client.Ref, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refs, f.refsErr
 }
 
 func (f *fakeServer) SendMessage(_ context.Context, _, text string) error {

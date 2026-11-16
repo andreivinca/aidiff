@@ -61,6 +61,8 @@ From our side, revdiff is three things:
 
 Because `t3client.Renderer` implements the same interface, a T3 thread opens in the review exactly like a local repository.
 
+Changing what a review compares never touches the model either: it builds a new one. **Diff…** (`app/revdiff/local_diff.go`) rebuilds the run's git review through `newModel` with other refs (a merge base, `HEAD`, or `--staged`), asking git through `localGit` for the branches, the upstream and the default branch; **T3: Diff…** (`app/t3palette/diff.go`) rebuilds a T3 review with another `t3client.DiffSource`. Both hand the old model's annotation store to the new one and swap it in with `ReplaceInnerMsg`.
+
 ## 4. Startup sequence
 
 `app/revdiff/main.go`, `run()`:

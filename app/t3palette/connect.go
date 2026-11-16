@@ -130,5 +130,5 @@ func (t *Palette) reopen(s Session, sh t3client.Shell, target t3client.Target, s
 			return t3Error("reopen thread", err)
 		}
 	}
-	return t.showMsg(&Review{Session: s, Target: target}, store, "reopen thread")
+	return t.showMsg(t.newReview(s, target), store, "reopen thread")
 }

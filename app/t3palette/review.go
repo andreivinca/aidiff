@@ -15,6 +15,11 @@ import (
 type Review struct {
 	Session Session
 	Target  t3client.Target
+	// Source is what the review compares; the zero source is the run's
+	// --t3-source.
+	Source t3client.DiffSource
+	// SourceLabel names Source for the user; "" for the zero source.
+	SourceLabel string
 }
 
 // Open connects with o to the server named by spec and resolves the review
@@ -42,6 +47,9 @@ func (r *Review) Description(user string) string {
 	d := fmt.Sprintf("**T3 Code**: %s\n\n%#q on %s", r.Target.Label(), r.Target.Cwd, r.Session.Label())
 	if r.Target.Thread != nil {
 		d += fmt.Sprintf("\n\nthread %#q", r.Target.Thread.ID)
+	}
+	if r.SourceLabel != "" {
+		d += "\n\ndiff: " + r.SourceLabel
 	}
 	if user != "" {
 		d += "\n\n" + user

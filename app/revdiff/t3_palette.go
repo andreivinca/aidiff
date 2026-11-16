@@ -26,9 +26,10 @@ func newT3Palette(deps reviewDeps, description string, src sourceSetup) *t3palet
 			h.annotations, h.files = annotations, files
 			saveHistory(h)
 		},
-		NoChat:  opts.NoChat,
-		NoWatch: opts.NoWatch,
-		Chat:    chatConfig(opts),
+		NoChat:    opts.NoChat,
+		NoWatch:   opts.NoWatch,
+		DiffLabel: opts.T3Source,
+		Chat:      chatConfig(opts),
 	}, src.t3)
 }
 

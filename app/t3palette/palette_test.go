@@ -86,11 +86,11 @@ func TestPalette_CommandsFollowState(t *testing.T) {
 	swap(h.openThread(t, box, loginID), annotatedModel())
 	cmds := h.p.Commands()
 	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: ▸ Fix login", "T3: Older work",
-		"T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
-		commandNames(cmds), "the thread on screen is marked and can take the annotations")
+		"T3: Diff…", "T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
+		commandNames(cmds), "the thread on screen is marked, can change its diff and take the annotations")
 	assert.Equal(t, "Sabra2", cmds[0].Detail, "new threads start in the reviewed project")
 	assert.Equal(t, "Sabra2 · idle · main", cmds[2].Detail)
-	assert.Equal(t, "Fix login", cmds[4].Detail)
+	assert.Equal(t, "Fix login", cmds[5].Detail)
 
 	other := t3client.Project{ID: "p2", Title: "Other"}
 	h.p.selectProject(box, other)

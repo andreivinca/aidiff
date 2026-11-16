@@ -99,6 +99,8 @@ ctrl+p opens it from anywhere.
 | Open Terminal | always |
 | T3: Connect to server… | not connected |
 | T3: New thread…, T3: Projects… | connected |
+| Diff… | the run's own review of a git repository is on screen |
+| T3: Diff… | a T3 review is on screen |
 | T3: Send annotations to agent | a thread is open |
 | T3: Reconnect, T3: Connect to another server… | connected |
 | Quit | always |
@@ -114,6 +116,8 @@ ctrl+p opens it from anywhere.
 
 - **Connect:** use `--t3 local | ssh://host | https://…`, or the palette at any time. Login is automatic where possible; otherwise pair with `--t3-pair`.
 - **Review a thread:** shows the thread's uncommitted changes (default) or its branch changes against the base (`--t3-source branch`). The diff refreshes when the agent finishes a step. Switching threads from the palette saves the current review's annotations to history.
+- **Change the diff (git folder):** **Diff…** compares the uncommitted changes (staged and unstaged), only the unstaged or only the staged ones, the unpushed ones (against the branch's upstream), the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref). A branch is compared from the commit it shares with HEAD, so the review shows what this branch changed. Annotations are kept. Not offered for stdin, a compare pair, a plain folder or `--all-files`.
+- **Change the diff (T3):** **T3: Diff…** compares the uncommitted changes, the unpushed ones, the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref); annotations are kept.
 - **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
