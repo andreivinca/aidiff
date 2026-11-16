@@ -8,7 +8,7 @@
 // none left the wrapped model gets the full width again. The palette key
 // (Config.Keys) opens a command palette with "Open Terminal" and friends.
 //
-// Focus moves with a mouse click or by cycling with the focus key. While a
+// Focus moves with a mouse click or with the directional focus keys. While a
 // terminal has focus every key goes to it, except the global keys.
 //
 // Run the program with QuitGuard, so that no quit, whatever command issues it,
@@ -162,7 +162,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case m.cfg.Keys.Focus:
-		return m.cycleFocus(), nil
+		return m.moveFocus(1), nil
+	case m.cfg.Keys.FocusLeft:
+		return m.moveFocus(-1), nil
 	case m.cfg.Keys.Quit:
 		return m.askQuit()
 	case m.cfg.Keys.Palette:
@@ -175,14 +177,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// cycleFocus moves focus to the next pane, and from the last back to the
-// wrapped model.
-func (m Model) cycleFocus() Model {
-	if m.focus+1 < len(m.terms) {
-		m.focus++
-	} else {
-		m.focus = focusDiff
-	}
+// moveFocus moves between the review and panes, stopping at either end.
+func (m Model) moveFocus(direction int) Model {
+	m.focus = max(focusDiff, min(m.focus+direction, len(m.terms)-1))
 	return m
 }
 

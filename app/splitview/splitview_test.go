@@ -291,17 +291,33 @@ func TestSplit_OpenTwiceSideBySide(t *testing.T) {
 	assert.Equal(t, 40, right.w)
 }
 
-func TestSplit_FocusCycles(t *testing.T) {
+func TestSplit_DirectionalFocus(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	hs.runPalette("open")
 	require.Len(t, hs.m.terms, 2)
-
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	assert.Equal(t, focusDiff, hs.m.focus, "from the last terminal back to the diff")
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	assert.Equal(t, 0, hs.m.focus)
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
-	assert.Equal(t, 1, hs.m.focus)
+	for _, step := range []struct {
+		key  rune
+		want int
+	}{
+		{']', 1},
+		{'[', 0},
+		{'[', focusDiff},
+		{'[', focusDiff},
+		{']', 0},
+		{']', 1},
+		{']', 1},
+	} {
+		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{step.key}, Alt: true})
+		assert.Equal(t, step.want, hs.m.focus)
+	}
+	assert.Empty(t, hs.term(0).text)
+	assert.Empty(t, hs.term(1).text)
+	hs.closeFocused()
+	hs.closeFocused()
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
+	assert.Equal(t, focusDiff, hs.m.focus)
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	assert.Equal(t, focusDiff, hs.m.focus)
 }
 
 func TestSplit_FocusRoutesKeys(t *testing.T) {
@@ -314,7 +330,7 @@ func TestSplit_FocusRoutesKeys(t *testing.T) {
 	assert.Equal(t, []string{"j", "\x03"}, hs.term(0).text)
 	assert.Len(t, *hs.inner, before, "keys meant for the terminal never reach the diff")
 
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
 	assert.Equal(t, focusDiff, hs.m.focus)
 	hs.key("j")
 	assert.Len(t, hs.term(0).text, 2, "diff has focus now")
@@ -457,7 +473,7 @@ func TestSplit_MouseFocusAndRouting(t *testing.T) {
 
 func TestSplit_DragDividerResizes(t *testing.T) {
 	hs := newHarness(t, 100, 30)
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}) // focus the diff
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}) // focus the diff
 	require.Equal(t, 60, hs.m.leftW)
 	innerBefore := len(*hs.inner)
 
@@ -542,7 +558,7 @@ func TestSplit_DragSeparatorBetweenTerminals(t *testing.T) {
 
 func TestSplit_QuitAsksWhileTerminalRuns(t *testing.T) {
 	hs := newHarness(t, 100, 30)
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}) // diff focus
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}) // diff focus
 
 	cmd := hs.key("q")
 	require.NotNil(t, cmd)
@@ -618,7 +634,7 @@ func TestSplit_CtrlQFromEitherPane(t *testing.T) {
 	for _, termFocused := range []bool{false, true} {
 		hs := newHarness(t, 100, 30)
 		if !termFocused {
-			hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+			hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
 		}
 		before := len(*hs.inner)
 
@@ -792,7 +808,7 @@ func TestSplit_ConfiguredKeys(t *testing.T) {
 	hs := newSplit(func(hs *harness) Config {
 		cfg := hs.config()
 		cfg.OpenOnStart = true
-		cfg.Keys = Keys{Focus: "alt+o", Quit: "alt+q", Palette: "alt+p"}
+		cfg.Keys = Keys{FocusLeft: "alt+o", Quit: "alt+q", Palette: "alt+p"}
 		return cfg
 	})
 	hs.send(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -808,7 +824,7 @@ func TestSplit_ConfiguredKeys(t *testing.T) {
 	assert.False(t, hs.m.palette.open, "and closes it")
 
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o"), Alt: true})
-	assert.Equal(t, focusDiff, hs.m.focus, "the configured focus key cycles")
+	assert.Equal(t, focusDiff, hs.m.focus, "the configured focus key moves left")
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q"), Alt: true})
 	assert.True(t, hs.m.quitDialog, "the configured quit key asks")
 }
@@ -816,7 +832,7 @@ func TestSplit_ConfiguredKeys(t *testing.T) {
 func TestSplit_CursorOnlyWhenTerminalFocused(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	assert.Contains(t, hs.m.columnView(hs.m.leftBlock()), "C")
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
 	assert.NotContains(t, hs.m.columnView(hs.m.leftBlock()), "C")
 }
 
@@ -886,4 +902,19 @@ func TestSplit_ZeroSizeStillReachesInner(t *testing.T) {
 	_ = model
 	require.Len(t, got, 1, "a 0x0 terminal is still a size: the diff must leave its loading state")
 	assert.Equal(t, tea.WindowSizeMsg{}, got[0])
+}
+
+func TestSplit_EscapeAndCtrlBracketsDoNotNavigate(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket})
+	assert.Equal(t, 0, hs.m.focus)
+	assert.Equal(t, []string{"\x1b", "\x1d"}, hs.term(0).text)
+
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	before := len(*hs.inner)
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, focusDiff, hs.m.focus)
+	assert.Len(t, *hs.inner, before+1)
+	assert.Equal(t, tea.KeyMsg{Type: tea.KeyEsc}, (*hs.inner)[before])
 }

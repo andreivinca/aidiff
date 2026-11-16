@@ -34,6 +34,11 @@ func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
 	popup := p.suggestionRowsLocked(w, min(maxSuggestionRows, room))
 	room -= len(popup)
 	rows := append([]string(nil), popup...)
+	// Separate the input panel from the status and shortcut rows when space allows.
+	spaced := room >= 4
+	if spaced {
+		rows = append(rows, "")
+	}
 	if room >= 2 {
 		rows = append(rows, p.composerRowLocked("", w, showCursor))
 	}
@@ -45,6 +50,9 @@ func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
 	}
 	if meta {
 		rows = append(rows, p.composerRowLocked(p.composerSettingsLocked(inner), w, showCursor))
+	}
+	if spaced {
+		rows = append(rows, "")
 	}
 	if hints {
 		rows = append(rows, p.composerHintsLocked(w, len(popup) > 0))

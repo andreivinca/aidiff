@@ -116,6 +116,10 @@ func legacyKey(k uv.KeyPressEvent) (tea.KeyMsg, bool) {
 // handleModifiedKey routes a decoded modified key: to the focused pane when
 // it takes modified keys, otherwise through the split as its legacy key.
 func (m Model) handleModifiedKey(k uv.KeyPressEvent, raw tea.Msg) (tea.Model, tea.Cmd) {
+	// Explicit bracket reports must reach global navigation before pane handlers.
+	if k.Mod == uv.ModAlt && (k.Code == '[' || k.Code == ']') {
+		return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{k.Code}, Alt: true})
+	}
 	if m.focus != focusDiff && !m.palette.open && !m.quitDialog {
 		if r, ok := m.terms[m.focus].(modifiedKeyReceiver); ok && r.SendModifiedKey(k) {
 			return m, nil

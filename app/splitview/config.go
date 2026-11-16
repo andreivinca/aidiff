@@ -37,9 +37,10 @@ type Config struct {
 // Keys are the keys the split handles before anything reaches the wrapped
 // model or a pane, in Bubble Tea's key notation.
 type Keys struct {
-	Focus   string // cycle focus: wrapped model → pane 1 → … → wrapped model; ctrl+] by default
-	Quit    string // quit, asking first; ctrl+q by default
-	Palette string // open or close the command palette; ctrl+p by default
+	Focus     string // move focus right without wrapping; alt+] by default
+	FocusLeft string // move focus left without wrapping; alt+[ by default
+	Quit      string // quit, asking first; ctrl+q by default
+	Palette   string // open or close the command palette; ctrl+p by default
 }
 
 // QuitText is what the quit dialog says.
@@ -70,7 +71,10 @@ func (c Config) withDefaults() Config {
 
 func (k Keys) withDefaults() Keys {
 	if k.Focus == "" {
-		k.Focus = "ctrl+]"
+		k.Focus = "alt+]"
+	}
+	if k.FocusLeft == "" {
+		k.FocusLeft = "alt+["
 	}
 	if k.Quit == "" {
 		k.Quit = "ctrl+q"

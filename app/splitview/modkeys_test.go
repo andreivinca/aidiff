@@ -63,3 +63,19 @@ func TestReportModifiedKeys(t *testing.T) {
 	restore()
 	assert.Equal(t, "\x1b[>4;1m\x1b[>4m", out.String(), "and reset to the terminal's default")
 }
+
+func TestModifiedBracketsNavigate(t *testing.T) {
+	for _, seq := range []string{"\x1b[91;3u", "\x1b[27;3;91~"} {
+		hs := newHarness(t, 100, 30)
+		k, ok := parseModifiedKey([]byte(seq))
+		assert.True(t, ok)
+		model, _ := hs.m.handleModifiedKey(k, nil)
+		hs.m = model.(Model)
+		assert.Equal(t, focusDiff, hs.m.focus)
+		k.Code = ']'
+		model, _ = hs.m.handleModifiedKey(k, nil)
+		hs.m = model.(Model)
+		assert.Equal(t, 0, hs.m.focus)
+		assert.Empty(t, hs.term(0).text)
+	}
+}

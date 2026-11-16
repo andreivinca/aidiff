@@ -76,7 +76,7 @@ Behavior:
 - Together the panes take `--terminal-width` percent of the width (default 45, range 10–90). Space is split evenly when a pane opens.
 - A pane is refused, with a message, if any pane would end up narrower than 10 columns. The review always keeps at least 20.
 - Every separator can be dragged with the mouse. It shows `↔` on its middle row and turns blue while dragging.
-- A click focuses the pane under the pointer, and ctrl+] cycles focus: review → pane 1 → pane 2 → … → review.
+- A click focuses the pane under the pointer, and alt+[ / alt+] move focus left / right without wrapping: review ↔ pane 1 ↔ pane 2.
 - When a pane's program exits, the pane closes. When the last pane closes, the review gets the full width back.
 - The status bar shows the machine name, plus `T3` when the review is a T3 thread.
 
@@ -87,7 +87,7 @@ Behavior:
 - **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root. A T3 server reached by URL on another machine has folders that are not this machine's, so the pane starts in aidiff's own directory.
 - **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` on the T3 session's own SSH connection, without setting up the host's port forwards a second time, and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.
 - It is a full xterm-256color terminal: colors, application cursor keys, bracketed paste, and mouse support for programs that ask for it.
-- While it has focus, every key except ctrl+], ctrl+p and ctrl+q goes to the terminal.
+- While it has focus, every key except alt+[, alt+], ctrl+p and ctrl+q goes to the terminal.
 - Scrollback is kept but cannot be scrolled yet (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 
 ## 7. Command palette
@@ -131,7 +131,7 @@ These are handled by aidiff before any pane sees them, and they can't be remappe
 | Key | Action |
 |---|---|
 | ctrl+p | command palette |
-| ctrl+] | cycle focus between the review and the panes |
+| alt+[ / alt+] | focus the panel to the left / right, stopping at either end |
 | ctrl+q | quit |
 
 **Safe quit:**

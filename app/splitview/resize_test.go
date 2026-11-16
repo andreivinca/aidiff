@@ -45,7 +45,7 @@ func TestSplit_DragCommitsRelease(t *testing.T) {
 
 func TestSplit_OnlyTheGripGrabs(t *testing.T) {
 	hs := newHarness(t, 100, 20)
-	hs.send(tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}) // focus the review
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}) // focus the review
 
 	hs.send(tea.MouseMsg{X: 60, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	assert.False(t, hs.m.dragging, "the terminal's first column is the terminal's")

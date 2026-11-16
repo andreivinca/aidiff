@@ -16,7 +16,7 @@ func asking(id string, qs ...Question) Conversation {
 }
 
 func TestPane_AnswersQuestions(t *testing.T) {
-	p, f := newTestPane(t, 80, 16, fixture())
+	p, f := newTestPane(t, 80, 18, fixture())
 	p.SendText("/1\r")
 	assert.Contains(t, view(p), "the agent is not asking a question")
 	p.SendText("\x15")
@@ -77,7 +77,7 @@ func TestPane_AnswersQuestions(t *testing.T) {
 }
 
 func TestPane_FailedAnswersAreKept(t *testing.T) {
-	p, f := newTestPane(t, 80, 16, asking("req-9",
+	p, f := newTestPane(t, 80, 18, asking("req-9",
 		Question{ID: "first", Text: "First?", Options: []Option{{Label: "A", Value: "A"}, {Label: "B", Value: "B"}}},
 		Question{ID: "second", Text: "Second?", Options: []Option{{Label: "C", Value: "C"}, {Label: "D", Value: "D"}}},
 	))
@@ -98,7 +98,7 @@ func TestPane_FailedAnswersAreKept(t *testing.T) {
 }
 
 func TestPane_AnswerTurnedDownIsTakenBack(t *testing.T) {
-	p, f := newTestPane(t, 80, 16, asking("req-9", Question{ID: "only", Text: "Only?", Options: []Option{{Label: "A", Value: "A"}}}))
+	p, f := newTestPane(t, 80, 18, asking("req-9", Question{ID: "only", Text: "Only?", Options: []Option{{Label: "A", Value: "A"}}}))
 	release := make(chan struct{})
 	f.set(nil, release)
 	p.SendText("hello\r")

@@ -57,7 +57,7 @@ aidiff handles these keys itself, before revdiff's keymap, so the keybindings fi
 | Key | Action |
 |---|---|
 | ctrl+p | command palette |
-| ctrl+] | cycle focus between the review and the panes |
+| alt+[ / alt+] | focus the panel to the left / right, stopping at either end |
 | ctrl+q | quit (asks first when panes are open) |
 
 The review's own keys can be remapped in `~/.config/revdiff/keybindings` (`map <key> <action>`, `unmap <key>`). Run `aidiff --dump-keys` to see the current bindings.

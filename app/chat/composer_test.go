@@ -116,6 +116,9 @@ func TestPane_ComposerBackgroundSurvivesNestedStyles(t *testing.T) {
 		_, err := emu.WriteString(strings.Join(rows, "\r\n"))
 		require.NoError(t, err)
 		for y, row := range rows[:len(rows)-1] { // the shortcut row uses the terminal background
+			if row == "" { // outer spacing also uses the terminal background
+				continue
+			}
 			start := 0
 			if strings.HasPrefix(ansi.Strip(row), "│") {
 				start = 2 // the accent rail and its gap sit outside the panel
