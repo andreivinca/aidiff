@@ -94,8 +94,11 @@ func TestPane_OnAThread(t *testing.T) {
 	drain(p)
 	assert.Equal(t, map[string]any{"areas": []string{"API", "Docs"}}, send(t, p, f, "/answer 1,3")["answers"])
 
-	assert.Equal(t, t3client.ModelSelection{InstanceID: "codex", Model: "gpt-5"}, send(t, p, f, "/model gpt")["modelSelection"])
-	assert.Equal(t, "/compact", send(t, p, f, "/compact")["text"], "the provider's command goes to the agent")
+	p.SendText("/model gpt\r")
+	assert.Contains(t, view(p), "/model gpt-5", "while the agent works the model change waits its turn in the queue")
+	compact := send(t, p, f, "/compact")
+	assert.Equal(t, "/compact", compact["text"], "the provider's command goes to the agent")
+	assert.Equal(t, t3client.ModelSelection{InstanceID: "codex", Model: "gpt-5"}, compact["modelSelection"], "with the model chosen")
 	assert.Equal(t, "plan", send(t, p, f, "/plan")["interactionMode"])
 	p.SendText("/stop\r")
 	assert.Contains(t, view(p), "Stop agent?", "the running turn can be stopped")

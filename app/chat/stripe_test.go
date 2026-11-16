@@ -2,6 +2,7 @@ package chat
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,4 +68,16 @@ func TestPendingRows_BlankBetweenCards(t *testing.T) {
 	}
 	assert.Equal(t, []string{"", "first", "Queued", "", "second", "Queued", ""}, got,
 		"a blank row above each message and below each state, one between two cards")
+}
+
+func TestPane_BlankRowAboveTheStatus(t *testing.T) {
+	conv := fixture()
+	conv.State, conv.Running = AgentIdle, nil
+	p, _ := newTestPane(t, 60, 20, conv)
+	rows := strings.Split(view(p), "\n")
+	i := slices.IndexFunc(rows, func(r string) bool { return strings.TrimSpace(r) == "Idle" })
+	if assert.Positive(t, i) {
+		assert.Empty(t, strings.TrimSpace(rows[i-1]), "a blank row between the transcript and the status")
+		assert.NotEmpty(t, strings.TrimSpace(rows[i-2]), "right under the transcript's last line")
+	}
 }

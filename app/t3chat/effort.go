@@ -12,7 +12,7 @@ import (
 // effortOptionLocked is the effort option of the thread's model, or why
 // there is none; mu must be held.
 func (b *Backend) effortOptionLocked() (t3client.ModelOptionDescriptor, string) {
-	if b.thread.model == nil {
+	if b.selectionLocked() == nil {
 		return t3client.ModelOptionDescriptor{}, "the thread's model is not available yet"
 	}
 	if _, problem := b.catalogLocked(); problem != "" {
@@ -45,11 +45,12 @@ func (b *Backend) effortCmd(arg string) (chat.Reply, error) {
 		}
 		return chat.Reply{Note: "effort: " + current + " · /effort " + strings.Join(levels, " | ")}, nil
 	}
-	selection, err := b.thread.model.WithEffort(d, strings.TrimSpace(arg))
+	selection, err := b.selectionLocked().WithEffort(d, strings.TrimSpace(arg))
 	if err != nil {
 		return chat.Reply{}, fmt.Errorf("%w; supported: %s", err, strings.Join(levels, ", "))
 	}
-	return b.dispatch("effort", t3client.ModelSelectionCommand(b.threadID, selection)), nil
+	level := selection.Effort(t3client.ModelCapabilities{OptionDescriptors: []t3client.ModelOptionDescriptor{d}})
+	return b.choose("effort", selection, "/effort "+level, "effort: "+level), nil
 }
 
 func (b *Backend) effortSuggestions(prefix string) []chat.Suggestion {
@@ -80,5 +81,5 @@ func (b *Backend) effortSuggestions(prefix string) []chat.Suggestion {
 // provider's defaults; mu must be held.
 func (b *Backend) effortLocked() string {
 	m, _ := b.modelLocked()
-	return b.thread.model.Effort(m.Capabilities)
+	return b.selectionLocked().Effort(m.Capabilities)
 }

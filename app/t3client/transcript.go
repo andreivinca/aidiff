@@ -181,9 +181,10 @@ type ProjectedTurnItem struct {
 
 // Message includes queued user text before T3 promotes it into the transcript.
 type Message struct {
-	ID   string `json:"id"`
-	Role string `json:"role"`
-	Text string `json:"text"`
+	ID          string            `json:"id"`
+	Role        string            `json:"role"`
+	Text        string            `json:"text"`
+	Attachments []json.RawMessage `json:"attachments"` // the images it carries, as T3 stored them
 }
 
 // ThreadProjection is the part of a thread's full state aidiff renders.

@@ -2,6 +2,7 @@ package t3chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -130,4 +131,28 @@ func TestBackend_Settings(t *testing.T) {
 func TestChats_WithoutAConnection(t *testing.T) {
 	assert.Nil(t, NewChats(nil).Thread("th-1"), "no connection, no backend")
 	assert.NotNil(t, NewChats(&t3client.Conn{}).Thread("th-1"))
+}
+
+func TestBackend_Unqueue(t *testing.T) {
+	snap := fixture()
+	snap.Runs = append(snap.Runs, t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued", UserMessageID: "m3"})
+	snap.Messages = append(snap.Messages, t3client.Message{ID: "m3", Role: "user", Text: "queued", Attachments: []json.RawMessage{json.RawMessage(`{"id":"a"}`)}})
+	f := newFakeServer(snap)
+	s := subscribe(t, f)
+	assert.Equal(t, []chat.Queued{{ID: "m3", Text: "queued", Images: 1}}, s.v.latest().Queued, "the pane learns its images")
+
+	require.NoError(t, s.b.Unqueue(context.Background(), "m3"))
+	assert.Equal(t, t3client.QueuedRunCancelCommand("th-1", "run-3"), nextCommand(t, f))
+
+	run3 := "run-3"
+	f.live().TurnItem(t3client.TurnItem{ID: "i9", Type: "user_message", Status: "pending", InputIntent: "queued_turn",
+		MessageID: "m3", RunID: &run3, Text: "queued"})
+	f.live().Run(t3client.Run{ID: "run-3", Ordinal: 3, Status: "cancelled", UserMessageID: "m3"})
+	c := s.v.latest()
+	assert.Empty(t, c.Queued, "taken back, it leaves the queue")
+	assert.NotContains(t, c.Entries, chat.UserMessage{Text: "queued"}, "and never shows as sent")
+	assert.Equal(t, chat.AgentRunning, c.State, "nor as the agent's state: run-2 still runs")
+	f.live().Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "interrupted"})
+	assert.Equal(t, chat.AgentState("interrupted"), s.v.latest().State, "the last run that ran tells it")
+	require.EqualError(t, s.b.Unqueue(context.Background(), "m3"), "it is no longer queued")
 }

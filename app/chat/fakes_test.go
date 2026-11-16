@@ -18,7 +18,7 @@ const waitLimit = 2 * time.Second
 
 // call is what the pane asked of the backend.
 type call struct {
-	kind     string // send, interrupt, decide, answer or dismiss
+	kind     string // send, interrupt, decide, answer, dismiss or unqueue
 	id       string // the turn or the prompt
 	msg      Outgoing
 	decision Decision
@@ -76,6 +76,10 @@ func (f *fakeBackend) record(c call) error {
 
 func (f *fakeBackend) Send(_ context.Context, m Outgoing) error {
 	return f.record(call{kind: "send", msg: m})
+}
+
+func (f *fakeBackend) Unqueue(_ context.Context, messageID string) error {
+	return f.record(call{kind: "unqueue", id: messageID})
 }
 
 func (f *fakeBackend) Interrupt(_ context.Context, turnID string) error {

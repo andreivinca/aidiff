@@ -43,6 +43,13 @@ type Backend interface {
 	CheckImage(name string, size int64) error
 }
 
+// Unqueuer is a backend that can take a queued message back before it
+// starts, for the user to edit; ↑ on an empty input does it.
+type Unqueuer interface {
+	// Unqueue drops the queued message messageID from the queue.
+	Unqueue(ctx context.Context, messageID string) error
+}
+
 // Viewer is where a backend's subscription reports. Its methods never
 // block: a backend may call them from any goroutine, with its own locks
 // held.

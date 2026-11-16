@@ -11,7 +11,7 @@ import (
 // conversationLocked is the thread as the pane shows it; mu must be held.
 func (b *Backend) conversationLocked() chat.Conversation {
 	t := &b.thread
-	queued := t.queue()
+	queued := b.withPendingLocked(t.queue())
 	return chat.Conversation{
 		Title:     t.title,
 		State:     t.state(),
@@ -34,6 +34,9 @@ func (t *thread) state() chat.AgentState {
 	var latest *t3client.Run
 	for id := range t.runs {
 		r := t.runs[id]
+		if r.Status == "cancelled" {
+			continue // a queued message taken back: it never ran, so it says nothing of the agent
+		}
 		if latest == nil || r.Ordinal > latest.Ordinal {
 			latest = &r
 		}
@@ -109,7 +112,7 @@ func (t *thread) queue() []chat.Queued {
 	var out []chat.Queued
 	for _, r := range runs {
 		if msg, ok := t.userMessages[r.UserMessageID]; ok {
-			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text})
+			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text, Images: len(msg.Attachments)})
 		}
 	}
 	for _, it := range t.items {
@@ -118,6 +121,34 @@ func (t *thread) queue() []chat.Queued {
 		}
 	}
 	return out
+}
+
+// queuedRunOf is the run of the queued message messageID that has not
+// started, "" when there is none.
+func (t *thread) queuedRunOf(messageID string) string {
+	for _, r := range t.runs {
+		if r.UserMessageID == messageID && r.Status == "queued" {
+			return r.ID
+		}
+	}
+	for _, it := range t.items {
+		if it.MessageID == messageID && t.queuedTurn(it) && it.RunID != nil {
+			if r, ok := t.runs[*it.RunID]; !ok || r.Status == "queued" {
+				return *it.RunID
+			}
+		}
+	}
+	return ""
+}
+
+// cancelledBeforeStart reports a row of a message taken back from the queue:
+// its run was cancelled, so it never went to the agent.
+func (t *thread) cancelledBeforeStart(it t3client.TurnItem) bool {
+	if it.RunID == nil {
+		return false
+	}
+	r, ok := t.runs[*it.RunID]
+	return ok && r.Status == "cancelled"
 }
 
 // queuedTurn reports a transcript row of a message waiting for its turn.
@@ -158,7 +189,7 @@ func (t *thread) entries(queued []chat.Queued) []chat.Entry {
 	}
 	out := make([]chat.Entry, 0, len(t.items))
 	for _, it := range t.items {
-		if it.Type == "checkpoint" || (it.Type == "user_message" && waiting[it.MessageID]) {
+		if it.Type == "checkpoint" || (it.Type == "user_message" && (waiting[it.MessageID] || t.cancelledBeforeStart(it))) {
 			continue
 		}
 		out = append(out, t.entry(it))

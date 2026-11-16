@@ -231,7 +231,7 @@ func TestPane_CloseEndsUpdates(t *testing.T) {
 }
 
 func TestPane_LostSubscription(t *testing.T) {
-	p, f := newTestPane(t, 60, 10, fixture())
+	p, f := newTestPane(t, 60, 12, fixture())
 	f.lost <- errors.New("connection reset")
 	waitUpdate(t, p)
 	v := view(p)

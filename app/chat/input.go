@@ -260,7 +260,11 @@ func (p *Pane) composerKeyLocked(k uv.KeyPressEvent) {
 		p.input.del()
 		p.inputChanged()
 	case uv.KeyUp:
-		if !p.moveSuggestionLocked(-1) && !p.input.vertical(-1, inputWidth(p.width), k.Mod&uv.ModShift != 0) {
+		switch {
+		case p.moveSuggestionLocked(-1):
+		case p.unqueueLastLocked():
+		case p.input.vertical(-1, inputWidth(p.width), k.Mod&uv.ModShift != 0):
+		default:
 			p.scrollLocked(1)
 		}
 	case uv.KeyDown:

@@ -170,6 +170,7 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | ctrl+shift+← / ctrl+shift+→ | Select a word at a time |
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, which the input treats as one character (the cursor skips it, one delete removes it and drops the image), text is inserted |
 | ↑ / ↓ | Move in the slash popup, else move the cursor a line up or down in a multi-line draft, else (on its first or last line) scroll |
+| ↑ on an empty input, a message queued | Take the newest queued message back into the input (`queued-run.cancel` first, so it is never both queued and in the input) to edit and send again, or drop with ctrl+u. Its images stay behind, and the note says so. A message taken back never shows as sent |
 | PgUp / PgDn | Scroll by a page |
 | End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |
@@ -198,6 +199,8 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 | `/attach <image>` | Attach an image file |
 | `/work` | Toggle between expanded and summarized agent work |
 | `/activity` | Open the activity view |
+
+`/model` and `/effort` wait their turn while the agent works or messages are queued: the change shows as a queued card (`/effort high`) after the messages queued before it, which keep the selection they were queued with, and the thread takes it once nothing it waits for is queued or running. Every message sent from the chat after it carries the new selection, as T3's own client does, so it runs with it whatever the thread says; ↑ takes the card back like a queued message, and the earlier selection stands. With the agent idle and nothing queued, the change applies at once.
 
 The popup lists the pane's own commands, then T3's, then the provider's own slash commands from the catalog (for the thread's provider). When names clash, the pane's command wins over T3's, and both over the provider's. An unknown `/command` is sent to the agent as text. The popup ranks matches as exact, then prefix, alias, substring, then description; provider commands come last. It shows at most 6 rows. The catalog is fetched once per connection, shared by the threads a pane follows on it; a failed fetch is said under the composer and retried only by a command that needs it.
 

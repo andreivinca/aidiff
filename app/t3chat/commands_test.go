@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,15 @@ func labels(sugs []chat.Suggestion) []string {
 }
 
 // withModel is the fixture on the model of instance and slug.
+// idle is snap with every run of it finished: settings change at once.
+func idle(snap t3client.ThreadProjection) t3client.ThreadProjection {
+	snap.Runs = slices.Clone(snap.Runs)
+	for i := range snap.Runs {
+		snap.Runs[i].Status = "completed"
+	}
+	return snap
+}
+
 func withModel(instance, slug string) t3client.ThreadProjection {
 	snap := fixture()
 	snap.Thread.ModelSelection = &t3client.ModelSelection{InstanceID: instance, Model: slug}
@@ -79,7 +89,7 @@ func TestBackend_ModeCommands(t *testing.T) {
 }
 
 func TestBackend_ModelCommand(t *testing.T) {
-	f := newFakeServer(withModel("claude", "claude-sonnet-4"))
+	f := newFakeServer(idle(withModel("claude", "claude-sonnet-4")))
 	s := subscribe(t, f)
 	assert.Equal(t, chat.Settings{Mode: "Build", Model: "Sonnet 4 · medium", Details: []string{"Claude Code"}}, s.v.latest().Settings,
 		"the composer names the model, its effort and its provider")
@@ -103,15 +113,59 @@ func TestBackend_ModelCommand(t *testing.T) {
 	require.EqualError(t, err, "no model matches nope; /model and tab lists them")
 	reply, err := s.run(t, "/model", "")
 	require.NoError(t, err)
-	assert.Equal(t, "model: claude-sonnet-4 (Claude Code) · /model <name> switches it", reply.Note)
+	assert.Equal(t, "model: claude-opus-4 (Claude Code) · /model <name> switches it", reply.Note,
+		"the model chosen here is the current one, before the thread reports it")
 	assert.Empty(t, f.cmds)
+}
+
+func TestBackend_EffortWaitsItsTurn(t *testing.T) {
+	snap := withModel("claude", "claude-sonnet-4") // the agent works on run-2
+	snap.Runs = append(snap.Runs, t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued", UserMessageID: "m3"})
+	snap.Messages = append(snap.Messages, t3client.Message{ID: "m3", Role: "user", Text: "queued before"})
+	f := newFakeServer(snap)
+	s := subscribe(t, f)
+
+	reply, err := s.run(t, "/effort", "high")
+	require.NoError(t, err)
+	assert.Equal(t, "effort: high after the agent's current work; messages sent from now run with it", reply.Note)
+	assert.Empty(t, f.cmds, "nothing changes on the thread while the agent works")
+	assert.Equal(t, []chat.Queued{{ID: "m3", Text: "queued before"}, {ID: pendingSelectionID, Text: "/effort high"}},
+		s.v.latest().Queued, "it waits in the queue after the message queued before it")
+	assert.Equal(t, "Sonnet 4 · high", s.v.latest().Settings.Model, "the composer shows what messages from here run with")
+
+	require.NoError(t, s.b.Send(context.Background(), chat.Outgoing{ID: "m4", Text: "after"}))
+	sent := nextCommand(t, f)
+	high, ok := sent["modelSelection"].(t3client.ModelSelection)
+	require.True(t, ok, "a message sent after it carries it: %v", sent["modelSelection"])
+	assert.Contains(t, string(high.Options), `"high"`)
+
+	// run-2 ends; the queued message starts with its own selection, and T3 sets it back on the thread
+	f.live().Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed"})
+	f.live().Run(t3client.Run{ID: "run-3", Ordinal: 3, Status: "running", UserMessageID: "m3"})
+	f.live().Thread(t3client.Thread{ID: "th-1", ModelSelection: &t3client.ModelSelection{InstanceID: "claude", Model: "claude-sonnet-4"}})
+	assert.Empty(t, f.cmds, "its turn has not come while the message before it runs")
+	f.live().Run(t3client.Run{ID: "run-3", Ordinal: 3, Status: "completed", UserMessageID: "m3"})
+	assert.Equal(t, "thread.model-selection.set", nextCommand(t, f)["type"], "its turn: the thread takes it")
+	assert.Empty(t, s.v.latest().Queued)
+}
+
+func TestBackend_PendingEffortTakenBack(t *testing.T) {
+	f := newFakeServer(withModel("claude", "claude-sonnet-4"))
+	s := subscribe(t, f)
+	_, err := s.run(t, "/effort", "high")
+	require.NoError(t, err)
+	require.NoError(t, s.b.Unqueue(context.Background(), pendingSelectionID))
+	assert.Empty(t, s.v.latest().Queued, "↑ takes it back like a queued message")
+	assert.Equal(t, "Sonnet 4 · medium", s.v.latest().Settings.Model, "and the earlier effort stands")
+	f.live().Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed"})
+	assert.Empty(t, f.cmds, "nothing is applied later")
 }
 
 func TestBackend_EffortCommand(t *testing.T) {
 	snap := fixture()
 	snap.Thread.ModelSelection = &t3client.ModelSelection{InstanceID: "codex", Model: "gpt-5",
 		Options: json.RawMessage(`[{"id":"serviceTier","value":"priority"}]`)}
-	f := newFakeServer(snap)
+	f := newFakeServer(idle(snap))
 	s := subscribe(t, f)
 	reply, err := s.run(t, "/effort", "")
 	require.NoError(t, err)
@@ -143,7 +197,7 @@ func TestBackend_EffortCommand(t *testing.T) {
 }
 
 func TestBackend_CatalogIsFetchedOncePerServer(t *testing.T) {
-	f := newFakeServer(fixture())
+	f := newFakeServer(idle(fixture()))
 	f.set(nil, errors.New("offline"))
 	chats := newChats(f)
 	s := subscribeOn(t, chats, f)

@@ -171,8 +171,9 @@ func (Step) entry() {
 
 // Queued is a message waiting for its turn.
 type Queued struct {
-	ID   string // the message's id; a card of the pane's own with this id gives way to it
-	Text string
+	ID     string // the message's id; a card of the pane's own with this id gives way to it
+	Text   string
+	Images int // the images it carries, which taking it back cannot return to the input
 }
 
 // Activity is a piece of the agent's background work: a subagent, a

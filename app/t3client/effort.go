@@ -1,6 +1,7 @@
 package t3client
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,6 +101,23 @@ func (m *ModelSelection) Effort(capabilities ModelCapabilities) string {
 	return d.defaultValue()
 }
 
+// Same reports whether two selections name the same model with the same
+// options, whatever form or order the options came in.
+func (m *ModelSelection) Same(other *ModelSelection) bool {
+	if m == nil || other == nil {
+		return m == other
+	}
+	if m.InstanceID != other.InstanceID || m.Model != other.Model {
+		return false
+	}
+	a, errA := m.parseOptions()
+	b, errB := other.parseOptions()
+	if errA != nil || errB != nil {
+		return false
+	}
+	return a.normalized() == b.normalized()
+}
+
 // WithEffort is the selection with its effort option, described by d, set to
 // level. All other options are kept, in the form the selection holds them.
 func (m *ModelSelection) WithEffort(d ModelOptionDescriptor, level string) (ModelSelection, error) {
@@ -191,6 +209,22 @@ func (o modelOptions) with(id string, value json.RawMessage) modelOptions {
 		return v.ID == id
 	})
 	return modelOptions{form: o.form, values: append(values, modelOption{ID: id, Value: value})}
+}
+
+// normalized is the options as one comparable string: compact values,
+// sorted by id.
+func (o modelOptions) normalized() string {
+	parts := make([]string, 0, len(o.values))
+	for _, v := range o.values {
+		var buf bytes.Buffer
+		if json.Compact(&buf, v.Value) != nil {
+			buf.Reset()
+			buf.Write(v.Value)
+		}
+		parts = append(parts, v.ID+"="+buf.String())
+	}
+	slices.Sort(parts)
+	return strings.Join(parts, "\x00")
 }
 
 // encode writes the options back in the form they were read in.

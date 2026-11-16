@@ -35,7 +35,7 @@ func (b *Backend) settingsLocked() chat.Settings {
 // modelNamesLocked names the thread's model and provider as the catalog
 // does, without guessing from a slug; mu must be held.
 func (b *Backend) modelNamesLocked() (model, provider string) {
-	current := b.thread.model
+	current := b.selectionLocked()
 	if current == nil || current.Model == "" {
 		return "T3 Code", ""
 	}

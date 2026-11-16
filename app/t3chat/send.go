@@ -2,6 +2,7 @@ package t3chat
 
 import (
 	"context"
+	"errors"
 
 	"github.com/umputun/revdiff/app/chat"
 	"github.com/umputun/revdiff/app/t3client"
@@ -37,7 +38,7 @@ func (b *Backend) Send(ctx context.Context, m chat.Outgoing) error {
 func (b *Backend) outgoing(m chat.Outgoing) t3client.OutgoingMessage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	msg := t3client.OutgoingMessage{ThreadID: b.threadID, MessageID: m.ID, Text: m.Text, FreshContext: b.fresh}
+	msg := t3client.OutgoingMessage{ThreadID: b.threadID, MessageID: m.ID, Text: m.Text, FreshContext: b.fresh, Model: b.chosen}
 	if !b.sent && !b.thread.hasUserMessage() {
 		msg.TitleSeed = t3client.TitleSeed(m.Prose(), len(m.Images))
 	}
@@ -61,6 +62,22 @@ func (b *Backend) Interrupt(ctx context.Context, turnID string) error {
 		return err //nolint:wrapcheck // the stop's own failure says more than the fallback's
 	}
 	return nil
+}
+
+// Unqueue drops the queued message messageID from the thread's queue,
+// before its run starts.
+func (b *Backend) Unqueue(ctx context.Context, messageID string) error {
+	b.mu.Lock()
+	if b.unqueuePendingLocked(messageID) {
+		b.mu.Unlock()
+		return nil
+	}
+	runID := b.thread.queuedRunOf(messageID)
+	b.mu.Unlock()
+	if runID == "" {
+		return errors.New("it is no longer queued")
+	}
+	return b.srv.Dispatch(ctx, t3client.QueuedRunCancelCommand(b.threadID, runID)) //nolint:wrapcheck // the pane says what failed
 }
 
 // Decide answers the approval request promptID.

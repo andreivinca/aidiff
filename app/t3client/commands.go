@@ -59,6 +59,12 @@ func InterruptCommand(threadID, runID string) Command {
 	return Command{"type": "run.interrupt", "threadId": threadID, "runId": runID}
 }
 
+// QueuedRunCancelCommand drops a message from the thread's queue before it
+// starts.
+func QueuedRunCancelCommand(threadID, runID string) Command {
+	return Command{"type": "queued-run.cancel", "threadId": threadID, "runId": runID}
+}
+
 // QueueResumeCommand starts the thread's next queued message, which a stop
 // holds back.
 func QueueResumeCommand(threadID string) Command {

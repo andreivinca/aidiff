@@ -87,3 +87,15 @@ func TestWithEffortReplacesAnEarlierLevel(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `[{"id":"fastMode","value":true},{"id":"effort","value":"max"}]`, string(changed.Options))
 }
+
+func TestModelSelection_Same(t *testing.T) {
+	a := &ModelSelection{InstanceID: "codex", Model: "gpt-5", Options: json.RawMessage(`[{"id":"effort","value":"high"},{"id":"fast","value":true}]`)}
+	reordered := &ModelSelection{InstanceID: "codex", Model: "gpt-5", Options: json.RawMessage(`[{"id": "fast", "value": true}, {"id": "effort", "value": "high"}]`)}
+	object := &ModelSelection{InstanceID: "codex", Model: "gpt-5", Options: json.RawMessage(`{"effort":"high","fast":true}`)}
+	assert.True(t, a.Same(reordered), "order and spacing do not matter")
+	assert.True(t, a.Same(object), "nor the form the options come in")
+	assert.False(t, a.Same(&ModelSelection{InstanceID: "codex", Model: "gpt-5"}), "options missing")
+	assert.False(t, a.Same(&ModelSelection{InstanceID: "codex", Model: "gpt-5", Options: json.RawMessage(`[{"id":"effort","value":"low"},{"id":"fast","value":true}]`)}))
+	assert.False(t, a.Same(nil))
+	assert.True(t, (*ModelSelection)(nil).Same(nil))
+}

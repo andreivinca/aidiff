@@ -63,7 +63,7 @@ func (b *Backend) providerCommandsLocked() []t3client.ProviderCommand {
 	if cat == nil {
 		return nil
 	}
-	model := b.thread.model
+	model := b.selectionLocked()
 	if model == nil || model.InstanceID == "" {
 		return cat.Commands
 	}
@@ -146,7 +146,7 @@ func (b *Backend) clearCmd(string) (chat.Reply, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.newThread != nil {
-		b.newThread(NewThread{From: b.threadID, Model: b.thread.model, RuntimeMode: b.thread.runtimeMode,
+		b.newThread(NewThread{From: b.threadID, Model: b.selectionLocked(), RuntimeMode: b.thread.runtimeMode,
 			InteractionMode: b.thread.interaction})
 		return chat.Reply{Note: "starting a new thread…"}, nil
 	}
@@ -170,7 +170,7 @@ func (b *Backend) sideCmd(arg string) (chat.Reply, error) {
 	newID := t3client.NewID()
 	cmds := []t3client.Command{t3client.SideChatCommand(b.threadID, newID)}
 	if q := strings.TrimSpace(arg); q != "" {
-		msg := t3client.OutgoingMessage{ThreadID: newID, MessageID: t3client.NewID(), Text: q, Model: b.thread.model}
+		msg := t3client.OutgoingMessage{ThreadID: newID, MessageID: t3client.NewID(), Text: q, Model: b.selectionLocked()}
 		cmds = append(cmds, msg.Command())
 	}
 	reply := b.dispatch("side chat", cmds...)

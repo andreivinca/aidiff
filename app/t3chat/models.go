@@ -26,7 +26,7 @@ func (b *Backend) modelCmd(arg string) (chat.Reply, error) {
 	if err != nil {
 		return chat.Reply{}, err
 	}
-	return b.dispatch("model", t3client.ModelSelectionCommand(b.threadID, choice.Selection())), nil
+	return b.choose("model", choice.Selection(), "/model "+choice.Slug, "model: "+choice.Slug), nil
 }
 
 // pickModel finds the model arg names: a slug, "instance:slug", or a unique
@@ -61,7 +61,7 @@ func (b *Backend) modelSuggestions(prefix string) []chat.Suggestion {
 		return []chat.Suggestion{{Label: problem}}
 	}
 	q := strings.ToLower(prefix)
-	current := b.thread.model
+	current := b.selectionLocked()
 	var out []chat.Suggestion
 	for _, m := range cat.Models {
 		if q != "" && !strings.Contains(strings.ToLower(m.Slug+" "+m.Name+" "+m.Provider), q) {
@@ -81,7 +81,7 @@ func (b *Backend) modelSuggestions(prefix string) []chat.Suggestion {
 
 // currentModelLocked names the thread's model; mu must be held.
 func (b *Backend) currentModelLocked() string {
-	current := b.thread.model
+	current := b.selectionLocked()
 	if current == nil || current.Model == "" {
 		return "unknown"
 	}
@@ -94,7 +94,7 @@ func (b *Backend) currentModelLocked() string {
 // modelLocked is the catalog's entry for the thread's model, if both are
 // known; mu must be held.
 func (b *Backend) modelLocked() (t3client.ModelChoice, bool) {
-	current := b.thread.model
+	current := b.selectionLocked()
 	cat, _ := b.catalog.get()
 	if current == nil || cat == nil {
 		return t3client.ModelChoice{}, false

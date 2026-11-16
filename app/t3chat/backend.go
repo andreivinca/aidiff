@@ -97,6 +97,15 @@ type Backend struct {
 	thread  thread
 	loading bool // a catalog fetch of this backend's is in flight
 	fresh   bool // /clear: the next message starts a fresh provider session
+	// chosen is the model selection /model or /effort set from here, which
+	// every message sent from here carries, as T3's own client does: a
+	// message queued earlier keeps the selection it was queued with, and
+	// when it starts T3 sets that one back on the thread. nil once the
+	// thread holds it with nothing queued left to change it back.
+	chosen *t3client.ModelSelection
+	// pending is a /model or /effort that waits its turn behind the agent's
+	// work, nil when none does (selection.go)
+	pending *pendingSelection
 	sent    bool // a message went out from here
 }
 
@@ -156,7 +165,11 @@ func (b *Backend) events(sub uint64) t3client.ThreadEvents {
 		},
 		Thread: func(th t3client.Thread) {
 			b.change(sub, func(t *thread) bool {
-				return t.update(th)
+				if !t.update(th) {
+					return false
+				}
+				b.settleChoiceLocked()
+				return true
 			})
 		},
 		Subagent: func(a t3client.Subagent) {
@@ -183,7 +196,27 @@ func (b *Backend) change(sub uint64, apply func(t *thread) bool) {
 	if sub != b.sub || !apply(&b.thread) {
 		return
 	}
+	b.applyPendingLocked()
 	b.showLocked()
+}
+
+// selectionLocked is the model selection the next message runs with: the
+// one chosen from here, else the thread's; mu must be held.
+func (b *Backend) selectionLocked() *t3client.ModelSelection {
+	if b.chosen != nil {
+		return b.chosen
+	}
+	return b.thread.model
+}
+
+// settleChoiceLocked forgets the selection chosen from here once the thread
+// holds it and no queued message is left that would set its own selection
+// back; changes made from another client then show as they come. mu must be
+// held.
+func (b *Backend) settleChoiceLocked() {
+	if b.chosen != nil && b.pending == nil && b.chosen.Same(b.thread.model) && len(b.thread.queue()) == 0 {
+		b.chosen = nil
+	}
 }
 
 // showLocked shows the pane the conversation as it stands; mu must be held.

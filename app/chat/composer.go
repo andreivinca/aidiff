@@ -146,6 +146,9 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 	}
 	if p.input.empty() {
 		secondary = append([]Hint{{"←", p.activityHintLocked()}}, secondary...)
+		if _, ok := p.lastQueuedLocked(); ok {
+			secondary = append([]Hint{{"↑", "edit queued"}}, secondary...)
+		}
 	}
 	return primary, secondary
 }

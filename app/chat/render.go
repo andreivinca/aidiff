@@ -40,7 +40,11 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, layout) {
 	footer := p.composerRowsLocked(w, max(1, h-l.headerH-gapH-1), showCursor)
 	queued := p.queuedMessagesLocked()
 	pending := p.pendingRowsLocked(queued, w, min(maxPendingRows, max(0, h-l.headerH-gapH-len(footer)-1)))
-	l.bodyH = max(0, h-l.headerH-gapH-len(footer)-len(pending))
+	sepH := 0 // a blank row between the transcript and the status line; queued cards end in one already
+	if gapH > 0 && len(pending) == 0 && h >= 10 {
+		sepH = 1
+	}
+	l.bodyH = max(0, h-l.headerH-gapH-sepH-len(footer)-len(pending))
 	l.textBottom = l.headerH + l.bodyH + len(pending)
 	var body []string
 	if p.activity.open {
@@ -55,6 +59,9 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, layout) {
 	}
 	rows = append(rows, body...)
 	rows = append(rows, pending...)
+	if sepH > 0 {
+		rows = append(rows, "")
+	}
 	if gapH > 0 {
 		rows = append(rows, p.styles.muted.Render(ansi.Truncate(inset+p.activityStatusLocked(), w, "…")))
 	}
