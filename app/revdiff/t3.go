@@ -18,10 +18,10 @@ func (o options) t3Mode() bool {
 
 // t3SourceKind maps --t3-source to the server's diff source kind.
 func (o options) t3SourceKind() string {
-	if o.T3Source == "uncommitted" {
-		return t3client.SourceWorkingTree
+	if o.T3Source == "branch" {
+		return t3client.SourceBranchRange
 	}
-	return t3client.SourceBranchRange
+	return t3client.SourceWorkingTree
 }
 
 // t3ConnectOptions is how the T3 flags authenticate.

@@ -56,7 +56,7 @@ type options struct {
 	Stdin                 bool     `long:"stdin" no-ini:"true" description:"review stdin as a scratch buffer"`
 	T3                    string   `long:"t3" no-ini:"true" description:"review a T3 Code thread on a server: local, ssh://host or http(s)://host:port"`
 	T3Thread              string   `long:"t3-thread" no-ini:"true" description:"T3 thread id or id prefix (default: most recently updated thread)"`
-	T3Source              string   `long:"t3-source" ini-name:"t3-source" env:"REVDIFF_T3_SOURCE" choice:"branch" choice:"uncommitted" default:"branch" description:"T3 changes to review"`
+	T3Source              string   `long:"t3-source" ini-name:"t3-source" env:"REVDIFF_T3_SOURCE" choice:"branch" choice:"uncommitted" default:"uncommitted" description:"T3 changes to review"`
 	T3Pair                string   `long:"t3-pair" no-ini:"true" description:"pair with a T3 server using the link or code from t3 pair"`
 	T3Token               string   `long:"t3-token" env:"REVDIFF_T3_TOKEN" no-ini:"true" description:"T3 bearer access token"`
 	T3Threads             bool     `long:"t3-threads" no-ini:"true" description:"list the T3 server's threads and exit"`

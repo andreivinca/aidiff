@@ -33,7 +33,7 @@ aidiff still uses revdiff's config directory.
 |---|---|---|---|---|
 | `--t3` | — | no | — | server: `local`, `ssh://host`, or `http(s)://host:port` |
 | `--t3-thread` | — | no | most recently updated | thread id or id prefix |
-| `--t3-source` | `REVDIFF_T3_SOURCE` | yes | `branch` | `branch` (the thread's branch range) or `uncommitted` (its working tree) |
+| `--t3-source` | `REVDIFF_T3_SOURCE` | yes | `uncommitted` | `uncommitted` (the thread's working tree) or `branch` (its branch range against the base, unpushed commits included) |
 | `--t3-pair` | — | no | — | pairing link or code from `t3 pair` |
 | `--t3-token` | `REVDIFF_T3_TOKEN` | no | — | bearer token; skips login |
 | `--t3-threads` | — | no | — | list the server's threads and exit |
@@ -47,7 +47,7 @@ aidiff still uses revdiff's config directory.
 terminal = true
 terminal-width = 40
 terminal-command = zsh -l
-t3-source = uncommitted
+t3-source = branch
 ```
 
 ## Fixed keys

@@ -13,7 +13,7 @@ The code lives in `app/t3client` (protocol and connection), `app/t3chat` (the T3
 | `aidiff --t3 https://host:port` | Direct connection. |
 | `aidiff --t3-pair '<link or code>'` | Pair first. A link's origin becomes the server if `--t3` is not given. |
 | `--t3-thread ID` | Pick a thread by id or id prefix. |
-| `--t3-source uncommitted` | Review the thread's working tree instead of its branch range. |
+| `--t3-source branch` | Review the thread's branch range against its base (unpushed commits included) instead of its uncommitted changes. |
 | `aidiff --t3-threads` | Print `id  idle\|running  project  branch  title` per thread and exit. |
 | ctrl+p → **T3: Connect to server…** (any mode) | Lists `local` (if a runtime file exists), servers with a saved login, and `~/.ssh/config` hosts. Text typed without `://` is taken as `ssh://<text>`. |
 

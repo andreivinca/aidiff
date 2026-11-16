@@ -113,7 +113,7 @@ ctrl+p opens it from anywhere.
 [T3_INTEGRATION.md](T3_INTEGRATION.md) covers this in detail. In summary:
 
 - **Connect:** use `--t3 local | ssh://host | https://…`, or the palette at any time. Login is automatic where possible; otherwise pair with `--t3-pair`.
-- **Review a thread:** shows the thread's branch changes (default) or its uncommitted changes (`--t3-source uncommitted`). The diff refreshes when the agent finishes a step. Switching threads from the palette saves the current review's annotations to history.
+- **Review a thread:** shows the thread's uncommitted changes (default) or its branch changes against the base (`--t3-source branch`). The diff refreshes when the agent finishes a step. Switching threads from the palette saves the current review's annotations to history.
 - **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`

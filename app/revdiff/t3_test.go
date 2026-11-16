@@ -14,11 +14,11 @@ func TestParseArgs_T3Flags(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, opts.t3Mode())
 	assert.Equal(t, "ssh://boxdev", opts.T3)
-	assert.Equal(t, t3client.SourceBranchRange, opts.t3SourceKind(), "branch is the default")
+	assert.Equal(t, t3client.SourceWorkingTree, opts.t3SourceKind(), "uncommitted is the default")
 
-	opts, err = parseArgs(append(noConfigArgs(t), "--t3=local", "--t3-source=uncommitted"))
+	opts, err = parseArgs(append(noConfigArgs(t), "--t3=local", "--t3-source=branch"))
 	require.NoError(t, err)
-	assert.Equal(t, t3client.SourceWorkingTree, opts.t3SourceKind())
+	assert.Equal(t, t3client.SourceBranchRange, opts.t3SourceKind())
 
 	opts, err = parseArgs(noConfigArgs(t))
 	require.NoError(t, err)
