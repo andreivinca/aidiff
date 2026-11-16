@@ -78,6 +78,9 @@ type Pane struct {
 	height     int
 	gen        uint64 // bumps on every visible change
 	frame      frame
+	rowCache   rowCache         // the transcript's rendered messages (rowcache.go)
+	wheel      wheelState       // the run of wheel notches, which speeds scrolling up (wheel.go)
+	now        func() time.Time // the clock the wheel reads; tests set it
 	selection  textSelection
 	subID      uint64 // the current subscription; what older ones deliver is dropped
 	cancel     context.CancelFunc
@@ -99,6 +102,7 @@ type frame struct {
 func New(b Backend, title string, width, height int, cfg Config) *Pane {
 	base, composer := newStyles(!cfg.NoColor)
 	p := &Pane{
+		now:      time.Now,
 		styles:   base,
 		composer: composer,
 		clip:     cfg.Clipboard,

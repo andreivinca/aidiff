@@ -171,6 +171,7 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, which the input treats as one character (the cursor skips it, one delete removes it and drops the image), text is inserted |
 | ↑ / ↓ | Move in the slash popup, else move the cursor a line up or down in a multi-line draft, else (on its first or last line) scroll |
 | ↑ on an empty input, a message queued | Take the newest queued message back into the input (`queued-run.cancel` first, so it is never both queued and in the input) to edit and send again, or drop with ctrl+u. Its images stay behind, and the note says so. A message taken back never shows as sent |
+| Mouse wheel | Scroll the transcript: 3 lines a notch, speeding up on a fast run of notches one way (a trackpad flick, a quick spin) by 3 more every 3 notches, up to 12; a pause of 50 ms or a turn back starts over |
 | PgUp / PgDn | Scroll by a page |
 | End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |

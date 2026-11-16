@@ -33,6 +33,7 @@ type panelSpan struct {
 // transcriptPanelsLocked is the transcript's rows and where the user's
 // messages sit in them, in order; mu must be held.
 func (p *Pane) transcriptPanelsLocked(w int) ([]string, []panelSpan) {
+	defer p.rowCache.sweep()
 	var out []string
 	var spans []panelSpan
 	var work []Step
@@ -64,16 +65,22 @@ func (p *Pane) entryRowsLocked(e Entry, w int) []string {
 	st := p.styles
 	switch e := e.(type) {
 	case UserMessage:
-		return userPanel(e.Text, w, st)
+		return p.rowCache.rows(rowKey{kind: 'u', text: e.Text, w: w}, func() []string {
+			return userPanel(e.Text, w, st)
+		})
 	case AgentMessage:
 		text := e.Markdown
 		if e.Streaming {
 			text += "▍"
 		}
-		return markdownRows(text, w, st)
+		return p.rowCache.rows(rowKey{kind: 'a', text: text, w: w}, func() []string {
+			return markdownRows(text, w, st)
+		})
 	case Plan:
-		head := st.heading.Render(inset + "Plan")
-		return append([]string{head}, markdownRows(e.Markdown, w, st)...)
+		return p.rowCache.rows(rowKey{kind: 'p', text: e.Markdown, w: w}, func() []string {
+			head := st.heading.Render(inset + "Plan")
+			return append([]string{head}, markdownRows(e.Markdown, w, st)...)
+		})
 	case TodoList:
 		return todoRows(e, w, st)
 	case Approval:

@@ -315,12 +315,12 @@ func (p *Pane) SendMouse(m vt.Mouse) {
 	}
 	p.lock()
 	defer p.mu.Unlock()
-	var delta int
+	var dir int
 	switch ev.Button {
 	case uv.MouseWheelUp:
-		delta = -3
+		dir = -1
 	case uv.MouseWheelDown:
-		delta = 3
+		dir = 1
 	default:
 		return
 	}
@@ -328,9 +328,9 @@ func (p *Pane) SendMouse(m vt.Mouse) {
 	case p.stop.turn != "":
 		return
 	case p.activity.open:
-		p.moveActivityLocked(delta)
+		p.moveActivityLocked(dir * wheelStep)
 	default:
-		p.scrollLocked(-delta)
+		p.scrollLocked(-dir * p.wheel.step(dir, p.now()))
 	}
 	p.gen++
 }
