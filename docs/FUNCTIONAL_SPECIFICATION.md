@@ -78,7 +78,7 @@ Behavior:
 - Every separator can be dragged with the mouse. It shows `↔` on its middle row and turns blue while dragging.
 - A click focuses the pane under the pointer, and alt+[ / alt+] move focus left / right without wrapping: review ↔ pane 1 ↔ pane 2.
 - When a pane's program exits, the pane closes. When the last pane closes, the review gets the full width back.
-- The status bar shows the machine name, plus `T3` when the review is a T3 thread.
+- The status bar shows the machine name, then the project (the repository or folder name, or the T3 project's title), plus `T3` when the review is a T3 thread.
 
 ## 6. Terminal pane
 

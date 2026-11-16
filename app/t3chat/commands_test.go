@@ -42,17 +42,17 @@ func withModel(instance, slug string) t3client.ThreadProjection {
 
 func TestBackend_Commands(t *testing.T) {
 	s := subscribe(t, newFakeServer(fixture()))
-	assert.Equal(t, []string{"/model <model>", "/effort [level]", "/plan", "/build", "/mode <runtime-mode>", "/clear", "/side <question>",
-		"/compact", "/review", "/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()),
+	assert.Equal(t, []string{"/model <model>", "/effort [level]", "/plan", "/build", "/mode <runtime-mode>", "/clear", "/resume",
+		"/side <question>", "/compact", "/review", "/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()),
 		"T3's own, then every provider's while the thread's is unknown")
-	for _, c := range s.b.Commands()[7:] {
+	for _, c := range s.b.Commands()[8:] {
 		assert.Nil(t, c.Run, "%s goes to the agent as a message", c.Name)
 	}
-	assert.Equal(t, "Summarize the conversation and reduce context usage", s.b.Commands()[7].Description)
-	assert.Equal(t, "Objective, or pause, resume, clear", s.b.Commands()[9].Description, "a hint describes a command with nothing else")
+	assert.Equal(t, "Summarize the conversation and reduce context usage", s.b.Commands()[8].Description)
+	assert.Equal(t, "Objective, or pause, resume, clear", s.b.Commands()[10].Description, "a hint describes a command with nothing else")
 
 	s = subscribe(t, newFakeServer(withModel("codex", "gpt-5")))
-	assert.Equal(t, []string{"/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()[7:]), "only the thread's provider's")
+	assert.Equal(t, []string{"/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()[8:]), "only the thread's provider's")
 }
 
 func TestBackend_ModeCommands(t *testing.T) {
@@ -171,6 +171,26 @@ func TestBackend_CatalogIsFetchedOncePerServer(t *testing.T) {
 	other := newFakeServer(fixture())
 	subscribe(t, other)
 	assert.Equal(t, 1, other.fetches(), "another server's threads fetch its own catalog")
+}
+
+func TestBackend_ClearStartsANewThread(t *testing.T) {
+	snap := withModel("claude", "claude-opus-4")
+	snap.Thread.InteractionMode, snap.Thread.RuntimeMode = "plan", "auto"
+	f := newFakeServer(snap)
+	chats := newChats(f)
+	var got []NewThread
+	chats.OnNewThread(func(req NewThread) {
+		got = append(got, req)
+	})
+	s := subscribeOn(t, chats, f)
+	assert.Equal(t, "start over in a new thread of this project", s.command(t, "/clear").Description)
+	reply, err := s.run(t, "/clear", "")
+	require.NoError(t, err)
+	assert.Equal(t, "starting a new thread…", reply.Note)
+	require.Len(t, got, 1)
+	assert.Equal(t, NewThread{From: "th-1", Model: &t3client.ModelSelection{InstanceID: "claude", Model: "claude-opus-4"},
+		RuntimeMode: "auto", InteractionMode: "plan"}, got[0], "the new thread takes this one's settings")
+	assert.NotContains(t, s.v.latest().Settings.Details, "fresh context", "no fresh session is armed here")
 }
 
 func TestBackend_ClearAndSideChat(t *testing.T) {

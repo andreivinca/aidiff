@@ -1,6 +1,7 @@
 package t3palette
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -26,9 +27,10 @@ type chatPane interface {
 // connection its thread is on. The pane keeps them while it follows
 // threads on the same connection, so the server's catalog is fetched once.
 type openChat struct {
-	pane  chatPane
-	conn  *t3client.Conn
-	chats *t3chat.Chats
+	pane      chatPane
+	conn      *t3client.Conn
+	chats     *t3chat.Chats
+	newThread func(t3chat.NewThread) // what /clear in the pane does
 }
 
 // threads are the threads of conn: the ones the pane followed before, when
@@ -36,6 +38,9 @@ type openChat struct {
 func (c *openChat) threads(conn *t3client.Conn) *t3chat.Chats {
 	if c.chats == nil || conn != c.conn {
 		c.conn, c.chats = conn, t3chat.NewChats(conn)
+		if c.newThread != nil {
+			c.chats.OnNewThread(c.newThread)
+		}
 	}
 	return c.chats
 }
@@ -89,7 +94,7 @@ func (t *Palette) autoChatLocked(r *Review) tea.Msg {
 // chatPaneMsg is the split's request for a chat pane on th over s.
 func (t *Palette) chatPaneMsg(s Session, th t3client.Thread) tea.Msg {
 	return splitview.OpenPaneMsg{Start: func(width, height int) (splitview.Terminal, error) {
-		c := &openChat{}
+		c := &openChat{newThread: t.clearThread}
 		cfg := t.cfg.Chat
 		cfg.QuitNote = chatQuitNote
 		pane := chat.New(c.threads(s.Conn()).Thread(th.ID), threadTitle(th), width, height, cfg)
@@ -130,4 +135,43 @@ func (t *Palette) sendAnnotations(inner tea.Model) tea.Cmd {
 		}
 		return splitview.FlashMsg{Text: fmt.Sprintf("T3: %d annotation(s) sent to %s", n, title)}
 	})
+}
+
+// clearThread is /clear in a chat pane: a new thread in the project of the
+// thread it was typed in, with that thread's model and modes, which takes
+// its place on screen and in the chat. It reports on the bottom row.
+// The pane calls it under its own lock, and the palette calls into panes
+// under mu, so all of it runs on a goroutine of its own; it does not hold up
+// Close, since Send returns once the program ends.
+func (t *Palette) clearThread(req t3chat.NewThread) {
+	go t.startClearThread(req)
+}
+
+func (t *Palette) startClearThread(req t3chat.NewThread) {
+	t.mu.Lock()
+	p, r, closed := t.program, t.onScreen, t.closed
+	t.mu.Unlock()
+	if p == nil || closed {
+		return
+	}
+	th := r.thread()
+	if th == nil || th.ID != req.From {
+		p.Send(splitview.FlashMsg{Text: "T3: new thread: the chat's thread is no longer on screen"})
+		return
+	}
+	launch := t3client.LaunchRequest{ProjectID: r.Target.Project.ID, RuntimeMode: cmp.Or(req.RuntimeMode, th.RuntimeMode, runtimeMode),
+		InteractionMode: cmp.Or(req.InteractionMode, th.InteractionMode)}
+	model := cmp.Or(req.Model, th.ModelSelection)
+	cmd := asking("starting a new thread in "+r.Target.Project.Title, func(ctx context.Context) tea.Msg {
+		if model == nil {
+			m, err := r.Session.Server().DefaultModel(ctx, r.Target.Project)
+			if err != nil {
+				return t3Error("new thread", err)
+			}
+			model = &m
+		}
+		launch.Model = *model
+		return t.launchMsg(ctx, r.Session, launch)
+	})
+	p.Send(cmd())
 }

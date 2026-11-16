@@ -14,12 +14,14 @@ import (
 // sees (an emoji sequence, a flag, a letter with its accents), and a cursor
 // between them. Moving and deleting go a whole cluster at a time. A selection
 // runs from the anchor to the cursor; typing replaces it and deleting removes
-// it.
+// it. An atom, such as a pasted image's "[Image #1]", is one cluster too: the
+// cursor never stops inside it and one delete removes it whole.
 type editor struct {
 	clusters  []string
 	cur       int  // the cursor, in clusters from the start
 	selecting bool // a selection runs from anchor to cur
 	anchor    int
+	atoms     []string // texts kept whole as one character
 }
 
 func (e *editor) text() string {
@@ -43,7 +45,38 @@ func (e *editor) before() string {
 }
 
 func (e *editor) clear() {
-	e.clusters, e.cur, e.selecting = e.clusters[:0], 0, false
+	e.clusters, e.cur, e.selecting, e.atoms = e.clusters[:0], 0, false, nil
+}
+
+// remove deletes characters [lo, hi) and forgets the atoms no longer in the
+// text, so typing one again later gives plain characters.
+func (e *editor) remove(lo, hi int) {
+	e.clusters = slices.Delete(e.clusters, lo, hi)
+	e.atoms = slices.DeleteFunc(e.atoms, func(a string) bool {
+		return !slices.Contains(e.clusters, a)
+	})
+}
+
+// isAtom reports whether the character c is an atom.
+func (e *editor) isAtom(c string) bool {
+	return slices.Contains(e.atoms, c)
+}
+
+// insertAtom puts text at the cursor as one character, in place of the
+// selection.
+func (e *editor) insertAtom(text string) {
+	e.deleteSelection()
+	e.atoms = append(e.atoms, text)
+	e.insert(text)
+}
+
+// addAtom keeps text whole as one character from now on, in the text there
+// already too.
+func (e *editor) addAtom(text string) {
+	e.atoms = append(e.atoms, text)
+	cur := len(strings.Join(e.clusters[:e.cur], ""))
+	e.set(e.text())
+	e.cur = e.cursorAt(cur)
 }
 
 // selection is the selected range of clusters, [lo, hi), when there is one.
@@ -79,7 +112,7 @@ func (e *editor) deleteSelection() bool {
 	if !ok {
 		return false
 	}
-	e.clusters = slices.Delete(e.clusters, lo, hi)
+	e.remove(lo, hi)
 	e.cur = lo
 	return true
 }
@@ -94,13 +127,38 @@ func (e *editor) insert(s string) {
 	e.cur = e.cursorAt(len(head))
 }
 
-// set replaces the text, leaving the cursor where it is.
+// set replaces the text, leaving the cursor where it is. Each atom in it
+// becomes one cluster; the rest splits into grapheme clusters.
 func (e *editor) set(text string) {
 	e.clusters = e.clusters[:0]
-	g := graphemes.FromString(text)
-	for g.Next() {
-		e.clusters = append(e.clusters, g.Value())
+	for text != "" {
+		at, atom := e.nextAtom(text)
+		g := graphemes.FromString(text[:at])
+		for g.Next() {
+			e.clusters = append(e.clusters, g.Value())
+		}
+		if atom == "" {
+			return
+		}
+		e.clusters = append(e.clusters, atom)
+		text = text[at+len(atom):]
 	}
+}
+
+// nextAtom is the first atom in text and where it starts; ("", len(text))
+// when there is none. Of atoms starting at the same place, the longest wins.
+func (e *editor) nextAtom(text string) (at int, atom string) {
+	at = len(text)
+	for _, a := range e.atoms {
+		if a == "" {
+			continue
+		}
+		i := strings.Index(text, a)
+		if i >= 0 && (i < at || i == at && len(a) > len(atom)) {
+			at, atom = i, a
+		}
+	}
+	return at, atom
 }
 
 // cursorAt is the cursor after byte n of the text: past every cluster that
@@ -121,7 +179,7 @@ func (e *editor) backspace() {
 		return
 	}
 	if e.cur > 0 {
-		e.clusters = slices.Delete(e.clusters, e.cur-1, e.cur)
+		e.remove(e.cur-1, e.cur)
 		e.cur--
 	}
 }
@@ -131,7 +189,7 @@ func (e *editor) del() {
 		return
 	}
 	if e.cur < len(e.clusters) {
-		e.clusters = slices.Delete(e.clusters, e.cur, e.cur+1)
+		e.remove(e.cur, e.cur+1)
 	}
 }
 
@@ -176,7 +234,7 @@ func (e *editor) killWord() {
 	for i > 0 && !e.space(i-1) {
 		i--
 	}
-	e.clusters = slices.Delete(e.clusters, i, e.cur)
+	e.remove(i, e.cur)
 	e.cur = i
 }
 
@@ -186,7 +244,7 @@ func (e *editor) deleteWordRight() {
 	if e.deleteSelection() {
 		return
 	}
-	e.clusters = slices.Delete(e.clusters, e.cur, e.wordRight())
+	e.remove(e.cur, e.wordRight())
 }
 
 // charClass sorts characters for word moves: a word is a run of one class
@@ -298,4 +356,33 @@ func (e *editor) wrap(w int) wrapped {
 	}
 	breakRow(0)
 	return out
+}
+
+// vertical moves the cursor dir rows (-1 up, 1 down) through the text laid
+// out w cells wide, keeping its column on screen as far as the row reaches,
+// and reports whether there was a row to move to. With extend the selection
+// grows, as with shift.
+func (e *editor) vertical(dir, w int, extend bool) bool {
+	text := e.wrap(w)
+	target := text.curRow + dir
+	if target < 0 || target >= len(text.rows) {
+		return false
+	}
+	cell := ansi.StringWidth(strings.Join(text.rows[text.curRow][:min(text.curCol, len(text.rows[text.curRow]))], ""))
+	row := text.rows[target]
+	last := len(row)
+	if target+1 < len(text.rows) && text.starts[target+1] == text.starts[target]+len(row) {
+		last = max(0, last-1) // the end of a row the text wraps out of is the next row's start
+	}
+	col, width := 0, 0
+	for col < last {
+		cw := ansi.StringWidth(row[col])
+		if width+cw > cell {
+			break
+		}
+		width += cw
+		col++
+	}
+	e.moveTo(text.starts[target]+col, extend)
+	return true
 }

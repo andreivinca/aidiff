@@ -13,11 +13,12 @@ const (
 )
 
 // styles are the pane's colors, OpenCode's default palette; plain when color
-// is off. selected marks the input's selected text and keeps its own
+// is off. selected marks the input's selected text and atom its blocks (a
+// pasted image's token, a /resume a stop offers); both keep their own
 // background on the composer's.
 type styles struct {
 	text, muted, rail, panel, cursor, heading, code, warn, bad, bold lipgloss.Style
-	selected                                                         lipgloss.Style
+	selected, atom                                                   lipgloss.Style
 }
 
 // newStyles is the pane's palette, and the same palette on the composer's
@@ -28,7 +29,7 @@ func newStyles(color bool) (base, composer styles) {
 	if !color {
 		plain := lipgloss.NewStyle()
 		base = styles{text: plain, muted: plain, rail: plain, panel: plain, cursor: plain, heading: plain, code: plain,
-			warn: plain, bad: plain, bold: plain, selected: plain}
+			warn: plain, bad: plain, bold: plain, selected: plain, atom: plain}
 		return base, base
 	}
 	base = styles{
@@ -44,6 +45,8 @@ func newStyles(color bool) (base, composer styles) {
 		bold:    lipgloss.NewStyle().Bold(true),
 		// selected: OpenCode's selection color, the same on any background
 		selected: lipgloss.NewStyle().Foreground(textColor).Background(lipgloss.Color("#3a4a6b")),
+		// atom: a chip in the heading's purple, apart from the selection's blue
+		atom: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#d4c2ff")).Background(lipgloss.Color("#3d3160")),
 	}
 	return base, base.on(composerBackground)
 }

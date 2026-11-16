@@ -84,8 +84,11 @@ func (p *Pane) sentLocked(m Outgoing, pasted []pendingImage, err error) {
 	}
 	p.removePendingLocked(m.ID)
 	if p.input.empty() {
-		p.input.insert(m.Text)
 		p.images = append(p.images, pasted...)
+		for _, img := range pasted {
+			p.input.addAtom(img.token)
+		}
+		p.input.insert(m.Text)
 	}
 }
 

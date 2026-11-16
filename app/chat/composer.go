@@ -19,10 +19,7 @@ func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
 	if hints {
 		reserved++
 	}
-	inner := max(1, w-5) // rail, gap, two cells of left padding, right padding
-	if w < 6 {
-		inner = w
-	}
+	inner := inputWidth(w)
 	input := p.inputRowsLocked(inner, min(maxInputRows, budget-reserved), showCursor)
 	room := budget - reserved - len(input)
 	var notes []string
@@ -140,7 +137,7 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 	if popup {
 		return primary, []Hint{{"enter", "choose"}, {"tab", "complete"}, {"esc", "close"}}
 	}
-	secondary = append(slices.Clone(p.hostKeys), Hint{"ctrl+v", "paste"}, Hint{"shift+enter", "newline"})
+	secondary = append(slices.Clone(p.hostKeys), Hint{"shift+enter", "newline"})
 	if p.runningTurnLocked() != "" {
 		if primary.Key == "enter" {
 			primary.Label = "queue"
@@ -161,6 +158,14 @@ func (p *Pane) hintText(h Hint) string {
 	return p.styles.text.Render(h.Key) + " " + p.styles.muted.Render(h.Label)
 }
 
+// inputWidth is how many cells of a pane w wide the input's rows take.
+func inputWidth(w int) int {
+	if w < 6 {
+		return w
+	}
+	return max(1, w-5) // rail, gap, two cells of left padding, right padding
+}
+
 // inputRowsLocked wraps the draft and keeps the cursor's row in view.
 func (p *Pane) inputRowsLocked(w, limit int, showCursor bool) []string {
 	c := p.composer
@@ -173,7 +178,7 @@ func (p *Pane) inputRowsLocked(w, limit int, showCursor bool) []string {
 	}
 	text := p.input.wrap(w)
 	lo, hi, _ := p.input.selection()
-	first := min(max(0, text.curRow-limit+1), max(0, len(text.rows)-limit))
+	first := p.inputWindowLocked(text, limit)
 	out := make([]string, 0, limit)
 	for i := first; i < len(text.rows) && i < first+limit; i++ {
 		col := -1
@@ -185,17 +190,33 @@ func (p *Pane) inputRowsLocked(w, limit int, showCursor bool) []string {
 	return out
 }
 
+// inputWindowLocked is the first row of a draft taller than the input box
+// that the box shows, limit rows at most. Like a textarea, the box stays where
+// it is while the cursor moves within it and scrolls only as far as the cursor
+// leaves it; it stays full when the draft shrinks. mu must be held.
+func (p *Pane) inputWindowLocked(text wrapped, limit int) int {
+	top := min(p.inputTop, text.curRow)
+	if text.curRow >= top+limit {
+		top = text.curRow - limit + 1
+	}
+	p.inputTop = max(0, min(top, len(text.rows)-limit))
+	return p.inputTop
+}
+
 // inputRowLocked draws one row of the draft, whose first character is
 // character start of the text: the cursor on column col (none when col < 0,
 // a block after the text when col is past it), and characters lo to hi
-// selected. Neighbors of one style are drawn together. mu must be held.
+// selected. A block (an atom) is drawn as a chip; the cursor and the
+// selection show over it. Neighbors of one style are drawn together. mu must
+// be held.
 func (p *Pane) inputRowLocked(row []string, start, col, lo, hi int) string {
 	c := p.composer
-	styleOf := [...]lipgloss.Style{c.text, c.selected, c.cursor}
+	styleOf := [...]lipgloss.Style{c.text, c.selected, c.cursor, c.atom}
 	const (
 		plain = iota
 		selected
 		cursor
+		atom
 	)
 	var b, run strings.Builder
 	kind := plain
@@ -212,8 +233,10 @@ func (p *Pane) inputRowLocked(row []string, start, col, lo, hi int) string {
 			k = cursor
 		case idx >= lo && idx < hi:
 			k = selected
+		case p.input.isAtom(ch):
+			k = atom
 		}
-		if k != kind || k == cursor {
+		if k != kind || k == cursor || k == atom {
 			flush()
 			kind = k
 		}

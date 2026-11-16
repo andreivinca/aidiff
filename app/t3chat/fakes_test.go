@@ -24,7 +24,8 @@ type fakeServer struct {
 
 	mu         sync.Mutex
 	handlers   t3client.ThreadEvents
-	fail       error // what Dispatch returns
+	fail       error  // what Dispatch returns
+	refuse     string // a command type Dispatch fails, as a server that does not know it
 	catalogErr error
 	catalogs   int // FetchCatalog calls
 	persisted  []persistCall
@@ -53,6 +54,9 @@ func (f *fakeServer) Dispatch(_ context.Context, cmd t3client.Command) error {
 	f.cmds <- cmd
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.refuse != "" && cmd["type"] == f.refuse {
+		return fmt.Errorf("unknown command %s", f.refuse)
+	}
 	return f.fail
 }
 

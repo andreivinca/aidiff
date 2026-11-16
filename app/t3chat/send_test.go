@@ -64,10 +64,46 @@ func TestBackend_Prompts(t *testing.T) {
 	require.NoError(t, s.b.Dismiss(ctx, "req-11"))
 	assert.Equal(t, t3client.DismissQuestionCommand("th-1", "req-11"), nextCommand(t, f))
 	require.NoError(t, s.b.Interrupt(ctx, "run-2"))
-	assert.Equal(t, t3client.InterruptCommand("th-1", "run-2"), nextCommand(t, f))
+	assert.Equal(t, t3client.ThreadStopCommand("th-1"), nextCommand(t, f), "a stop stops the whole thread, subagents included")
 
 	require.NoError(t, s.b.CheckImage("small.png", 1024))
 	require.EqualError(t, s.b.CheckImage("clipboard.png", t3client.MaxImageBytes+1), "clipboard.png is 10.0 MB; T3 takes images up to 10 MB")
+}
+
+func TestBackend_InterruptFallsBackToTheRun(t *testing.T) {
+	f := newFakeServer(fixture())
+	s := subscribe(t, f)
+	f.mu.Lock()
+	f.refuse = "thread.stop"
+	f.mu.Unlock()
+	require.NoError(t, s.b.Interrupt(context.Background(), "run-2"), "the run's interrupt went through")
+	assert.Equal(t, "thread.stop", nextCommand(t, f)["type"])
+	assert.Equal(t, t3client.Command{"type": "run.interrupt", "threadId": "th-1", "runId": "run-2"}, nextCommand(t, f),
+		"a server without thread.stop interrupts the run, and its queue goes on")
+
+	f.mu.Lock()
+	f.refuse = ""
+	f.mu.Unlock()
+	f.set(errors.New("connection lost"), nil)
+	require.EqualError(t, s.b.Interrupt(context.Background(), "run-2"), "connection lost", "the stop's own failure is reported")
+}
+
+func TestBackend_InterruptHoldsTheQueue(t *testing.T) {
+	snap := fixture()
+	snap.Runs = append(snap.Runs, t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued", UserMessageID: "m3"})
+	f := newFakeServer(snap)
+	s := subscribe(t, f)
+	require.NoError(t, s.b.Interrupt(context.Background(), "run-2"))
+	assert.Equal(t, t3client.ThreadStopCommand("th-1"), nextCommand(t, f))
+	select {
+	case cmd := <-f.cmds:
+		t.Fatalf("the queue waits for /resume; got %v", cmd)
+	default:
+	}
+	reply, err := s.run(t, "/resume", "")
+	require.NoError(t, err)
+	assert.Equal(t, "the queued messages go on", reply.Note)
+	assert.Equal(t, t3client.QueueResumeCommand("th-1"), nextCommand(t, f))
 }
 
 func TestBackend_Settings(t *testing.T) {

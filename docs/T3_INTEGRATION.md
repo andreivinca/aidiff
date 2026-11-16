@@ -17,7 +17,7 @@ The code lives in `app/t3client` (protocol and connection), `app/t3chat` (the T3
 | `aidiff --t3-threads` | Print `id  idle\|running  project  branch  title` per thread and exit. |
 | ctrl+p → **T3: Connect to server…** (any mode) | Lists `local` (if a runtime file exists), servers with a saved login, and `~/.ssh/config` hosts. Text typed without `://` is taken as `ssh://<text>`. |
 
-In T3 mode the connection is made **before** the full-screen UI starts, so SSH and auth errors print as plain text. The chat pane opens on its own when a thread is selected, unless `--no-chat` is given. The status bar shows the machine name and `T3`, and the info popup gets a `**T3 Code**: <label>` header with the cwd and thread id.
+In T3 mode the connection is made **before** the full-screen UI starts, so SSH and auth errors print as plain text. The chat pane opens on its own when a thread is selected, unless `--no-chat` is given. The status bar shows the machine name, the T3 project and `T3`, and the info popup gets a `**T3 Code**: <label>` header with the cwd and thread id.
 
 ## 2. Connecting
 
@@ -79,7 +79,8 @@ Commands sent through `dispatchCommand`:
 - `message.dispatch`, with `dispatchMode: queue_after_active`, plus `titleSeed` and `freshContext` when set
 - `runtime-request.respond`
 - `thread.user-input.dismiss`
-- `run.interrupt`
+- `thread.stop` (the stop dialog), and `run.interrupt` for a server without it
+- `queue.resume` (`/resume`)
 - `thread.interaction-mode.set`
 - `thread.fork` (side chat)
 - `thread.model-selection.set`
@@ -152,8 +153,8 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | ctrl+delete (or alt) | Delete the word after the cursor |
 | shift+← / shift+→ / shift+home / shift+end | Select; typing or pasting replaces the selection, backspace and delete remove it |
 | ctrl+shift+← / ctrl+shift+→ | Select a word at a time |
-| ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, text is inserted |
-| ↑ / ↓ | Move in the slash popup, otherwise scroll |
+| ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, which the input treats as one character (the cursor skips it, one delete removes it and drops the image), text is inserted |
+| ↑ / ↓ | Move in the slash popup, else move the cursor a line up or down in a multi-line draft, else (on its first or last line) scroll |
 | PgUp / PgDn | Scroll by a page |
 | End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |
@@ -176,7 +177,8 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 | `/effort [level]` *(T3)* | Show or set the reasoning effort, if the model offers one |
 | `/plan`, `/build` (`/default`) *(T3)* | Interaction mode |
 | `/mode approval-required\|auto-accept-edits\|auto\|full-access` *(T3)* | Runtime mode |
-| `/clear` *(T3)* | The next message starts a fresh provider context; the transcript stays |
+| `/resume` *(T3)* | Send the queued messages a stop held back |
+| `/clear` *(T3)* | Start a new thread in the same project, with this thread's model, runtime and interaction modes; it takes the screen and the chat |
 | `/side` (`/btw`) `<question>` *(T3)* | Fork a side chat and ask it |
 | `/attach <image>` | Attach an image file |
 | `/work` | Toggle between expanded and summarized agent work |
@@ -185,10 +187,10 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 The popup lists the pane's own commands, then T3's, then the provider's own slash commands from the catalog (for the thread's provider). When names clash, the pane's command wins over T3's, and both over the provider's. An unknown `/command` is sent to the agent as text. The popup ranks matches as exact, then prefix, alias, substring, then description; provider commands come last. It shows at most 6 rows. The catalog is fetched once per connection, shared by the threads a pane follows on it; a failed fetch is said under the composer and retried only by a command that needs it.
 
 ### Stop guard
-- Esc (with no popup open) or `/stop` during an active run opens **Stop agent?**, with **Keep working** selected.
+- Esc (with no popup open) or `/stop` while the agent works opens **Stop agent?**, with **Keep working** selected. The agent works while a run runs, and also after its run ended while subagents, background commands or monitors it launched are still going.
 - ← picks Stop, → picks Keep, Tab toggles, Enter confirms, Esc keeps working.
 - **Any other key cancels the dialog. Letters never approve a stop.**
-- Only the run that was asked about is interrupted, and only if it is still active. The draft is kept.
+- Stop sends `thread.stop`, as T3's own stop does: the server interrupts the run actually running (never a queued one; queued messages are held), marks it stopped even when the provider does not answer, cancels orphaned background work and stops the subagent threads it delegated to. T3 holds the queue after a stop: when messages were queued, the input is filled with `/resume` as one block that one delete removes (when it is empty; a draft stays and the note names the command), so Enter sends them. It is sent only if the run asked about is still active. The draft is kept.
 - If the run finished while the dialog was open, the dialog says nothing will be interrupted.
 
 ### Activity view

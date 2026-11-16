@@ -173,9 +173,11 @@ func (p *Pane) SendModifiedKey(k uv.KeyPressEvent) bool {
 	return true
 }
 
-// SendKey moves the cursor (left, right, home, end, delete), picks a row of
-// the slash-command popup (up, down) or scrolls the transcript (up, down,
-// page up, page down, and end once the cursor is at the end of the input).
+// SendKey moves the cursor (left, right, home, end, delete, and up and down
+// between the input's rows), picks a row of the slash-command popup (up,
+// down) or scrolls the transcript (up on the input's first row, down on its
+// last, page up, page down, and end once the cursor is at the end of the
+// input).
 func (p *Pane) SendKey(k uv.KeyPressEvent) {
 	p.lock()
 	defer p.mu.Unlock()
@@ -212,11 +214,11 @@ func (p *Pane) composerKeyLocked(k uv.KeyPressEvent) {
 		p.input.del()
 		p.inputChanged()
 	case uv.KeyUp:
-		if !p.moveSuggestionLocked(-1) {
+		if !p.moveSuggestionLocked(-1) && !p.input.vertical(-1, inputWidth(p.width), k.Mod&uv.ModShift != 0) {
 			p.scrollLocked(1)
 		}
 	case uv.KeyDown:
-		if !p.moveSuggestionLocked(1) {
+		if !p.moveSuggestionLocked(1) && !p.input.vertical(1, inputWidth(p.width), k.Mod&uv.ModShift != 0) {
 			p.scrollLocked(-1)
 		}
 	case uv.KeyPgUp:

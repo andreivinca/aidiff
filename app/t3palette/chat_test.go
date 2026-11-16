@@ -8,6 +8,7 @@ import (
 
 	"github.com/umputun/revdiff/app/chat"
 	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/t3chat"
 	"github.com/umputun/revdiff/app/t3client"
 )
 
@@ -72,4 +73,34 @@ func TestPalette_OpensChatPanes(t *testing.T) {
 	h.p.mu.Lock()
 	defer h.p.mu.Unlock()
 	assert.True(t, h.p.chatOpenLocked(), "the palette steers the pane it opened")
+}
+
+func TestPalette_ClearStartsANewThreadLikeTheChats(t *testing.T) {
+	a := newFakeSession("ssh://a", testShell())
+	a.server.launchAs = "fresh"
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, loginID))
+	model := &t3client.ModelSelection{InstanceID: "claude", Model: "claude-opus-4"}
+	h.p.startClearThread(t3chat.NewThread{From: loginID, Model: model, RuntimeMode: "auto", InteractionMode: "plan"})
+
+	h.program.mu.Lock()
+	msgs := expand(h.program.msgs[0])
+	h.program.mu.Unlock()
+	assert.Contains(t, flashes(msgs), "T3: starting a new thread in Sabra2…")
+	replace := find[splitview.ReplaceInnerMsg](t, msgs)
+	shown, ok := replace.Model.(fakeModel)
+	require.True(t, ok)
+	assert.Equal(t, "fresh", shown.review.thread().ID, "the new thread takes the screen, and the chat follows it")
+	assert.Equal(t, []t3client.LaunchRequest{{ProjectID: "p1", Model: *model, RuntimeMode: "auto", InteractionMode: "plan"}},
+		a.server.launches, "in the same project, with the chat thread's settings")
+}
+
+func TestPalette_ClearNeedsTheChatsThreadOnScreen(t *testing.T) {
+	a := newFakeSession("ssh://a", testShell())
+	a.server.launchAs = "fresh"
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, olderID))
+	h.p.startClearThread(t3chat.NewThread{From: loginID})
+	h.program.mu.Lock()
+	defer h.program.mu.Unlock()
+	assert.Equal(t, []string{"T3: new thread: the chat's thread is no longer on screen"}, flashes(h.program.msgs))
+	assert.Empty(t, a.server.launches)
 }

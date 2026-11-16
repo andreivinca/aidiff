@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,6 +108,34 @@ func (s sourceSetup) machineName(localHost string) string {
 		return s.t3.Session.MachineName()
 	}
 	return localHost
+}
+
+// projectName is the project the reviewed files belong to: the T3
+// project's title, else the folder of the repository or the one browsed.
+func (s sourceSetup) projectName() string {
+	if s.t3 != nil {
+		p := s.t3.Target.Project
+		if p.Title != "" {
+			return p.Title
+		}
+		return baseName(p.WorkspaceRoot)
+	}
+	if s.gitRoot != "" {
+		return baseName(s.gitRoot)
+	}
+	return baseName(s.workDir)
+}
+
+// baseName is the last element of a path, "" for no path or the root.
+func baseName(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	base := path.Base(filepath.ToSlash(dir))
+	if base == "/" || base == "." {
+		return ""
+	}
+	return base
 }
 
 // reviewDescription is the info popup's description: the user's, under the

@@ -222,16 +222,21 @@ func (t *Palette) launch(s Session, p t3client.Project) tea.Cmd {
 		if err != nil {
 			return t3Error("start thread", err)
 		}
-		id, err := s.Server().LaunchThread(ctx, t3client.LaunchRequest{ProjectID: p.ID, Model: model, RuntimeMode: runtimeMode})
-		if err != nil {
-			return t3Error("start thread", err)
-		}
-		sh, err := t.shellWithThread(ctx, s, id)
-		if err != nil {
-			return t3Error("open new thread", err)
-		}
-		return t.openMsg(s, sh, id)
+		return t.launchMsg(ctx, s, t3client.LaunchRequest{ProjectID: p.ID, Model: model, RuntimeMode: runtimeMode})
 	})
+}
+
+// launchMsg starts the thread req on s and opens it with its chat.
+func (t *Palette) launchMsg(ctx context.Context, s Session, req t3client.LaunchRequest) tea.Msg {
+	id, err := s.Server().LaunchThread(ctx, req)
+	if err != nil {
+		return t3Error("start thread", err)
+	}
+	sh, err := t.shellWithThread(ctx, s, id)
+	if err != nil {
+		return t3Error("open new thread", err)
+	}
+	return t.openMsg(s, sh, id)
 }
 
 // openThread is the palette row of one of s's threads: it fetches the list

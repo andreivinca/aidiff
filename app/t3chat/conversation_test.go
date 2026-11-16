@@ -207,3 +207,23 @@ func TestBackend_DropsOtherThreadsAndOldSubscriptions(t *testing.T) {
 		"events of a replaced subscription are dropped")
 	require.Equal(t, 1, f.fetches(), "a new subscription on the same server fetches no catalog")
 }
+
+func TestThread_RunsTheStopDialogOffers(t *testing.T) {
+	th := newThread("th-1")
+	th.runs["run-1"] = t3client.Run{ID: "run-1", Ordinal: 1, Status: "completed"}
+	assert.Empty(t, th.activeRuns(), "nothing goes on")
+
+	th.runs["run-2"] = t3client.Run{ID: "run-2", Ordinal: 2, Status: "running"}
+	th.runs["run-3"] = t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued"}
+	assert.Equal(t, []string{"run-2", "run-3"}, th.activeRuns(), "the running run comes before a newer queued one")
+
+	th.runs["run-2"] = t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed"}
+	assert.Equal(t, []string{"run-3"}, th.activeRuns(), "only a queued run left")
+
+	delete(th.runs, "run-3")
+	th.subagents["a1"] = t3client.Subagent{ID: "a1", Title: "review", Status: "running"}
+	assert.Equal(t, []string{"run-2"}, th.activeRuns(), "a subagent still working keeps the agent stoppable")
+
+	th.subagents["a1"] = t3client.Subagent{ID: "a1", Title: "review", Status: "completed"}
+	assert.Empty(t, th.activeRuns())
+}

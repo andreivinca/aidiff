@@ -125,3 +125,59 @@ func TestPane_EscapeWhileIdle(t *testing.T) {
 	assert.Contains(t, view(p), "nothing is running")
 	assert.Empty(t, f.calls)
 }
+
+func TestPane_StopWithQueuedMessagesOffersResume(t *testing.T) {
+	conv := fixture()
+	conv.Queued = []Queued{{ID: "m3", Text: "now it works"}}
+	p, f := newTestPane(t, 90, 20, conv)
+	resumed := 0
+	f.setCommands(Command{Name: "/resume", Description: "send the queued messages a stop held back", Run: func(string) (Reply, error) {
+		resumed++
+		return Reply{Note: "the queued messages go on"}, nil
+	}})
+	stop := func() {
+		p.SendText("\x1b")
+		p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
+		ask(t, p, f, func() {
+			p.SendText("\r")
+		})
+	}
+	stop()
+	assert.Equal(t, "/resume", p.input.text(), "an empty input is filled with /resume, so enter sends the queue")
+	assert.Contains(t, view(p), "stopped; enter sends the queued messages")
+	p.SendText("\x7f")
+	assert.Empty(t, p.input.text(), "one backspace removes /resume whole")
+	p.SendText("/resume")
+	locked(p, func() {
+		assert.Len(t, p.input.clusters, len("/resume"), "typed by hand it is plain text")
+	})
+	p.SendText("\r")
+	assert.Equal(t, 1, resumed, "enter runs /resume")
+	assert.Empty(t, p.input.text())
+
+	p.SendText("\x15draft")
+	stop()
+	assert.Equal(t, "draft", p.input.text(), "a draft is kept")
+	assert.Contains(t, view(p), "/resume sends them")
+}
+
+func TestPane_StopWithoutResumeOrQueue(t *testing.T) {
+	p, f := newTestPane(t, 90, 20, fixture())
+	f.setCommands(Command{Name: "/resume"})
+	p.SendText("\x1b")
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
+	ask(t, p, f, func() {
+		p.SendText("\r")
+	})
+	assert.Empty(t, p.input.text(), "nothing queued, nothing to resume")
+
+	conv := fixture()
+	conv.Queued = []Queued{{ID: "m3", Text: "queued"}}
+	p, f = newTestPane(t, 90, 20, conv)
+	p.SendText("\x1b")
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
+	ask(t, p, f, func() {
+		p.SendText("\r")
+	})
+	assert.Empty(t, p.input.text(), "a backend without /resume gets no /resume")
+}

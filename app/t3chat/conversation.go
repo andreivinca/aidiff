@@ -51,22 +51,47 @@ func (t *thread) state() chat.AgentState {
 	return chat.AgentState(latest.Status)
 }
 
-// activeRuns are the runs still going, newest first.
+// activeRuns are the runs the stop dialog may stop, the one to stop first:
+// the runs actually running, newest first, then those still queued. While
+// no run runs but work it launched goes on in the background (subagents,
+// background commands), the latest run that started stands for it, so the
+// user can still stop the agent.
 func (t *thread) activeRuns() []string {
-	var runs []t3client.Run
-	for _, r := range t.runs {
-		if r.Active() {
-			runs = append(runs, r)
+	var running, queued []t3client.Run
+	var latest *t3client.Run
+	for id := range t.runs {
+		r := t.runs[id]
+		switch {
+		case r.Status == "queued":
+			queued = append(queued, r)
+		case r.Active():
+			running = append(running, r)
+		}
+		if r.Status != "queued" && (latest == nil || r.Ordinal > latest.Ordinal) {
+			latest = &r
 		}
 	}
-	slices.SortFunc(runs, func(a, b t3client.Run) int {
+	newest := func(a, b t3client.Run) int {
 		return cmp.Compare(b.Ordinal, a.Ordinal)
-	})
-	ids := make([]string, 0, len(runs))
-	for _, r := range runs {
+	}
+	slices.SortFunc(running, newest)
+	slices.SortFunc(queued, newest)
+	if len(running) == 0 && latest != nil && t.backgroundWork() {
+		running = append(running, *latest)
+	}
+	ids := make([]string, 0, len(running)+len(queued))
+	for _, r := range append(running, queued...) {
 		ids = append(ids, r.ID)
 	}
 	return ids
+}
+
+// backgroundWork reports whether work of the agent's goes on outside a run:
+// a subagent, a background command or a monitor not done yet.
+func (t *thread) backgroundWork() bool {
+	return slices.ContainsFunc(t.activity(), func(a chat.Activity) bool {
+		return a.State == chat.Pending || a.State == chat.Running || a.State == chat.Waiting
+	})
 }
 
 // queue is what the server holds queued: the messages of runs not started

@@ -70,15 +70,47 @@ func (p *Pane) confirmStopLocked() {
 		return
 	}
 	b := p.backend
-	err := p.requestLocked(request{run: func(ctx context.Context) error {
-		if err := b.Interrupt(ctx, choice.turn); err != nil {
-			return fmt.Errorf("stop failed: %w", err)
-		}
-		return nil
-	}})
+	queued := len(p.conv.Queued) > 0
+	err := p.requestLocked(request{
+		run: func(ctx context.Context) error {
+			if err := b.Interrupt(ctx, choice.turn); err != nil {
+				return fmt.Errorf("stop failed: %w", err)
+			}
+			return nil
+		},
+		finish: func(err error) {
+			if err == nil && (queued || len(p.conv.Queued) > 0) {
+				p.offerResumeLocked()
+			}
+		},
+	})
 	if err != nil {
 		p.note = err.Error()
 	}
+}
+
+// resumeCommand is the backend command that sends the messages a stop held
+// back in the queue.
+const resumeCommand = "/resume"
+
+// offerResumeLocked puts the backend's /resume in an empty input after a
+// stop that held queued messages back, so enter sends them. It is one
+// character, which one delete removes whole. A draft stays
+// as it is, and the note says what to type. Nothing happens for a backend
+// without /resume. mu must be held.
+func (p *Pane) offerResumeLocked() {
+	if p.backend == nil || !slices.ContainsFunc(p.backend.Commands(), func(c Command) bool {
+		return c.Name == resumeCommand
+	}) {
+		return
+	}
+	if !p.input.empty() {
+		p.note = "stopped; the queued messages wait: " + resumeCommand + " sends them"
+		return
+	}
+	p.input.insertAtom(resumeCommand)
+	p.inputChanged()
+	p.note = "stopped; enter sends the queued messages"
 }
 
 // turnRunningLocked reports whether the turn is still going; mu must be

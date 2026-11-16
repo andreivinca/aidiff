@@ -1,6 +1,7 @@
 package t3client
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"strings"
@@ -13,6 +14,8 @@ type LaunchRequest struct {
 	Message     string // the agent's first instruction
 	Model       ModelSelection
 	RuntimeMode string // what the agent may do on its own; see RuntimeModeCommand
+	// InteractionMode is "default" (build) or "plan"; empty means default.
+	InteractionMode string
 }
 
 // LaunchThread starts a thread in the project's folder and returns its id.
@@ -34,7 +37,7 @@ func (c *Conn) LaunchThread(ctx context.Context, req LaunchRequest) (string, err
 		"title":             title,
 		"modelSelection":    req.Model,
 		"runtimeMode":       req.RuntimeMode,
-		"interactionMode":   "default",
+		"interactionMode":   cmp.Or(req.InteractionMode, "default"),
 		"workspaceStrategy": map[string]any{"type": "root"},
 	}
 	if msg != "" {

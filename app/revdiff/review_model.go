@@ -68,6 +68,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 	model, err := ui.NewModel(ui.ModelConfig{
 		T3Mode:               src.t3 != nil,
 		MachineName:          src.machineName(d.hostname),
+		Project:              src.projectName(),
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,

@@ -48,9 +48,19 @@ func (b *Backend) outgoing(m chat.Outgoing) t3client.OutgoingMessage {
 	return msg
 }
 
-// Interrupt stops the run turnID.
+// Interrupt stops the agent: the whole thread, subagents and background
+// work included, as T3's own stop does. T3 holds the queued messages back
+// after it, until /resume. A server that does not know thread.stop gets the
+// interrupt of the run turnID instead.
 func (b *Backend) Interrupt(ctx context.Context, turnID string) error {
-	return b.srv.Dispatch(ctx, t3client.InterruptCommand(b.threadID, turnID)) //nolint:wrapcheck // the pane says what failed
+	err := b.srv.Dispatch(ctx, t3client.ThreadStopCommand(b.threadID))
+	if err == nil || ctx.Err() != nil {
+		return err //nolint:wrapcheck // the pane says what failed
+	}
+	if fallback := b.srv.Dispatch(ctx, t3client.InterruptCommand(b.threadID, turnID)); fallback != nil {
+		return err //nolint:wrapcheck // the stop's own failure says more than the fallback's
+	}
+	return nil
 }
 
 // Decide answers the approval request promptID.

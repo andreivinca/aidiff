@@ -29,9 +29,18 @@ func (b *Backend) ownCommands() []chat.Command {
 		{Name: "/plan", Description: "plan mode: the agent proposes before it acts", Run: b.interactionCmd("plan")},
 		{Name: "/build", Aliases: []string{"/default"}, Description: "build mode: the agent acts", Run: b.interactionCmd("default")},
 		{Name: "/mode", Args: "<runtime-mode>", Description: "what the agent may do on its own", Run: b.modeCmd, Complete: b.modeSuggestions},
-		{Name: "/clear", Description: "start a fresh session with the next message; earlier messages stay", Run: b.clearCmd},
+		{Name: "/clear", Description: b.clearDescription(), Run: b.clearCmd},
+		{Name: "/resume", Description: "send the queued messages a stop held back", Run: b.resumeCmd},
 		{Name: "/side", Aliases: []string{"/btw"}, Args: "<question>", Description: "ask a side question in a new side chat", Run: b.sideCmd},
 	}
+}
+
+// clearDescription says what /clear does here.
+func (b *Backend) clearDescription() string {
+	if b.newThread != nil {
+		return "start over in a new thread of this project"
+	}
+	return "start a fresh session with the next message; earlier messages stay"
 }
 
 // Commands are T3's slash commands, then the commands the thread's
@@ -128,14 +137,30 @@ func (b *Backend) modeSuggestions(prefix string) []chat.Suggestion {
 	return out
 }
 
-// clearCmd arms a fresh provider session for the next message, like T3's
-// /clear: the transcript stays, the agent's context does not.
+// clearCmd starts over in a new thread of the same project, with this
+// thread's model and modes, and switches the screen and the chat to it.
+// Without a way to switch threads it arms a fresh provider session for the
+// next message instead, like T3's /clear: the transcript stays, the agent's
+// context does not.
 func (b *Backend) clearCmd(string) (chat.Reply, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.newThread != nil {
+		b.newThread(NewThread{From: b.threadID, Model: b.thread.model, RuntimeMode: b.thread.runtimeMode,
+			InteractionMode: b.thread.interaction})
+		return chat.Reply{Note: "starting a new thread…"}, nil
+	}
 	b.fresh = true
 	b.showLocked()
 	return chat.Reply{Note: "the next message starts a fresh session; the transcript stays"}, nil
+}
+
+// resumeCmd starts the next queued message, which T3 holds back after a
+// stop.
+func (b *Backend) resumeCmd(string) (chat.Reply, error) {
+	reply := b.dispatch("resume", t3client.QueueResumeCommand(b.threadID))
+	reply.Note = "the queued messages go on"
+	return reply, nil
 }
 
 // sideCmd forks the thread into a side chat and asks the question there.

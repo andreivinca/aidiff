@@ -58,7 +58,7 @@ func TestReplaceDivider(t *testing.T) {
 
 func TestModel_StatusBarMachineIdentity(t *testing.T) {
 	m := testModel([]string{"a.go"}, nil)
-	m.identity = newMachineIdentity("workstation", false)
+	m.identity = newMachineIdentity("workstation", "", false)
 	m.layout.width = 120
 	local := ansi.Strip(m.statusBarWithMachine())
 	assert.True(t, strings.HasPrefix(local, "workstation"))
@@ -79,7 +79,7 @@ func TestModel_StatusBarMachineIdentity(t *testing.T) {
 func TestModel_StatusBarMachineIdentityFitsTheWidth(t *testing.T) {
 	m := testModel([]string{"a.go"}, nil)
 	m.file.name = strings.Repeat("deep/", 20) + "file.go"
-	m.identity = newMachineIdentity("workstation", true)
+	m.identity = newMachineIdentity("workstation", "", true)
 	for _, width := range []int{8, 30, 60} {
 		m.layout.width = width
 		bar := m.statusBarWithMachine()
@@ -89,10 +89,17 @@ func TestModel_StatusBarMachineIdentityFitsTheWidth(t *testing.T) {
 	assert.Equal(t, 120, m.layout.width, "fitting the bar leaves the model's width alone")
 }
 
+func TestMachineIdentity_Project(t *testing.T) {
+	assert.Equal(t, "box | Sabra2 | T3", newMachineIdentity("box", "Sabra2", true).label(" | "), "the project follows the host")
+	assert.Equal(t, "box | aidiff", newMachineIdentity("box", "aidiff", false).label(" | "))
+	assert.Equal(t, "aidiff", newMachineIdentity("", "aidiff", false).label(" | "))
+	assert.NotContains(t, newMachineIdentity("box", "pro\x1b[31mject", false).label(" | "), "\x1b")
+}
+
 func TestNewMachineIdentity_Sanitizes(t *testing.T) {
-	id := newMachineIdentity("host\x1b[31m\nname", false)
+	id := newMachineIdentity("host\x1b[31m\nname", "", false)
 	assert.NotContains(t, id.label(" | "), "\x1b")
 	assert.NotContains(t, id.label(" | "), "\n")
-	assert.Equal(t, "T3", newMachineIdentity("", true).label(" | "))
-	assert.Empty(t, newMachineIdentity("", false).label(" | "))
+	assert.Equal(t, "T3", newMachineIdentity("", "", true).label(" | "))
+	assert.Empty(t, newMachineIdentity("", "", false).label(" | "))
 }

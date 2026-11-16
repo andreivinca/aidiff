@@ -62,6 +62,7 @@ type Pane struct {
 	activity   activityView
 	stop       stopConfirmation
 	input      editor
+	inputTop   int               // the draft's first row shown in the input box; it moves only to keep the cursor in view
 	sug        int               // the selected row of the slash-command popup, kept within it where shown
 	sugHidden  bool              // esc closed the popup until the input changes
 	answers    map[string]Answer // answers given so far to the questions of answersFor

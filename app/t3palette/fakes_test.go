@@ -95,6 +95,8 @@ type fakeServer struct {
 	fetchErr error
 	watching []string // the threads watched, in order
 	sent     []string // the messages sent
+	launches []t3client.LaunchRequest
+	launchAs string // the id a launched thread gets; empty refuses launches
 }
 
 func (f *fakeServer) FetchShell(context.Context) (t3client.Shell, error) {
@@ -123,8 +125,15 @@ func (f *fakeServer) DefaultModel(context.Context, t3client.Project) (t3client.M
 	return t3client.ModelSelection{}, nil
 }
 
-func (f *fakeServer) LaunchThread(context.Context, t3client.LaunchRequest) (string, error) {
-	return "", errors.New("not supported")
+func (f *fakeServer) LaunchThread(_ context.Context, req t3client.LaunchRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.launchAs == "" {
+		return "", errors.New("not supported")
+	}
+	f.launches = append(f.launches, req)
+	f.shell.Threads = append(f.shell.Threads, t3client.Thread{ID: f.launchAs, ProjectID: req.ProjectID, Title: "New thread"})
+	return f.launchAs, nil
 }
 
 func (f *fakeServer) SendMessage(_ context.Context, _, text string) error {

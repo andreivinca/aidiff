@@ -32,8 +32,25 @@ type server interface {
 // backends share the server's catalog, so it is fetched once however often
 // the user switches threads.
 type Chats struct {
-	srv     server // nil when there is no connection
-	catalog *catalog
+	srv       server // nil when there is no connection
+	catalog   *catalog
+	newThread func(NewThread) // /clear's; nil keeps T3's fresh session
+}
+
+// NewThread is the thread /clear asks for in place of the one it was typed
+// in, From, with that thread's settings as the chat last knew them.
+type NewThread struct {
+	From            string
+	Model           *t3client.ModelSelection // nil when not known yet
+	RuntimeMode     string
+	InteractionMode string
+}
+
+// OnNewThread makes /clear start a new thread through start, which must not
+// block, instead of arming a fresh session in the same thread. It applies to
+// the backends opened afterwards.
+func (c *Chats) OnNewThread(start func(NewThread)) {
+	c.newThread = start
 }
 
 // NewChats serves the threads reached over conn, which may be nil.
@@ -55,7 +72,12 @@ func (c *Chats) Thread(threadID string) chat.Backend {
 	if c.srv == nil {
 		return nil
 	}
-	return newBackend(c.srv, c.catalog, threadID)
+	b := newBackend(c.srv, c.catalog, threadID)
+	if c.newThread != nil {
+		b.newThread = c.newThread
+		b.commands = b.ownCommands() // /clear says what it does now
+	}
+	return b
 }
 
 // Backend is one thread of a T3 server as a chat.Backend. One mutex guards
@@ -66,6 +88,8 @@ type Backend struct {
 	catalog  *catalog
 	threadID string
 	commands []chat.Command // T3's own slash commands
+	// newThread starts the thread /clear asks for; nil arms a fresh session
+	newThread func(NewThread)
 
 	mu      sync.Mutex
 	sub     uint64      // the current subscription; events of older ones are dropped

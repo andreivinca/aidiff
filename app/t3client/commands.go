@@ -53,9 +53,27 @@ func DismissQuestionCommand(threadID, requestID string) Command {
 	return Command{"type": "thread.user-input.dismiss", "threadId": threadID, "requestId": requestID}
 }
 
-// InterruptCommand stops the thread's run.
+// InterruptCommand stops one run of the thread; its queued messages go on.
+// ThreadStopCommand is the stronger stop.
 func InterruptCommand(threadID, runID string) Command {
 	return Command{"type": "run.interrupt", "threadId": threadID, "runId": runID}
+}
+
+// QueueResumeCommand starts the thread's next queued message, which a stop
+// holds back.
+func QueueResumeCommand(threadID string) Command {
+	return Command{"type": "queue.resume", "threadId": threadID}
+}
+
+// ThreadStopCommand stops whatever the thread's agent is doing, the way T3's
+// own stop does: the server picks the run actually running (never a queued
+// one), or the latest one while background work it launched is still going,
+// marks it stopped even when the provider does not answer the interrupt,
+// cancels the orphaned background work and stops the subagent threads the
+// thread delegated to. It holds the thread's queued messages back until
+// QueueResumeCommand.
+func ThreadStopCommand(threadID string) Command {
+	return Command{"type": "thread.stop", "threadId": threadID}
 }
 
 // InteractionModeCommand switches the thread between "default" (build) and

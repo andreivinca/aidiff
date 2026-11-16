@@ -129,7 +129,8 @@ func (p *Pane) attachImageLocked(img Image) {
 	if before := p.input.before(); before != "" && before != " " && before != "\n" {
 		p.input.insert(" ")
 	}
-	p.insertLocked(token + " ")
+	p.input.insertAtom(token)
+	p.insertLocked(" ")
 	p.note = fmt.Sprintf("%s attached: %s, %s", token, img.Name, sizeText(len(img.Data)))
 }
 
