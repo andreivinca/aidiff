@@ -76,7 +76,7 @@ Behavior:
 - Together the panes take `--terminal-width` percent of the width (default 45, range 10–90). Space is split evenly when a pane opens.
 - A pane is refused, with a message, if any pane would end up narrower than 10 columns. The review always keeps at least 20.
 - Every separator can be dragged with the mouse. It shows `↔` on its middle row and turns blue while dragging.
-- A click focuses the pane under the pointer, and alt+[ / alt+] move focus left / right without wrapping: review ↔ pane 1 ↔ pane 2. While a T3 server is connected, alt+[ on the review shows the projects panel and focuses it; alt+[ again shows the connections panel.
+- A click focuses the pane under the pointer, and alt+← / alt+→ move focus left / right without wrapping: file tree ↔ diff ↔ pane 1 ↔ pane 2. The review's tree (or markdown TOC) and diff are stops of their own; coming from a pane lands on the diff, coming from the left on the tree. While the review is typing (annotation, search) or shows a popup, the keys skip its panes. While a T3 server is connected, alt+← on the review shows the projects panel and focuses it; alt+← again shows the connections panel.
 - When a pane's program exits, the pane closes. When the last pane closes, the review gets the full width back.
 - The status bar runs along the bottom of the whole window, under the panels and panes. While a chat pane has focus, the right of the bar shows `← activity` (while the input is empty) and `ctrl+p commands`; the chat draws no hint row of its own. It shows the machine name, then the project (the repository or folder name, or the T3 project's title), plus `T3` when the review is a T3 thread.
 
@@ -87,7 +87,7 @@ Behavior:
 - **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root. A T3 server reached by URL on another machine has folders that are not this machine's, so the pane starts in aidiff's own directory.
 - **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` on the T3 session's own SSH connection, without setting up the host's port forwards a second time, and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.
 - It is a full xterm-256color terminal: colors, application cursor keys, bracketed paste, and mouse support for programs that ask for it.
-- While it has focus, every key except alt+[, alt+], ctrl+p and ctrl+q goes to the terminal. While a T3 server is connected, ctrl+b and ctrl/alt+1…9 are taken too (projects panel).
+- While it has focus, every key except alt+←, alt+→, ctrl+p and ctrl+q goes to the terminal. While a T3 server is connected, ctrl+b and ctrl/alt+1…9 are taken too (projects panel).
 - Scrollback is kept but cannot be scrolled yet (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 
 ## 7. Command palette
@@ -99,8 +99,8 @@ ctrl+p opens it from anywhere.
 | Open Terminal | always |
 | T3: Connect to server… | not connected |
 | T3: New thread…, T3: Projects… | connected |
-| Diff… | the run's own review of a git repository is on screen |
-| T3: Diff… | a T3 review is on screen |
+| Diff View… | the run's own review of a git repository is on screen |
+| T3: Diff View… | a T3 review is on screen |
 | T3: Send annotations to agent | a thread is open |
 | T3: Reconnect, T3: Connect to another server… | connected |
 | Quit | always |
@@ -116,10 +116,10 @@ ctrl+p opens it from anywhere.
 
 - **Connect:** use `--t3 local | ssh://host | https://…`, or the palette at any time. Login is automatic where possible; otherwise pair with `--t3-pair`.
 - **Review a thread:** shows the thread's uncommitted changes (default) or its branch changes against the base (`--t3-source branch`). The diff refreshes when the agent finishes a step. Switching threads from the palette saves the current review's annotations to history.
-- **Change the diff (git folder):** **Diff…** compares the uncommitted changes (staged and unstaged), only the unstaged or only the staged ones, the unpushed ones (against the branch's upstream), the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref). A branch is compared from the commit it shares with HEAD, so the review shows what this branch changed. Annotations are kept. Not offered for stdin, a compare pair, a plain folder or `--all-files`.
-- **Change the diff (T3):** **T3: Diff…** compares the uncommitted changes, the unpushed ones, the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref); annotations are kept.
-- **Projects panel:** connecting shows a panel on the left listing the server's projects, numbered by title (`▸` marks the one on screen, `●` one whose agent is running). Picking one (↑/↓ and Enter, its number, or a click) hides the panel and switches to the project's **workspace**. ctrl+b shows and hides it; ctrl+1…9 (or alt+1…9, for terminals that do not report ctrl with a digit) switch projects from anywhere. ctrl+p still lists the current project's threads.
-- **Connections panel:** always hidden; alt+[ reaches it past the projects panel (straight from the review when no server is connected), and it hides again once focus leaves it (alt+], Esc, a click elsewhere). It lists this machine (`local` and its host name), then every T3 server aidiff holds a connection to (`active` marks the one the projects panel and the palette work with), then **Connect to a server…**. `▸` marks where the review on screen comes from. The projects panel always lists the projects of the active connection. Enter on a server makes it the active one and shows its projects. Enter on `local` connects to T3 Code on this machine when it runs and shows its projects; otherwise the projects panel says no T3 Code runs here and lists none. Servers stay connected while another connection is active, so going back to one needs no new login.
+- **Change the diff (git folder):** **Diff View…** compares the uncommitted changes (staged and unstaged), only the unstaged or only the staged ones, the unpushed ones (against the branch's upstream), the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref). A branch is compared from the commit it shares with HEAD, so the review shows what this branch changed. Annotations are kept. Not offered for stdin, a compare pair, a plain folder or `--all-files`.
+- **Change the diff (T3):** **T3: Diff View…** compares the uncommitted changes, the unpushed ones, the branch against the default branch, or against a branch picked from the repository's branches (or a typed ref); annotations are kept.
+- **Projects panel:** connecting shows a panel on the left listing the server's projects, numbered by title (`▸` marks the one on screen, `●` one whose agent is running). Picking one (↑/↓ and Enter, its number, or a click) hides the panel and switches to the project's **workspace**. ctrl+b shows and hides it, and it closes as soon as focus leaves it for the review or a pane (alt+→, a click elsewhere), as the connections panel does; ctrl+1…9 (or alt+1…9, for terminals that do not report ctrl with a digit) switch projects from anywhere. ctrl+p still lists the current project's threads.
+- **Connections panel:** always hidden; alt+← reaches it past the projects panel (straight from the review when no server is connected), and it hides again once focus leaves it (alt+→, Esc, a click elsewhere). It lists this machine (`local` and its host name), then every T3 server aidiff holds a connection to, then **Connect to a server…**. `▸` marks the selected connection, which the projects panel and the palette work with; with no server selected that is `local`. Enter on a server selects it and shows its projects. Enter on `local` connects to T3 Code on this machine when it runs and shows its projects; otherwise it selects this machine and hides the projects panel, which exists only for a T3 server (ctrl+b then passes through). Servers stay connected while another connection is active, so going back to one needs no new login.
 - **Workspaces:** each project has its own review, chat pane, terminals, pane sizes and focus. The first visit opens its most recently updated thread (or its root when it has none) with a chat. Leaving a project keeps its workspace running in the background: going back brings it as it was, with the thread, cursor, annotations, chat input and pane sizes the user left, and the diff refreshes. The run's own local review and the terminals opened with it are not kept: they close the first time a project is opened (their annotations go to history). The quit dialog counts the panes of every workspace.
 - **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
@@ -140,7 +140,7 @@ These are handled by aidiff before any pane sees them, and they can't be remappe
 | ctrl+p | command palette |
 | ctrl+b | show / hide the T3 projects panel (while connected to a T3 server) |
 | ctrl+1 … ctrl+9, alt+1 … alt+9 | switch to T3 project 1–9 (while connected) |
-| alt+[ / alt+] | focus the panel to the left / right, stopping at either end. Past the leftmost panel alt+[ shows the T3 projects panel (when connected), then the connections panel |
+| alt+← / alt+→ | focus the panel to the left / right, stopping at either end; the review's file tree and diff count as two panels. Past the leftmost panel alt+← shows the T3 projects panel (when connected), then the connections panel |
 | ctrl+q | quit |
 
 **Safe quit:**

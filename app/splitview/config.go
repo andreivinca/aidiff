@@ -50,8 +50,8 @@ type Config struct {
 // Keys are the keys the split handles before anything reaches the wrapped
 // model or a pane, in Bubble Tea's key notation.
 type Keys struct {
-	Focus     string // move focus right without wrapping; alt+] by default
-	FocusLeft string // move focus left without wrapping; alt+[ by default
+	Focus     string // move focus right without wrapping; alt+right by default
+	FocusLeft string // move focus left without wrapping; alt+left by default
 	Quit      string // quit, asking first; ctrl+q by default
 	Palette   string // open or close the command palette; ctrl+p by default
 	Sidebar   string // show or hide Config.Sidebar; ctrl+b by default
@@ -88,10 +88,10 @@ func (c Config) withDefaults() Config {
 
 func (k Keys) withDefaults() Keys {
 	if k.Focus == "" {
-		k.Focus = "alt+]"
+		k.Focus = "alt+right"
 	}
 	if k.FocusLeft == "" {
-		k.FocusLeft = "alt+["
+		k.FocusLeft = "alt+left"
 	}
 	if k.Quit == "" {
 		k.Quit = "ctrl+q"

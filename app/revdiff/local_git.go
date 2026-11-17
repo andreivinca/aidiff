@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// localGit answers what the Diff… command asks of the repository a local
+// localGit answers what the Diff View… command asks of the repository a local
 // review shows: its branches, the current one's upstream, the default
 // branch, and merge bases.
 type localGit struct {

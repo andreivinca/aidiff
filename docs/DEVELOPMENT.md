@@ -52,7 +52,7 @@ Bubble Tea v1 queries the terminal background in its package initializer, before
 
 Keep the copy until the dependency bounds the startup query or stops making it during init. `TestStartupSilentTerminal` (`app/revdiff/startup_test.go`) checks startup against a terminal that never answers.
 
-Trade-off: a terminal that answers after 150 ms (a slow SSH link) answers after termenv gave up. The late reply reaches Bubble Tea as input and is parsed as keys: `alt+]`, a runes key `11;rgb:…`, `alt+\`, and an unknown CSI sequence for the cursor report. The alt+] key now moves panel focus right, so a late response can move focus when another panel is open.
+Trade-off: a terminal that answers after 150 ms (a slow SSH link) answers after termenv gave up. The late reply reaches Bubble Tea as input and is parsed as keys: `alt+]`, a runes key `11;rgb:…`, `alt+\`, and an unknown CSI sequence for the cursor report. Panel focus moves with alt+← / alt+→, so the stray `alt+]` reaches the focused panel as a key instead of moving focus.
 
 ## 6. Tests
 

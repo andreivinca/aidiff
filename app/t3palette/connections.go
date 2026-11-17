@@ -22,7 +22,7 @@ const connectionsHeader = 2
 var connectionsHelp = []string{
 	"",
 	" enter   use connection",
-	" alt+]   back",
+	" alt+→   back",
 }
 
 // connectionsSidebar is the split's outer sidebar: this machine, then the T3
@@ -41,8 +41,7 @@ type connRow struct {
 	session Session // the server's connection; nil for this machine without T3 Code, and the connect row
 	local   bool    // this machine
 	connect bool    // the row that connects to another server
-	live    bool    // the connection the projects sidebar and the commands work with
-	shown   bool    // where the review on screen comes from
+	live    bool    // the selected connection, which the projects sidebar and the commands work with
 }
 
 // localLabel is the server name of the T3 Code on this machine.
@@ -73,10 +72,6 @@ func (b *connectionsSidebar) Shown() {
 func (t *Palette) connRows() []connRow {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	onScreen := localLabel
-	if t.onScreen != nil {
-		onScreen = t.onScreen.Session.Label()
-	}
 	byLabel := map[string]Session{}
 	for s := range t.held {
 		if prev, ok := byLabel[s.Label()]; !ok || (prev != t.live && !t.connected[prev]) {
@@ -87,15 +82,8 @@ func (t *Palette) connRows() []connRow {
 	if t.live != nil {
 		liveLabel = t.live.Label()
 	}
-	detail := func(name string, live bool) string {
-		if live {
-			return strings.TrimPrefix(name+" · active", " · ")
-		}
-		return name
-	}
-	localLive := liveLabel == localLabel || (t.live == nil && t.localOnly)
-	rows := []connRow{{label: localLabel, detail: detail(t.cfg.LocalName, localLive), session: byLabel[localLabel],
-		local: true, live: localLive, shown: onScreen == localLabel}}
+	localLive := t.live == nil || liveLabel == localLabel // no server selected: this machine is
+	rows := []connRow{{label: localLabel, detail: t.cfg.LocalName, session: byLabel[localLabel], local: true, live: localLive}}
 	labels := make([]string, 0, len(byLabel))
 	for l := range byLabel {
 		if l != localLabel {
@@ -105,8 +93,7 @@ func (t *Palette) connRows() []connRow {
 	slices.Sort(labels)
 	for _, l := range labels {
 		s := byLabel[l]
-		rows = append(rows, connRow{label: l, detail: detail(s.MachineName(), l == liveLabel), session: s,
-			live: l == liveLabel, shown: l == onScreen})
+		rows = append(rows, connRow{label: l, detail: s.MachineName(), session: s, live: l == liveLabel})
 	}
 	return append(rows, connRow{label: "Connect to a server…", connect: true})
 }
@@ -131,11 +118,10 @@ func (b *connectionsSidebar) View(width, height int, focused bool) string {
 	return strings.Join(lines[:min(len(lines), height)], "\n")
 }
 
-// row draws one connection: ▸ marks where the review on screen comes from,
-// the detail is dim.
+// row draws one connection: ▸ marks the selected one, the detail is dim.
 func (b *connectionsSidebar) row(r connRow, width int, selected, focused bool) string {
 	mark := "  "
-	if r.shown {
+	if r.live {
 		mark = "▸ "
 	}
 	style := lipgloss.NewStyle()
@@ -196,10 +182,11 @@ func (b *connectionsSidebar) Select(int) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// use acts on rows[i]: its connection becomes the one the projects sidebar
-// and the commands work with, and the projects show. This machine is its T3
-// Code, connected to when it runs, else no projects at all. The connect row
-// asks which server.
+// use acts on rows[i]: its connection becomes the selected one, which the
+// projects sidebar and the commands work with, and its projects show. This
+// machine is its T3 Code, connected to when it runs; without one there are
+// no projects and the projects sidebar hides. The connect row asks which
+// server.
 func (b *connectionsSidebar) use(rows []connRow, i int) (tea.Cmd, bool) {
 	r := rows[i]
 	switch {
@@ -214,11 +201,15 @@ func (b *connectionsSidebar) use(rows []connRow, i int) (tea.Cmd, bool) {
 		return b.t.connect(localLabel), true
 	}
 	b.t.useLocal()
-	return showConnection(b.t.cfg.LocalName, false), true
+	name := b.t.cfg.LocalName
+	return tea.Batch(
+		func() tea.Msg { return ui.MachineIdentityMsg{Name: name} },
+		func() tea.Msg { return splitview.HideSidebarMsg{} }, // the projects panel is a T3 server's
+	), true
 }
 
-// showConnection names the machine in the status bar and shows its
-// projects.
+// showConnection names the machine of a T3 server in the status bar and
+// shows its projects.
 func showConnection(machine string, t3 bool) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return ui.MachineIdentityMsg{Name: machine, T3: t3} },
@@ -227,14 +218,14 @@ func showConnection(machine string, t3 bool) tea.Cmd {
 }
 
 // useLocal selects this machine, which runs no T3 Code: there is no live
-// server, so the projects sidebar lists none. The connections stay open.
+// server, so there is no projects sidebar. The connections stay open.
 func (t *Palette) useLocal() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
 		return
 	}
-	t.live, t.localOnly, t.project = nil, true, nil
+	t.live, t.project = nil, nil
 	t.shell, t.shellAt = t3client.Shell{}, time.Time{}
 	t.closeLaterLocked(t.takeUnusedLocked())
 }
@@ -248,7 +239,6 @@ func (t *Palette) useLive(s Session) bool {
 		t.mu.Unlock()
 		return false
 	}
-	t.localOnly = false
 	if t.live != s {
 		if t.live == nil || t.live.Label() != s.Label() {
 			t.project = nil // a project belongs to its server

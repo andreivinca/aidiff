@@ -11,7 +11,7 @@ import (
 	"github.com/umputun/revdiff/app/t3client"
 )
 
-// diffChoice is what T3: Diff… chose. It applies to the reviews of the
+// diffChoice is what T3: Diff View… chose. It applies to the reviews of the
 // folder it was chosen in, since a branch named there may not exist in
 // another; reviews elsewhere compare what the run's --t3-source says.
 type diffChoice struct {

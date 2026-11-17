@@ -471,3 +471,24 @@ func TestRendererListsEveryFileAndFetchesPatchesOnDemand(t *testing.T) {
 	assert.Nil(t, lines)
 	assert.Equal(t, 3, got.count(), "nothing is asked for a file that is not listed")
 }
+
+func TestThreadRunning(t *testing.T) {
+	run := "run-1"
+	tests := []struct {
+		name string
+		th   Thread
+		want bool
+	}{
+		{"running", Thread{Status: "running", ActiveRunID: &run}, true},
+		{"queued and never started keeps its run id", Thread{Status: "queued", ActiveRunID: &run}, false},
+		{"idle", Thread{Status: "idle"}, false},
+		{"completed", Thread{Status: "completed"}, false},
+		{"a server without status: the run id says it", Thread{ActiveRunID: &run}, true},
+		{"a server without status, no run", Thread{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.th.Running())
+		})
+	}
+}

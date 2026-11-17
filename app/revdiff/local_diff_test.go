@@ -105,7 +105,7 @@ func TestLocalDiff(t *testing.T) {
 	require.NoError(t, err)
 	l := newLocalDiff(newReviewDeps(opts), src, "")
 	require.NotNil(t, l)
-	assert.Equal(t, splitview.Command{Name: "Diff…", Detail: "unstaged"}, withoutRun(l.command()), "the run's own diff")
+	assert.Equal(t, splitview.Command{Name: "Diff View…", Detail: "unstaged"}, withoutRun(l.command()), "the run's own diff")
 
 	picker, ok := l.pick(nil)().(splitview.ShowPickerMsg)
 	require.True(t, ok)

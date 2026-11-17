@@ -114,14 +114,12 @@ func TestSidebar_Mouse(t *testing.T) {
 	sb := &fakeSidebar{available: true}
 	hs := newSidebarHarness(sb)
 	hs.send(ShowSidebarMsg{})
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
-	require.Equal(t, focusDiff, hs.m.focus, "alt+] moves on to the review")
+	hs.send(tea.MouseMsg{X: 30, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	assert.Equal(t, 9, lastMouse(t, *hs.inner).X, "the review gets its own columns")
+	assert.False(t, hs.m.sideOpen, "focus left the sidebar for the review: it closes")
+	assert.Equal(t, 100, hs.lastInnerSize().Width, "and the review gets its columns back")
 
-	click := tea.MouseMsg{X: 30, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
-	hs.send(click)
-	last := (*hs.inner)[len(*hs.inner)-1]
-	assert.Equal(t, 9, last.(tea.MouseMsg).X, "the review gets its own columns")
-
+	hs.send(ShowSidebarMsg{})
 	hs.send(tea.MouseMsg{X: 5, Y: 7, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	assert.Equal(t, []int{7}, sb.clicks)
 	assert.False(t, hs.m.sideOpen, "a click that picks a row hides the sidebar")
@@ -130,9 +128,9 @@ func TestSidebar_Mouse(t *testing.T) {
 func TestSidebar_FocusLeftOfTheReviewShowsIt(t *testing.T) {
 	sb := &fakeSidebar{available: true}
 	hs := newSidebarHarness(sb)
-	altLeft := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}
+	altLeft := tea.KeyMsg{Type: tea.KeyLeft, Alt: true}
 	hs.send(altLeft)
-	assert.True(t, hs.m.sideOpen, "alt+[ on the leftmost panel shows the hidden sidebar")
+	assert.True(t, hs.m.sideOpen, "alt+← on the leftmost panel shows the hidden sidebar")
 	assert.Equal(t, focusSidebar, hs.m.focus, "and focuses it")
 	hs.send(altLeft)
 	assert.True(t, hs.m.sideOpen, "pressed again it stays")
@@ -159,8 +157,8 @@ func newOuterHarness(sb, outer *fakeSidebar) *harness {
 }
 
 var (
-	altLeft  = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}
-	altRight = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true}
+	altLeft  = tea.KeyMsg{Type: tea.KeyLeft, Alt: true}
+	altRight = tea.KeyMsg{Type: tea.KeyRight, Alt: true}
 )
 
 func TestOuter_ReachedPastTheSidebar(t *testing.T) {
@@ -168,7 +166,7 @@ func TestOuter_ReachedPastTheSidebar(t *testing.T) {
 	hs := newOuterHarness(sb, outer)
 
 	hs.send(altLeft)
-	assert.Equal(t, focusSidebar, hs.m.focus, "the first alt+[ shows the sidebar")
+	assert.Equal(t, focusSidebar, hs.m.focus, "the first alt+← shows the sidebar")
 	assert.False(t, hs.m.outerOpen)
 	hs.send(altLeft)
 	assert.Equal(t, focusOuter, hs.m.focus, "the next one the outer sidebar")
@@ -202,7 +200,7 @@ func TestOuter_WithoutTheSidebar(t *testing.T) {
 	outer := &fakeSidebar{available: true}
 	hs := newOuterHarness(&fakeSidebar{}, outer)
 	hs.send(altLeft)
-	assert.Equal(t, focusOuter, hs.m.focus, "with no sidebar to show, alt+[ goes straight to the outer one")
+	assert.Equal(t, focusOuter, hs.m.focus, "with no sidebar to show, alt+← goes straight to the outer one")
 	hs.send(altRight)
 	assert.Equal(t, focusDiff, hs.m.focus)
 	assert.False(t, hs.m.outerOpen)
@@ -221,7 +219,46 @@ func TestOuter_ClickElsewhereHidesIt(t *testing.T) {
 	require.True(t, hs.m.outerOpen)
 	hs.send(tea.MouseMsg{X: 80, Y: 5, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	assert.False(t, hs.m.outerOpen, "a click on the review moves focus there and hides it")
+	assert.False(t, hs.m.sideOpen, "and the sidebar beside it")
 	assert.Equal(t, focusDiff, hs.m.focus)
-	last := (*hs.inner)[len(*hs.inner)-2] // the click, before the resize the hiding sent
-	assert.Equal(t, 80-42, last.(tea.MouseMsg).X, "the click landed where it was drawn")
+	assert.Equal(t, 80-42, lastMouse(t, *hs.inner).X, "the click landed where it was drawn")
+}
+
+// lastMouse is the last mouse event the wrapped model received.
+func lastMouse(t *testing.T, got []tea.Msg) tea.MouseMsg {
+	t.Helper()
+	for i := len(got) - 1; i >= 0; i-- {
+		if m, ok := got[i].(tea.MouseMsg); ok {
+			return m
+		}
+	}
+	require.Fail(t, "no mouse event reached the wrapped model")
+	return tea.MouseMsg{}
+}
+
+func TestSidebar_ClosesWhenFocusLeaves(t *testing.T) {
+	sb, outer := &fakeSidebar{available: true}, &fakeSidebar{available: true}
+	hs := newOuterHarness(sb, outer)
+
+	hs.send(altLeft)
+	require.True(t, hs.m.sideOpen)
+	hs.send(altRight)
+	assert.False(t, hs.m.sideOpen, "alt+→ out of the sidebar closes it")
+	assert.Equal(t, focusDiff, hs.m.focus)
+	assert.Equal(t, 120, hs.lastInnerSize().Width, "the review gets its columns back")
+
+	hs.send(altLeft)
+	hs.send(altLeft)
+	require.True(t, hs.m.outerOpen)
+	assert.True(t, hs.m.sideOpen, "moving on into the outer sidebar keeps the sidebar")
+	hs.send(altRight)
+	assert.False(t, hs.m.outerOpen, "leaving the outer sidebar closes it")
+	assert.True(t, hs.m.sideOpen, "and comes back to the sidebar")
+	hs.send(altRight)
+	assert.False(t, hs.m.sideOpen, "then out of the sidebar closes it too")
+
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlB})
+	require.True(t, hs.m.sideOpen, "ctrl+b shows it, focused")
+	hs.send(OpenPaneMsg{Start: hs.config().Start})
+	assert.False(t, hs.m.sideOpen, "a pane that opens takes focus, and the sidebar closes")
 }

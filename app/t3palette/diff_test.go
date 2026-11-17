@@ -53,7 +53,7 @@ func TestPalette_DiffPicksWhatToCompare(t *testing.T) {
 	h.connect(t, "ssh://a", a)
 	shown := annotatedModel()
 
-	assert.Equal(t, "uncommitted", commandDetail(h.p.Commands(), "T3: Diff…"), "the run's default until something else is chosen")
+	assert.Equal(t, "uncommitted", commandDetail(h.p.Commands(), "T3: Diff View…"), "the run's default until something else is chosen")
 
 	picker := find[splitview.ShowPickerMsg](t, run(h.p.diffCmd(shown)))
 	assert.Equal(t, []string{"Uncommitted changes", "Unpushed changes", "Branch changes", "Against a branch…"}, labels(picker.Items))
@@ -65,7 +65,7 @@ func TestPalette_DiffPicksWhatToCompare(t *testing.T) {
 	replace := find[splitview.SwitchWorkspaceMsg](t, run(picker.OnPick(picker.Items[1])))
 	assert.Same(t, shown.store, replace.Model.(fakeModel).store, "the annotations come along")
 	h.swap(replace, shown)
-	assert.Contains(t, commandDetail(h.p.Commands(), "T3: Diff…"), "unpushed")
+	assert.Contains(t, commandDetail(h.p.Commands(), "T3: Diff View…"), "unpushed")
 
 	branches := find[splitview.ShowPickerMsg](t, run(picker.OnPick(picker.Items[3])))
 	assert.Equal(t, []string{"main", "origin/main"}, labels(branches.Items), "every branch but the current one")

@@ -295,28 +295,32 @@ func TestSplit_DirectionalFocus(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	hs.runPalette("open")
 	require.Len(t, hs.m.terms, 2)
+	right, left := tea.KeyRight, tea.KeyLeft
 	for _, step := range []struct {
-		key  rune
+		key  tea.KeyType
 		want int
 	}{
-		{']', 1},
-		{'[', 0},
-		{'[', focusDiff},
-		{'[', focusDiff},
-		{']', 0},
-		{']', 1},
-		{']', 1},
+		{right, 1},
+		{left, 0},
+		{left, focusDiff},
+		{left, focusDiff},
+		{right, 0},
+		{right, 1},
+		{right, 1},
 	} {
-		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{step.key}, Alt: true})
+		hs.send(tea.KeyMsg{Type: step.key, Alt: true})
 		assert.Equal(t, step.want, hs.m.focus)
 	}
-	assert.Empty(t, hs.term(0).text)
+	assert.Empty(t, hs.term(0).text, "alt+arrows move focus and reach no pane")
 	assert.Empty(t, hs.term(1).text)
-	hs.closeFocused()
-	hs.closeFocused()
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
-	assert.Equal(t, focusDiff, hs.m.focus)
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	assert.Equal(t, 1, hs.m.focus, "alt+[ no longer moves focus")
+	assert.Equal(t, []string{"\x1b["}, hs.term(1).text, "it reaches the focused pane as typed")
+	hs.closeFocused()
+	hs.closeFocused()
+	hs.send(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+	assert.Equal(t, focusDiff, hs.m.focus)
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	assert.Equal(t, focusDiff, hs.m.focus)
 }
 
@@ -330,7 +334,7 @@ func TestSplit_FocusRoutesKeys(t *testing.T) {
 	assert.Equal(t, []string{"j", "\x03"}, hs.term(0).text)
 	assert.Len(t, *hs.inner, before, "keys meant for the terminal never reach the diff")
 
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	assert.Equal(t, focusDiff, hs.m.focus)
 	hs.key("j")
 	assert.Len(t, hs.term(0).text, 2, "diff has focus now")
@@ -473,7 +477,7 @@ func TestSplit_MouseFocusAndRouting(t *testing.T) {
 
 func TestSplit_DragDividerResizes(t *testing.T) {
 	hs := newHarness(t, 100, 30)
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}) // focus the diff
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true}) // focus the diff
 	require.Equal(t, 60, hs.m.leftW)
 	innerBefore := len(*hs.inner)
 
@@ -558,7 +562,7 @@ func TestSplit_DragSeparatorBetweenTerminals(t *testing.T) {
 
 func TestSplit_QuitAsksWhileTerminalRuns(t *testing.T) {
 	hs := newHarness(t, 100, 30)
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true}) // diff focus
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true}) // diff focus
 
 	cmd := hs.key("q")
 	require.NotNil(t, cmd)
@@ -634,7 +638,7 @@ func TestSplit_CtrlQFromEitherPane(t *testing.T) {
 	for _, termFocused := range []bool{false, true} {
 		hs := newHarness(t, 100, 30)
 		if !termFocused {
-			hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+			hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 		}
 		before := len(*hs.inner)
 
@@ -832,7 +836,7 @@ func TestSplit_ConfiguredKeys(t *testing.T) {
 func TestSplit_CursorOnlyWhenTerminalFocused(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	assert.Contains(t, hs.m.columnView(hs.m.leftBlock()), "C")
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	assert.NotContains(t, hs.m.columnView(hs.m.leftBlock()), "C")
 }
 
@@ -911,7 +915,7 @@ func TestSplit_EscapeAndCtrlBracketsDoNotNavigate(t *testing.T) {
 	assert.Equal(t, 0, hs.m.focus)
 	assert.Equal(t, []string{"\x1b", "\x1d"}, hs.term(0).text)
 
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	before := len(*hs.inner)
 	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, focusDiff, hs.m.focus)

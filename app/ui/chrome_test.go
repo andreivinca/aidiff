@@ -125,3 +125,15 @@ func TestModel_StatusLineCarriesPaneHints(t *testing.T) {
 	assert.Equal(t, ansi.Strip(m.StatusLine(140, nil)), ansi.Strip(m.StatusLine(140, [][2]string{})), "no hints: the review's bar alone")
 	assert.Equal(t, 60, m.layout.width, "rendering leaves the model's width alone")
 }
+
+func TestModel_MachineIdentityKeepsProjectAndBranch(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.identity = newMachineIdentity("boxdev", "aidiff", true, "main")
+	updated, _ := m.Update(MachineIdentityMsg{Name: "boxdev", T3: true})
+	m = updated.(Model)
+	assert.Equal(t, "boxdev | aidiff | main | T3", m.identity.label(" | "), "a connection names the machine, not the review's project")
+
+	updated, _ = m.Update(MachineIdentityMsg{Name: "other", Project: "Sabra2", Branch: "dev", T3: true})
+	m = updated.(Model)
+	assert.Equal(t, "other | Sabra2 | dev | T3", m.identity.label(" | "), "named ones replace them")
+}

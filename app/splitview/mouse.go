@@ -10,7 +10,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.palette.open || m.quitDialog {
 		return m, nil // modal: swallow
 	}
-	return m.hideOuterOffFocus(m.routeMouse(msg))
+	return m.routeMouse(msg)
 }
 
 // routeMouse hands a mouse event to what is under the pointer.

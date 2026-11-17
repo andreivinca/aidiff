@@ -16,7 +16,8 @@ type machineIdentity struct {
 	t3      bool   // the review comes from T3 Code
 }
 
-// MachineIdentityMsg updates the active host after connecting through the palette.
+// MachineIdentityMsg updates the active host after connecting through the
+// palette. A Project or Branch left empty keeps the review's own.
 type MachineIdentityMsg struct {
 	Name    string
 	Project string
@@ -33,10 +34,18 @@ func newMachineIdentity(name, project string, t3 bool, branch ...string) machine
 	return machineIdentity{branch: b, name: style.SanitizeFilenameForDisplay(name), project: style.SanitizeFilenameForDisplay(project), t3: t3}
 }
 
-// handleMachineIdentity shows the host the palette connected to.
+// handleMachineIdentity shows the host the palette connected to. The
+// review's project and branch stay unless the message names others: a
+// connection says which machine, not what the review on screen shows.
 func (m Model) handleMachineIdentity(msg MachineIdentityMsg) Model {
-	m.identity = newMachineIdentity(msg.Name, msg.Project, msg.T3)
-	m.identity.branch = style.SanitizeFilenameForDisplay(msg.Branch)
+	project, branch := m.identity.project, m.identity.branch
+	m.identity = newMachineIdentity(msg.Name, msg.Project, msg.T3, msg.Branch)
+	if msg.Project == "" {
+		m.identity.project = project
+	}
+	if msg.Branch == "" {
+		m.identity.branch = branch
+	}
 	return m
 }
 

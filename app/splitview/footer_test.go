@@ -66,11 +66,11 @@ func TestFooter_StatusLineSpansTheWindow(t *testing.T) {
 	assert.True(t, strings.HasPrefix(lines[28], "F"+strings.Repeat("s", 19)+"│body"), "the sidebar ends above it too: %q", lines[28])
 
 	hs.m.terms[0] = hintTerm{fakeTerm: hs.term(0)}
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true}) // sidebar → review
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true}) // review → the pane
+	hs.send(tea.KeyMsg{Type: tea.KeyRight, Alt: true}) // sidebar → review
+	hs.send(tea.KeyMsg{Type: tea.KeyRight, Alt: true}) // review → the pane
 	lines = strings.Split(hs.m.View(), "\n")
 	assert.True(t, strings.HasSuffix(lines[29], " enter:send"), "the focused pane's hints sit on the right: %q", lines[29])
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	lines = strings.Split(hs.m.View(), "\n")
 	assert.False(t, strings.HasSuffix(lines[29], " enter:send"), "and leave with its focus")
 

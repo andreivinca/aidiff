@@ -32,7 +32,7 @@ type Config struct {
 	NoChat      bool // never open a chat pane along with a thread
 	NoWatch     bool // no live refresh of the thread on screen
 	// DiffLabel names what a review compares by default (the run's
-	// --t3-source), for a review T3: Diff… did not change.
+	// --t3-source), for a review T3: Diff View… did not change.
 	DiffLabel string
 	Chat      chat.Config // how chat panes look and what they reach on this machine
 	// LocalName names this machine in the connections sidebar.
@@ -77,11 +77,10 @@ type Palette struct {
 	shellAt    time.Time                    // when shell was fetched
 	refreshing Session                      // the session a background fetch of shell runs for
 	project    *t3client.Project            // the live server's project new threads start in; nil until chosen
-	diff       diffChoice                   // what T3: Diff… chose for the reviews of its folder
+	diff       diffChoice                   // what T3: Diff View… chose for the reviews of its folder
 	ws         string                       // the split's workspace on screen: wsKey of its review, "" for the run's local one
 	parked     map[string]*Review           // the reviews of the workspaces not on screen, by key; their sessions stay open
 	connected  map[Session]bool             // the newest connection to each server the user connected to; they stay open
-	localOnly  bool                         // this machine is selected, with no T3 Code on it: live is nil
 	stores     map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
 }
 
@@ -230,7 +229,6 @@ func (t *Palette) connectLocked(s Session) {
 		}
 	}
 	t.connected[s] = true
-	t.localOnly = false
 }
 
 // prepare records r as on its way to the screen, which keeps its session

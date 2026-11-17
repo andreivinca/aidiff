@@ -19,7 +19,7 @@ The code lives in `app/t3client` (protocol and connection), `app/t3chat` (the T3
 
 **Projects panel.** Once a server is connected (from the palette, which shows the panel at once, or with `--t3`, where it starts hidden) ctrl+b shows a panel on the left with the server's projects, numbered 1… by title. Picking a project (Enter, its digit, a click, or ctrl+N / alt+N from anywhere) hides the panel and puts the project's workspace on screen: each project of a server (keyed by server label and project id, so a reconnect finds it again) is a splitview workspace with its own review, chat and terminals. A new one opens the project's most recently updated thread with its chat, or the project's root when it has no thread. A thread opened from ctrl+p goes to its project's workspace. A parked workspace keeps its session open and stops its live watch; going back refreshes it. The run's local review is the unnamed workspace and closes on the first switch. The leaving review is saved to history as a safety net, and each review keeps its annotation store for the run (`app/t3palette/projects.go`). The panel is `t3palette.Palette.Sidebar()`, shown in splitview's generic sidebar slot.
 
-**Connections panel.** `t3palette.Palette.Connections()`, in splitview's outer sidebar slot, reached with alt+[ past the projects panel. It lists this machine (`Config.LocalName`, the host name) and the servers the palette holds a session to, one row per server label. Using one (`useLive`) makes it the live session, clears the cached listing so the projects panel fetches that server's projects, and updates the status bar's machine. The `local` row stands for T3 Code on this machine: using it connects to it (`connect("local")`) when its runtime file names a live server, else selects this machine with no live server (`useLocal`, `localOnly`), and the projects panel says there is no T3 Code here. Every server the user connected to stays open (`Palette.connected`, one per label; a reconnect replaces its predecessor) until the run ends.
+**Connections panel.** `t3palette.Palette.Connections()`, in splitview's outer sidebar slot, reached with alt+← past the projects panel. It lists this machine (`Config.LocalName`, the host name) and the servers the palette holds a session to, one row per server label. Using one (`useLive`) makes it the live session, clears the cached listing so the projects panel fetches that server's projects, and updates the status bar's machine. The `local` row stands for T3 Code on this machine: using it connects to it (`connect("local")`) when its runtime file names a live server, else selects this machine with no live server (`useLocal`) and hides the projects panel, which is available only while a server is live. `▸` marks the live server, or `local` while there is none. Every server the user connected to stays open (`Palette.connected`, one per label; a reconnect replaces its predecessor) until the run ends.
 
 In T3 mode the connection is made **before** the full-screen UI starts, so SSH and auth errors print as plain text. The chat pane opens on its own when a thread is selected, unless `--no-chat` is given. The status bar shows the machine name, the T3 project and `T3`, and the info popup gets a `**T3 Code**: <label>` header with the cwd and thread id.
 
@@ -72,8 +72,8 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 |---|---|
 | `orchestration.subscribeShell` | Projects and threads snapshot (`FetchShell`), and run start/finish notifications (`WatchThread`) |
 | `orchestration.subscribeThread` | The full transcript stream for the chat pane |
-| `review.getDiffPreview` | File list (`metadataOnly`) and per-file diffs. `sourceKind` is `branch-range` or `working-tree`; a branch range takes the `baseRef` **T3: Diff…** chose, else the server compares with the default branch. |
-| `vcs.listRefs` | The repository's branches, local and remote, for **T3: Diff…** (`refKind: all`, up to 200) |
+| `review.getDiffPreview` | File list (`metadataOnly`) and per-file diffs. `sourceKind` is `branch-range` or `working-tree`; a branch range takes the `baseRef` **T3: Diff View…** chose, else the server compares with the default branch. |
+| `vcs.listRefs` | The repository's branches, local and remote, for **T3: Diff View…** (`refKind: all`, up to 200) |
 | `orchestration.launchThread` | New thread, with the caller's `runtimeMode` (the palette sends `full-access`), `interactionMode: default` and workspace root. |
 | `orchestration.dispatchCommand` | Every thread command (below), each with a UUIDv4 `commandId` |
 | `server.getConfig` | Provider catalog: models, capabilities, slash commands, default model |
@@ -117,7 +117,7 @@ Switching thread from the palette:
 
 **T3: Send annotations to agent** sends the formatted annotations as a message that starts with `Review annotations from aidiff:`.
 
-**T3: Diff…** changes what the review on screen compares; its detail names the current choice. It offers:
+**T3: Diff View…** changes what the review on screen compares; its detail names the current choice. It offers:
 - **Uncommitted changes**: the working tree.
 - **Unpushed changes**: the branch against its upstream (`origin/<branch>`), uncommitted included. Listed only when the branch has an upstream.
 - **Branch changes**: the branch against the default branch, uncommitted included.

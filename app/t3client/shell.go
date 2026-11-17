@@ -36,13 +36,19 @@ type Thread struct {
 	Branch                 *string         `json:"branch"`
 	WorktreePath           *string         `json:"worktreePath"`
 	ActiveRunID            *string         `json:"activeRunId"`
+	Status                 string          `json:"status"` // running, queued, idle, completed, failed, interrupted…
 	ActiveProviderThreadID *string         `json:"activeProviderThreadId"`
 	LatestRunCompletedAt   *string         `json:"latestRunCompletedAt"`
 	UpdatedAt              string          `json:"updatedAt"`
 }
 
-// Running reports whether the thread's agent is mid-run.
+// Running reports whether the thread's agent is mid-run. The thread's
+// status says it; a run that was queued and never started keeps an active
+// run id, so the id alone counts only from a server that sends no status.
 func (t Thread) Running() bool {
+	if t.Status != "" {
+		return t.Status == "running"
+	}
 	return t.ActiveRunID != nil
 }
 

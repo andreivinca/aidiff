@@ -102,6 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.flushRefresh(nil)
 	}
 	model, cmd := m.update(msg)
+	model, cmd = model.(Model).closeUnfocused(cmd)
 	// any message may have ended what kept the wrapped model busy
 	return model.(Model).flushRefresh(cmd)
 }

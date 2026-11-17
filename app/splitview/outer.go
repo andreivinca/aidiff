@@ -8,7 +8,7 @@ import (
 
 // The outer sidebar (Config.OuterSidebar) is a second column left of the
 // sidebar, such as a list of connections. It is hidden except while it has
-// focus: alt+[ (Keys.FocusLeft) reaches it from the sidebar, or from the
+// focus: alt+← (Keys.FocusLeft) reaches it from the sidebar, or from the
 // leftmost panel when there is no sidebar to show, and it hides again as
 // soon as focus leaves it. It takes no number keys.
 
@@ -102,15 +102,24 @@ func (m Model) outerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // focusLeft is Keys.FocusLeft: the panel to the left, and past the leftmost
-// one the hidden sidebar, then the outer sidebar.
+// one the hidden sidebar, then the outer sidebar. The wrapped model's own
+// panes come first while it has focus (paneFocuser).
 func (m Model) focusLeft() (tea.Model, tea.Cmd) {
 	switch {
 	case m.focus == focusOuter:
 		return m, nil
 	case m.focus == focusSidebar:
 		return m.showOuter()
+	case m.focus == 0:
+		m = m.moveFocus(-1)
+		return m.enterInner(true), nil
 	case m.focus != focusDiff:
 		return m.moveFocus(-1), nil
+	}
+	if next, moved := m.innerPaneMove(false); moved {
+		return next, nil
+	}
+	switch {
 	case m.sideOpen:
 		return m.moveFocus(-1), nil
 	case m.sidebarAvailable():
@@ -120,14 +129,27 @@ func (m Model) focusLeft() (tea.Model, tea.Cmd) {
 }
 
 // focusRight is Keys.Focus: the panel to the right; leaving the outer
-// sidebar hides it.
+// sidebar hides it. The wrapped model's own panes come first while it has
+// focus (paneFocuser).
 func (m Model) focusRight() (tea.Model, tea.Cmd) {
-	if m.focus == focusOuter {
+	switch m.focus {
+	case focusOuter:
 		m.outerReturn = focusDiff
 		if m.sideOpen {
 			m.outerReturn = focusSidebar
 		}
-		return m.hideOuter()
+		model, cmd := m.hideOuter()
+		if next := model.(Model); next.focus == focusDiff {
+			return next.enterInner(false), cmd
+		}
+		return model, cmd
+	case focusSidebar:
+		m = m.moveFocus(1)
+		return m.enterInner(false), nil
+	case focusDiff:
+		if next, moved := m.innerPaneMove(true); moved {
+			return next, nil
+		}
 	}
 	return m.moveFocus(1), nil
 }
@@ -152,13 +174,19 @@ func (m Model) outerMouse(msg tea.MouseMsg, x int) (tea.Model, tea.Cmd) {
 	return m.outerResult(m.cfg.OuterSidebar.Click(msg.Y))
 }
 
-// hideOuterOffFocus hides the outer sidebar once focus has left it, e.g.
-// after a click elsewhere.
-func (m Model) hideOuterOffFocus(model tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
-	next, ok := model.(Model)
-	if !ok || !next.outerOpen || next.focus == focusOuter {
-		return model, cmd
+// closeUnfocused hides the sidebars focus has left, after any key, click
+// or message: the outer sidebar once it lost focus, the sidebar once
+// neither it nor the outer sidebar to its left has focus. Both are shown
+// only while the user works in them.
+func (m Model) closeUnfocused(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	cmds := []tea.Cmd{cmd}
+	if m.outerOpen && m.focus != focusOuter {
+		model, layoutCmd := m.hideOuter()
+		m, cmds = model.(Model), append(cmds, layoutCmd)
 	}
-	hidden, layoutCmd := next.hideOuter()
-	return hidden, tea.Batch(cmd, layoutCmd)
+	if m.sideOpen && m.focus != focusSidebar && m.focus != focusOuter {
+		model, layoutCmd := m.hideSidebar()
+		m, cmds = model.(Model), append(cmds, layoutCmd)
+	}
+	return m, tea.Batch(cmds...)
 }

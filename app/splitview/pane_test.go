@@ -60,7 +60,7 @@ func TestSplit_UnnamedSequenceReachesFocusedPane(t *testing.T) {
 	hs := newHarness(t, 100, 30)
 	hs.send(unknown)
 	assert.Equal(t, []string{"\x1b[5;9z"}, hs.term(0).text, "a sequence the split cannot decode goes to the terminal")
-	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	hs.send(unknown)
 	assert.Equal(t, []string{"\x1b[5;9z"}, hs.term(0).text, "with the diff focused it does not")
 	assert.Contains(t, *hs.inner, unknown, "it goes to the diff instead")
@@ -98,7 +98,7 @@ func TestSplit_ModifiedKeys(t *testing.T) {
 		hs.send(unknownCSIMsg(t, "\x1b[27;6;65~"))
 		assert.Equal(t, []string{"\r", "\x01"}, chat.text, "a key the pane does not take arrives as its plain key")
 
-		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+		hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 		hs.send(shiftEnter)
 		assert.Contains(t, *hs.inner, tea.KeyMsg{Type: tea.KeyEnter}, "with the diff focused it is enter, as before")
 	}

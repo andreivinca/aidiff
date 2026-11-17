@@ -12,10 +12,10 @@ import (
 	"github.com/umputun/revdiff/app/splitview"
 )
 
-// localDiffTimeout bounds the git queries of one Diff… step.
+// localDiffTimeout bounds the git queries of one Diff View… step.
 const localDiffTimeout = 15 * time.Second
 
-// localDiff is the palette's Diff… for a review of a local git repository:
+// localDiff is the palette's Diff View… for a review of a local git repository:
 // it rebuilds the review comparing something else, with its annotations.
 type localDiff struct {
 	deps        reviewDeps
@@ -35,10 +35,10 @@ type localChoice struct {
 	label  string
 }
 
-// againstBranch is the Diff… row that leads to the branch picker.
+// againstBranch is the Diff View… row that leads to the branch picker.
 type againstBranch struct{}
 
-// newLocalDiff is the Diff… of the run's review, nil unless that is a
+// newLocalDiff is the Diff View… of the run's review, nil unless that is a
 // review of a git repository's changes: not stdin, a compare pair, a plain
 // folder, every file, or a T3 thread.
 func newLocalDiff(deps reviewDeps, src sourceSetup, description string) *localDiff {
@@ -64,7 +64,7 @@ func runLabel(opts options) string {
 func (l *localDiff) command() splitview.Command {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return splitview.Command{Name: "Diff…", Detail: l.label, Run: l.pick}
+	return splitview.Command{Name: "Diff View…", Detail: l.label, Run: l.pick}
 }
 
 // pick lists what the review can compare, after asking git for the

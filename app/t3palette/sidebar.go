@@ -34,7 +34,7 @@ func (t *Palette) Sidebar() splitview.Sidebar {
 func (b *projectsSidebar) Available() bool {
 	b.t.mu.Lock()
 	defer b.t.mu.Unlock()
-	return b.t.live != nil || b.t.localOnly
+	return b.t.live != nil // a T3 server's projects only
 }
 
 // Shown selects the project on screen and refreshes the list when it is
@@ -66,10 +66,10 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 
 	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
-	lines := []string{bold.Render(" T3 Projects"), faint.Render(" " + b.t.connectionName(v.live)), ""}
+	lines := []string{bold.Render(" T3 Projects"), faint.Render(" " + serverLabel(v.live)), ""}
 	switch {
 	case v.live == nil:
-		lines = append(lines, faint.Render(" no T3 Code running"), faint.Render(" on this machine"))
+		lines = append(lines, faint.Render(" not connected"))
 	case len(list) == 0 && v.shell.Projects == nil:
 		lines = append(lines, faint.Render(" loading…"))
 	case len(list) == 0:
@@ -99,7 +99,7 @@ var sidebarHelp = []string{
 	" enter        open project",
 	" ctrl+b       show / hide",
 	" ctrl/alt+1…9 switch project",
-	" alt+[ alt+]  move focus",
+	" alt+← alt+→  move focus",
 }
 
 // row draws project p, the list's row i.
@@ -196,11 +196,10 @@ func projectRunning(sh t3client.Shell, p t3client.Project) bool {
 	return false
 }
 
-// connectionName names the connection the projects come from: the live
-// server, or this machine.
-func (t *Palette) connectionName(s Session) string {
+// serverLabel names the live server, "" when there is none.
+func serverLabel(s Session) string {
 	if s == nil {
-		return "local · " + t.cfg.LocalName
+		return ""
 	}
 	return s.Label()
 }

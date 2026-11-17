@@ -37,7 +37,7 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 	})
 }
 
-// paletteCommands are the palette's own entries: Diff… while the run's local
+// paletteCommands are the palette's own entries: Diff View… while the run's local
 // review is on screen, then the T3 commands.
 func paletteCommands(t3p *t3palette.Palette, local *localDiff) func() []splitview.Command {
 	return func() []splitview.Command {
