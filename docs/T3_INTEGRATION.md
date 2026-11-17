@@ -81,7 +81,7 @@ Commands sent through `dispatchCommand`:
 - `runtime-request.respond`
 - `thread.user-input.dismiss`
 - `thread.stop` (the stop dialog), and `run.interrupt` for a server without it
-- `queue.resume` (`/resume`)
+- `queue.resume` (sent after a stop when messages are queued)
 - `thread.interaction-mode.set`
 - `thread.fork` (side chat)
 - `thread.model-selection.set`
@@ -194,7 +194,6 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 | `/effort [level]` *(T3)* | Show or set the reasoning effort, if the model offers one |
 | `/plan`, `/build` (`/default`) *(T3)* | Interaction mode |
 | `/mode approval-required\|auto-accept-edits\|auto\|full-access` *(T3)* | Runtime mode |
-| `/resume` *(T3)* | Send the queued messages a stop held back |
 | `/clear` *(T3)* | Start a new thread in the same project, with this thread's model, runtime and interaction modes; it takes the screen and the chat |
 | `/side` (`/btw`) `<question>` *(T3)* | Fork a side chat and ask it |
 | `/attach <image>` | Attach an image file |
@@ -209,7 +208,7 @@ The popup lists the pane's own commands, then T3's, then the provider's own slas
 - Esc (with no popup open) or `/stop` while the agent works opens **Stop agent?**, with **Keep working** selected. The agent works while a run runs, and also after its run ended while subagents, background commands or monitors it launched are still going.
 - ← picks Stop, → picks Keep, Tab toggles, Enter confirms, Esc keeps working.
 - **Any other key cancels the dialog. Letters never approve a stop.**
-- Stop sends `thread.stop`, as T3's own stop does: the server interrupts the run actually running (never a queued one; queued messages are held), marks it stopped even when the provider does not answer, cancels orphaned background work and stops the subagent threads it delegated to. T3 holds the queue after a stop: when messages were queued, the input is filled with `/resume` as one block that one delete removes (when it is empty; a draft stays and the note names the command), so Enter sends them. It is sent only if the run asked about is still active. The draft is kept.
+- Stop sends `thread.stop`, as T3's own stop does: the server interrupts the run actually running (never a queued one; queued messages are held), marks it stopped even when the provider does not answer, cancels orphaned background work and stops the subagent threads it delegated to. T3 holds the queue after a stop, so when messages are queued the stop is followed by `queue.resume` and the next queued message starts on its own; if that fails the note says the agent stopped but the queue did not start. It is sent only if the run asked about is still active. The draft is kept.
 - If the run finished while the dialog was open, the dialog says nothing will be interrupted.
 
 ### Activity view

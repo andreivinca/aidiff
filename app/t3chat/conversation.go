@@ -123,6 +123,16 @@ func (t *thread) queue() []chat.Queued {
 	return out
 }
 
+// holdsQueue reports any queued message, its text known or not.
+func (t *thread) holdsQueue() bool {
+	for _, r := range t.runs {
+		if r.Status == "queued" || r.Status == "preparing" {
+			return true
+		}
+	}
+	return slices.ContainsFunc(t.items, t.queuedTurn)
+}
+
 // queuedRunOf is the run of the queued message messageID that has not
 // started, "" when there is none.
 func (t *thread) queuedRunOf(messageID string) string {

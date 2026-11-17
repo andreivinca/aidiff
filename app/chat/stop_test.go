@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -126,15 +127,11 @@ func TestPane_EscapeWhileIdle(t *testing.T) {
 	assert.Empty(t, f.calls)
 }
 
-func TestPane_StopWithQueuedMessagesOffersResume(t *testing.T) {
+func TestPane_StopWithQueuedMessagesLeavesTheInput(t *testing.T) {
 	conv := fixture()
 	conv.Queued = []Queued{{ID: "m3", Text: "now it works"}}
 	p, f := newTestPane(t, 90, 20, conv)
-	resumed := 0
-	f.setCommands(Command{Name: "/resume", Description: "send the queued messages a stop held back", Run: func(string) (Reply, error) {
-		resumed++
-		return Reply{Note: "the queued messages go on"}, nil
-	}})
+	f.setCommands(Command{Name: "/resume"})
 	stop := func() {
 		p.SendText("\x1b")
 		p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
@@ -143,41 +140,10 @@ func TestPane_StopWithQueuedMessagesOffersResume(t *testing.T) {
 		})
 	}
 	stop()
-	assert.Equal(t, "/resume", p.input.text(), "an empty input is filled with /resume, so enter sends the queue")
-	assert.Contains(t, view(p), "stopped; enter sends the queued messages")
-	p.SendText("\x7f")
-	assert.Empty(t, p.input.text(), "one backspace removes /resume whole")
-	p.SendText("/resume")
-	locked(p, func() {
-		assert.Len(t, p.input.clusters, len("/resume"), "typed by hand it is plain text")
-	})
-	p.SendText("\r")
-	assert.Equal(t, 1, resumed, "enter runs /resume")
-	assert.Empty(t, p.input.text())
+	assert.Empty(t, p.input.text(), "the backend starts the queue itself; nothing is put in the input")
 
-	p.SendText("\x15draft")
+	f.set(fmt.Errorf("%w, but the queued messages did not start: %w", ErrStopped, errBoom), nil)
 	stop()
-	assert.Equal(t, "draft", p.input.text(), "a draft is kept")
-	assert.Contains(t, view(p), "/resume sends them")
-}
-
-func TestPane_StopWithoutResumeOrQueue(t *testing.T) {
-	p, f := newTestPane(t, 90, 20, fixture())
-	f.setCommands(Command{Name: "/resume"})
-	p.SendText("\x1b")
-	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
-	ask(t, p, f, func() {
-		p.SendText("\r")
-	})
-	assert.Empty(t, p.input.text(), "nothing queued, nothing to resume")
-
-	conv := fixture()
-	conv.Queued = []Queued{{ID: "m3", Text: "queued"}}
-	p, f = newTestPane(t, 90, 20, conv)
-	p.SendText("\x1b")
-	p.SendKey(uv.KeyPressEvent{Code: uv.KeyLeft})
-	ask(t, p, f, func() {
-		p.SendText("\r")
-	})
-	assert.Empty(t, p.input.text(), "a backend without /resume gets no /resume")
+	assert.Contains(t, view(p), "stopped, but the queued messages did not start: boom")
+	assert.NotContains(t, view(p), "stop failed", "a stop that went through is not reported as failed")
 }

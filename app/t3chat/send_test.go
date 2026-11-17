@@ -89,22 +89,34 @@ func TestBackend_InterruptFallsBackToTheRun(t *testing.T) {
 	require.EqualError(t, s.b.Interrupt(context.Background(), "run-2"), "connection lost", "the stop's own failure is reported")
 }
 
-func TestBackend_InterruptHoldsTheQueue(t *testing.T) {
+func TestBackend_InterruptResumesTheQueue(t *testing.T) {
 	snap := fixture()
 	snap.Runs = append(snap.Runs, t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued", UserMessageID: "m3"})
 	f := newFakeServer(snap)
 	s := subscribe(t, f)
 	require.NoError(t, s.b.Interrupt(context.Background(), "run-2"))
 	assert.Equal(t, t3client.ThreadStopCommand("th-1"), nextCommand(t, f))
+	assert.Equal(t, t3client.QueueResumeCommand("th-1"), nextCommand(t, f), "the next queued message starts on its own")
+	assert.NotContains(t, names(s.b.Commands()), "/resume")
+
+	f.mu.Lock()
+	f.refuse = "queue.resume"
+	f.mu.Unlock()
+	err := s.b.Interrupt(context.Background(), "run-2")
+	require.ErrorIs(t, err, chat.ErrStopped, "the stop went through")
+	require.EqualError(t, err, "stopped, but the queued messages did not start: unknown command queue.resume")
+	nextCommand(t, f)
+	nextCommand(t, f)
+
+	f = newFakeServer(fixture())
+	s = subscribe(t, f)
+	require.NoError(t, s.b.Interrupt(context.Background(), "run-2"))
+	assert.Equal(t, t3client.ThreadStopCommand("th-1"), nextCommand(t, f))
 	select {
 	case cmd := <-f.cmds:
-		t.Fatalf("the queue waits for /resume; got %v", cmd)
+		t.Fatalf("nothing queued, nothing to resume; got %v", cmd)
 	default:
 	}
-	reply, err := s.run(t, "/resume", "")
-	require.NoError(t, err)
-	assert.Equal(t, "the queued messages go on", reply.Note)
-	assert.Equal(t, t3client.QueueResumeCommand("th-1"), nextCommand(t, f))
 }
 
 func TestBackend_Settings(t *testing.T) {

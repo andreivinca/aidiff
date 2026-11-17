@@ -52,17 +52,17 @@ func withModel(instance, slug string) t3client.ThreadProjection {
 
 func TestBackend_Commands(t *testing.T) {
 	s := subscribe(t, newFakeServer(fixture()))
-	assert.Equal(t, []string{"/model <model>", "/effort [level]", "/plan", "/build", "/mode <runtime-mode>", "/clear", "/resume",
+	assert.Equal(t, []string{"/model <model>", "/effort [level]", "/plan", "/build", "/mode <runtime-mode>", "/clear",
 		"/side <question>", "/compact", "/review", "/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()),
 		"T3's own, then every provider's while the thread's is unknown")
-	for _, c := range s.b.Commands()[8:] {
+	for _, c := range s.b.Commands()[7:] {
 		assert.Nil(t, c.Run, "%s goes to the agent as a message", c.Name)
 	}
-	assert.Equal(t, "Summarize the conversation and reduce context usage", s.b.Commands()[8].Description)
-	assert.Equal(t, "Objective, or pause, resume, clear", s.b.Commands()[10].Description, "a hint describes a command with nothing else")
+	assert.Equal(t, "Summarize the conversation and reduce context usage", s.b.Commands()[7].Description)
+	assert.Equal(t, "Objective, or pause, resume, clear", s.b.Commands()[9].Description, "a hint describes a command with nothing else")
 
 	s = subscribe(t, newFakeServer(withModel("codex", "gpt-5")))
-	assert.Equal(t, []string{"/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()[8:]), "only the thread's provider's")
+	assert.Equal(t, []string{"/goal <Objective, or pause, resume, clear>"}, names(s.b.Commands()[7:]), "only the thread's provider's")
 }
 
 func TestBackend_ModeCommands(t *testing.T) {

@@ -16,7 +16,7 @@ const (
 
 // styles are the pane's colors, OpenCode's default palette; plain when color
 // is off. selected marks the input's selected text and atom its blocks (a
-// pasted image's token, a /resume a stop offers); both keep their own
+// pasted image's token); both keep their own
 // background on the composer's.
 type styles struct {
 	text, muted, rail, panel, cursor, heading, code, warn, bad, bold lipgloss.Style

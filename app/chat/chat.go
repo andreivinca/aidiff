@@ -10,9 +10,13 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 )
+
+// ErrStopped is wrapped by an Interrupt error whose stop went through.
+var ErrStopped = errors.New("stopped")
 
 // Backend is the agent system behind a pane. The pane calls Subscribe off
 // its lock, and Send, Interrupt, Decide, Answer and Dismiss too, one at a
@@ -26,7 +30,9 @@ type Backend interface {
 	Subscribe(ctx context.Context, v Viewer) error
 	// Send hands the user's message to the agent.
 	Send(ctx context.Context, m Outgoing) error
-	// Interrupt stops the running turn named turnID.
+	// Interrupt stops the running turn named turnID, and lets the next
+	// queued message start. An error that wraps ErrStopped means the stop
+	// went through and only what came after it failed.
 	Interrupt(ctx context.Context, turnID string) error
 	// Decide answers the approval prompt promptID.
 	Decide(ctx context.Context, promptID string, d Decision) error
