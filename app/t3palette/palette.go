@@ -13,6 +13,7 @@ import (
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/chat"
+	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
 )
 
@@ -34,6 +35,10 @@ type Config struct {
 	// --t3-source), for a review T3: Diff… did not change.
 	DiffLabel string
 	Chat      chat.Config // how chat panes look and what they reach on this machine
+	// LocalName names this machine in the connections sidebar.
+	LocalName string
+	// StartStore holds the annotations of the review the run opens with.
+	StartStore *annotation.Store
 }
 
 // Program receives what the palette sends outside a command: the refreshes
@@ -50,27 +55,34 @@ type dialFunc func(ctx context.Context, spec string) (Session, error)
 // which the commands talk to, the one of the review on screen, which may be
 // an older one after the user connected elsewhere, and those of reviews on
 // their way to the screen; a session none of them uses is closed. The review
-// on screen changes only where the split swaps models (install), so it
+// on screen changes only where the split switches workspaces (switched), so it
 // always matches what the user sees.
 type Palette struct {
 	cfg  Config
 	dial dialFunc
-	bg   sync.WaitGroup // background work: thread watches, closing sessions, stopping refreshes, saving history
+	// localServer reports whether T3 Code runs on this machine.
+	localServer func() bool
+	bg          sync.WaitGroup // background work: thread watches, closing sessions, stopping refreshes, saving history
 
 	mu         sync.Mutex
 	closed     bool
-	program    Program           // set by Start
-	held       map[Session]bool  // the sessions the palette holds open
-	pending    map[*Review]bool  // reviews built for the screen and not there yet
-	live       Session           // the session the commands use; nil before the first connection
-	onScreen   *Review           // the T3 review on screen; nil while the run's local review is
-	stop       func()            // live refresh of the review on screen
-	chats      []*openChat       // open chat panes; they follow the thread on screen
-	shell      t3client.Shell    // the live server's projects and threads, from the last fetch
-	shellAt    time.Time         // when shell was fetched
-	refreshing Session           // the session a background fetch of shell runs for
-	project    *t3client.Project // the live server's project new threads start in; nil until chosen
-	diff       diffChoice        // what T3: Diff… chose for the reviews of its folder
+	program    Program                      // set by Start
+	held       map[Session]bool             // the sessions the palette holds open
+	pending    map[*Review]bool             // reviews built for the screen and not there yet
+	live       Session                      // the session the commands use; nil before the first connection
+	onScreen   *Review                      // the T3 review on screen; nil while the run's local review is
+	stop       func()                       // live refresh of the review on screen
+	chats      []*openChat                  // open chat panes; they follow the thread on screen
+	shell      t3client.Shell               // the live server's projects and threads, from the last fetch
+	shellAt    time.Time                    // when shell was fetched
+	refreshing Session                      // the session a background fetch of shell runs for
+	project    *t3client.Project            // the live server's project new threads start in; nil until chosen
+	diff       diffChoice                   // what T3: Diff… chose for the reviews of its folder
+	ws         string                       // the split's workspace on screen: wsKey of its review, "" for the run's local one
+	parked     map[string]*Review           // the reviews of the workspaces not on screen, by key; their sessions stay open
+	connected  map[Session]bool             // the newest connection to each server the user connected to; they stay open
+	localOnly  bool                         // this machine is selected, with no T3 Code on it: live is nil
+	stores     map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
 }
 
 // New builds the palette. start is the T3 review the run opens with, nil for
@@ -86,17 +98,27 @@ func New(cfg Config, start *Review) *Palette {
 // newPalette is New with the way palette connections are made.
 func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 	t := &Palette{
-		cfg:     cfg,
-		dial:    dial,
-		held:    map[Session]bool{},
-		pending: map[*Review]bool{},
-		stop:    noop,
+		cfg:  cfg,
+		dial: dial,
+		localServer: func() bool {
+			_, err := t3client.LocalOrigin()
+			return err == nil
+		},
+		held:      map[Session]bool{},
+		pending:   map[*Review]bool{},
+		stop:      noop,
+		parked:    map[string]*Review{},
+		connected: map[Session]bool{},
+		stores:    map[string]*annotation.Store{},
 	}
 	if start != nil {
 		t.held[start.Session] = true
 		t.live = start.Session
+		t.connected[start.Session] = true
 		t.onScreen = start
 		t.project = &start.Target.Project
+		t.ws = wsKey(start)
+		t.rememberLocked(start, cfg.StartStore)
 	}
 	return t
 }
@@ -115,6 +137,7 @@ func (t *Palette) Start(p Program, localStop func()) {
 	}
 	autoChat := t.autoChatLocked(t.onScreen)
 	t.mu.Unlock()
+	t.refreshShell() // the projects sidebar lists the live server's projects
 	if autoChat != nil {
 		go p.Send(autoChat) // the split holds the request until the window has a size
 	}
@@ -133,7 +156,9 @@ func (t *Palette) Close() {
 		sessions = append(sessions, s)
 	}
 	clear(t.held)
+	clear(t.connected)
 	clear(t.pending)
+	clear(t.parked)
 	t.live = nil
 	t.mu.Unlock()
 	stop()
@@ -188,9 +213,24 @@ func (t *Palette) adopt(s Session, sh t3client.Shell, replacing Session) bool {
 	}
 	t.held[s] = true
 	t.live = s
+	t.connectLocked(s)
 	t.shell, t.shellAt = sh, time.Now()
 	t.closeLaterLocked(t.takeUnusedLocked())
 	return true
+}
+
+// connectLocked records s as the connection to its server, in place of an
+// earlier one to the same server (a reconnect). A connection stays open
+// while the user works elsewhere, so the connections sidebar can go back to
+// it. mu must be held.
+func (t *Palette) connectLocked(s Session) {
+	for c := range t.connected {
+		if c.Label() == s.Label() {
+			delete(t.connected, c)
+		}
+	}
+	t.connected[s] = true
+	t.localOnly = false
 }
 
 // prepare records r as on its way to the screen, which keeps its session
@@ -215,14 +255,35 @@ func (t *Palette) abandon(r *Review) {
 	}
 }
 
-// install puts the prepared review r on screen in place of the model old.
-// It is the split's Retire, so it runs on the UI goroutine at the moment the
-// models swap, and r is shown whatever happened since it was built. old's
-// annotations go to history unless r keeps them (store is old's own store).
-// The old refresh stops, the sessions nobody uses any more close and the
-// history is saved in the background, in that order.
-func (t *Palette) install(old tea.Model, r *Review, store *annotation.Store) {
-	annotations, files := leavingNotes(old, store)
+// note is annotations leaving the screen, filed under review (nil: the
+// run's local one).
+type note struct {
+	review      *Review
+	annotations string
+	files       []string
+}
+
+// noteOf is what model leaves to history, nothing when the model coming in
+// keeps its store (next).
+func noteOf(review *Review, model tea.Model, next *annotation.Store) []note {
+	annotations, files := leavingNotes(model, next)
+	if annotations == "" {
+		return nil
+	}
+	return []note{{review: review, annotations: annotations, files: files}}
+}
+
+// switched brings the palette in line with what a SwitchWorkspaceMsg did
+// (sw): the workspace key is on screen, with r, the prepared review the
+// message carried (nil when none), or the review it had when parked. It is
+// the message's Done, so it runs on the UI goroutine at the moment the split
+// switches, and matches what the user sees whatever happened since the
+// message was built. The review left keeps its session while parked; one
+// whose workspace closed, or that r replaced, files its annotations in
+// history unless r keeps them (store is r's). The old refresh stops, the
+// sessions nobody uses any more close and the history is saved in the
+// background, in that order.
+func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw splitview.WorkspaceSwitch) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.pending, r)
@@ -230,18 +291,54 @@ func (t *Palette) install(old tea.Model, r *Review, store *annotation.Store) {
 		return
 	}
 	prev, prevStop := t.onScreen, t.stop
-	t.onScreen = r
-	t.stop = t.watchLocked(r)
-	if r.Session == t.live {
-		t.project = &r.Target.Project
+	var notes []note
+	on := prev
+	if sw.Left != nil { // another workspace
+		if prev != nil {
+			t.stores[reviewKey(prev)] = storeOf(sw.Left) // kept for coming back to it
+		}
+		notes = append(notes, noteOf(prev, sw.Left, nil)...) // a safety net, parked or not
+		if sw.LeftKept && prev != nil {
+			t.parked[t.ws] = prev
+		} else {
+			t.dropChatsLocked(t.ws) // the split closed them with their workspace
+		}
+		on = t.parked[key]
+		delete(t.parked, key)
 	}
-	t.followChatsLocked(r)
+	if sw.Created || sw.Replaced != nil {
+		if sw.Replaced != nil {
+			if on != nil {
+				t.stores[reviewKey(on)] = storeOf(sw.Replaced)
+			}
+			notes = append(notes, noteOf(on, sw.Replaced, store)...)
+		}
+		on = r
+	}
+	t.ws = key
+	if on == nil || (on == prev && sw.Left == nil) {
+		t.closeLaterLocked(t.takeUnusedLocked()) // nothing changed on screen
+		return
+	}
+	t.rememberLocked(on, store)
+	t.onScreen = on
+	t.stop = t.watchLocked(on)
+	if on.Session == t.live {
+		t.project = &on.Target.Project
+	}
+	if on == r {
+		t.followChatsLocked(r)
+	} else if p := t.program; p != nil {
+		t.laterLocked(func() {
+			p.Send(splitview.FilesChangedMsg{}) // back from the background: catch up
+		})
+	}
 	unused := t.takeUnusedLocked()
 	t.laterLocked(func() {
 		prevStop()
 		closeAll(unused)
-		if annotations != "" {
-			t.cfg.SaveHistory(prev, annotations, files)
+		for _, n := range notes {
+			t.cfg.SaveHistory(n.review, n.annotations, n.files)
 		}
 	})
 }
@@ -297,8 +394,13 @@ func (t *Palette) closeLaterLocked(sessions []Session) {
 
 // usedLocked reports whether s is live, on screen or under a pending review.
 func (t *Palette) usedLocked(s Session) bool {
-	if s == t.live || (t.onScreen != nil && t.onScreen.Session == s) {
+	if s == t.live || t.connected[s] || (t.onScreen != nil && t.onScreen.Session == s) {
 		return true
+	}
+	for _, r := range t.parked {
+		if r.Session == s {
+			return true
+		}
 	}
 	for r := range t.pending {
 		if r.Session == s {

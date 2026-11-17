@@ -258,3 +258,32 @@ func TestPane_CommandsWhileBusy(t *testing.T) {
 	assert.Empty(t, p.input.text(), "once the first is through, the command goes")
 	require.Len(t, ran, 2)
 }
+
+func TestCommandSuggestions_OptionalArgTakesTheSelectedChoice(t *testing.T) {
+	p, f := newTestPane(t, 80, 30, fixture())
+	var ran []string
+	f.setCommands(Command{Name: "/effort", Args: "[level]", OptionalArg: true, Description: "show or change effort",
+		Run: func(arg string) (Reply, error) {
+			ran = append(ran, arg)
+			return Reply{}, nil
+		},
+		Complete: func(prefix string) []Suggestion {
+			var out []Suggestion
+			for _, l := range []string{"low", "medium", "high"} {
+				if strings.HasPrefix(l, prefix) {
+					out = append(out, Suggestion{Insert: "/effort " + l, Label: l, Runs: true})
+				}
+			}
+			return out
+		}})
+
+	p.SendText("/effort ")
+	require.Equal(t, []string{"low", "medium", "high"}, labels(p.suggestionsLocked()))
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
+	p.SendText("\r")
+	assert.Equal(t, []string{"high"}, ran, "enter on the levels runs the one selected, not the bare command")
+
+	p.SendText("/effort\r")
+	assert.Equal(t, []string{"high", ""}, ran, "typed without a space, the bare command still runs")
+}

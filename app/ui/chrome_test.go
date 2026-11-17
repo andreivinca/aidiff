@@ -103,3 +103,25 @@ func TestNewMachineIdentity_Sanitizes(t *testing.T) {
 	assert.Equal(t, "T3", newMachineIdentity("", "", true).label(" | "))
 	assert.Empty(t, newMachineIdentity("", "", false).label(" | "))
 }
+
+func TestModel_StatusLineCarriesPaneHints(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.identity = newMachineIdentity("workstation", "", false)
+	m.layout.width = 60 // the review's own column; the bar takes the width it is given
+	hints := [][2]string{{"enter", "send"}, {"esc", "stop…"}, {"ctrl+p", "commands"}}
+
+	line := ansi.Strip(m.StatusLine(140, hints))
+	assert.Equal(t, 140, ansi.StringWidth(line), "the bar fills the width it is given")
+	assert.True(t, strings.HasPrefix(line, " workstation"), "the review's status comes first: %q", line)
+	assert.True(t, strings.HasSuffix(strings.TrimRight(line, " "), "enter send  esc stop…  ctrl+p commands"), "the hints sit on the right: %q", line)
+	assert.Contains(t, line, "? help", "with room, the review's own segments stay")
+
+	narrow := ansi.Strip(m.StatusLine(70, hints))
+	assert.Equal(t, 70, ansi.StringWidth(narrow))
+	assert.Contains(t, narrow, "enter send", "the main hint stays")
+	assert.NotContains(t, narrow, "ctrl+p commands", "hints that do not fit are left out from the last")
+	assert.True(t, strings.HasPrefix(narrow, " workstation"), "and the review keeps its own room")
+
+	assert.Equal(t, ansi.Strip(m.StatusLine(140, nil)), ansi.Strip(m.StatusLine(140, [][2]string{})), "no hints: the review's bar alone")
+	assert.Equal(t, 60, m.layout.width, "rendering leaves the model's width alone")
+}

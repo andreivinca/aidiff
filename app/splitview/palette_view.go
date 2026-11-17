@@ -26,7 +26,7 @@ const (
 
 // boxInner is the content width of a popup at most maxW columns wide.
 func (m Model) boxInner(maxW int) int {
-	return min(maxW, max(paletteMinWidth, m.width-2*boxMargin)) - boxBorder
+	return min(maxW, max(paletteMinWidth, m.winW-2*boxMargin)) - boxBorder
 }
 
 // paletteView renders the popup box.

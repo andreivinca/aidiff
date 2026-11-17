@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -31,6 +32,7 @@ type openChat struct {
 	conn      *t3client.Conn
 	chats     *t3chat.Chats
 	newThread func(t3chat.NewThread) // what /clear in the pane does
+	ws        string                 // the split workspace the pane is in
 }
 
 // threads are the threads of conn: the ones the pane followed before, when
@@ -50,26 +52,21 @@ func (c *openChat) follow(conn *t3client.Conn, th t3client.Thread) {
 	c.pane.Follow(c.threads(conn).Thread(th.ID), threadTitle(th))
 }
 
-// followChatsLocked points the open chat panes at r's thread, when it has
-// one, and forgets the closed ones. mu must be held.
+// followChatsLocked points the open chat panes of the workspace on screen
+// at r's thread, when it has one, and forgets the closed ones. The chats of
+// other workspaces stay on their threads. mu must be held.
 func (t *Palette) followChatsLocked(r *Review) {
 	th := r.thread()
-	live := t.chats[:0]
-	for _, c := range t.chats {
-		if c.pane.Exited() {
-			continue
-		}
-		if th != nil {
+	for _, c := range t.liveChatsLocked() {
+		if th != nil && c.ws == t.ws {
 			c.follow(r.Session.Conn(), *th)
 		}
-		live = append(live, c)
 	}
-	t.chats = live
 }
 
-// chatOpenLocked reports whether a chat pane is open, forgetting closed ones.
+// liveChatsLocked forgets the closed chat panes and returns the others.
 // mu must be held.
-func (t *Palette) chatOpenLocked() bool {
+func (t *Palette) liveChatsLocked() []*openChat {
 	live := t.chats[:0]
 	for _, c := range t.chats {
 		if !c.pane.Exited() {
@@ -77,15 +74,27 @@ func (t *Palette) chatOpenLocked() bool {
 		}
 	}
 	t.chats = live
-	return len(t.chats) > 0
+	return live
+}
+
+// dropChatsLocked forgets the chat panes of workspace ws, which the split
+// closed with it. mu must be held.
+func (t *Palette) dropChatsLocked(ws string) {
+	t.chats = slices.DeleteFunc(t.chats, func(c *openChat) bool { return c.ws == ws })
+}
+
+// chatOpenLocked reports whether workspace ws has a chat pane open. mu must
+// be held.
+func (t *Palette) chatOpenLocked(ws string) bool {
+	return slices.ContainsFunc(t.liveChatsLocked(), func(c *openChat) bool { return c.ws == ws })
 }
 
 // autoChatLocked is the request for the chat pane that comes along with r,
-// nil when none does: with NoChat, for a project's root, or while a chat
-// pane is open, which follows r instead. mu must be held.
+// nil when none does: with NoChat, for a project's root, or while r's
+// workspace has a chat pane open, which follows r instead. mu must be held.
 func (t *Palette) autoChatLocked(r *Review) tea.Msg {
 	th := r.thread()
-	if t.cfg.NoChat || th == nil || t.chatOpenLocked() {
+	if t.cfg.NoChat || th == nil || t.chatOpenLocked(wsKey(r)) {
 		return nil
 	}
 	return t.chatPaneMsg(r.Session, *th)
@@ -100,6 +109,7 @@ func (t *Palette) chatPaneMsg(s Session, th t3client.Thread) tea.Msg {
 		pane := chat.New(c.threads(s.Conn()).Thread(th.ID), threadTitle(th), width, height, cfg)
 		c.pane = pane
 		t.mu.Lock()
+		c.ws = t.ws // opened in the workspace on screen
 		t.chats = append(t.chats, c)
 		t.mu.Unlock()
 		return pane, nil

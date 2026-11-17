@@ -7,10 +7,11 @@ import (
 	"github.com/umputun/revdiff/app/t3palette"
 )
 
-// newT3Palette builds the T3 commands of the ctrl+p palette for this run.
-// From here on the palette owns the T3 session src opened, if any; the
-// caller ends it with Close.
-func newT3Palette(deps reviewDeps, description string, src sourceSetup) *t3palette.Palette {
+// newT3Palette builds the T3 commands of the ctrl+p palette and the projects
+// sidebar for this run; store holds the annotations of the review the run
+// opens with. From here on the palette owns the T3 session src opened, if
+// any; the caller ends it with Close.
+func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *annotation.Store) *t3palette.Palette {
 	opts := deps.opts
 	return t3palette.New(t3palette.Config{
 		Store: t3TokenStore(),
@@ -26,10 +27,12 @@ func newT3Palette(deps reviewDeps, description string, src sourceSetup) *t3palet
 			h.annotations, h.files = annotations, files
 			saveHistory(h)
 		},
-		NoChat:    opts.NoChat,
-		NoWatch:   opts.NoWatch,
-		DiffLabel: opts.T3Source,
-		Chat:      chatConfig(opts),
+		NoChat:     opts.NoChat,
+		NoWatch:    opts.NoWatch,
+		DiffLabel:  opts.T3Source,
+		Chat:       chatConfig(opts),
+		StartStore: store,
+		LocalName:  deps.hostname,
 	}, src.t3)
 }
 

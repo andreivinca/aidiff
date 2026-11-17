@@ -309,3 +309,15 @@ func TestPane_ComposerHalfRowPadding(t *testing.T) {
 	assert.Contains(t, ansi.Strip(rows[settings]), "│   Build")
 	assert.NotContains(t, ansi.Strip(strings.Join(rows, "\n")), "▌")
 }
+
+func TestComposer_HintsOutside(t *testing.T) {
+	p := New(nil, "Hosted", 80, 12, Config{NoColor: true, HintsOutside: true, HostKeys: []Hint{{Key: "ctrl+p", Label: "commands"}}})
+	assert.NotContains(t, view(p), "shift+enter newline", "a host that shows the hints keeps them out of the pane")
+	hints := p.StatusHints()
+	require.Len(t, hints, 2)
+	assert.Equal(t, "←", hints[0][0], "the way into the activity view")
+	assert.Equal(t, [2]string{"ctrl+p", "commands"}, hints[1], "and the host's keys, nothing else")
+
+	p.SendText("x")
+	assert.Equal(t, [][2]string{{"ctrl+p", "commands"}}, p.StatusHints(), "← moves the cursor while there is input")
+}

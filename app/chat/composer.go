@@ -11,7 +11,7 @@ import (
 // composerRowsLocked fits the popup, input panel and hints into budget rows.
 // Small panes give up padding and popup rows before hiding the input cursor.
 func (p *Pane) composerRowsLocked(w, budget int, showCursor bool) []string {
-	meta, hints := budget >= 2, budget >= 3
+	meta, hints := budget >= 2, budget >= 3 && !p.hintsOut
 	reserved := 0
 	if meta {
 		reserved++
@@ -128,6 +128,24 @@ func (p *Pane) composerHintsLocked(w int, popup bool) string {
 		}
 	}
 	return left + strings.Repeat(" ", max(0, w-ansi.StringWidth(left+right)-1)) + right
+}
+
+// StatusHints are the few shortcuts a host that shows them itself
+// (Config.HintsOutside) puts on its status bar, as key and label pairs: the
+// way into the activity view while the input is empty, then the host's own
+// keys. The keys of the input itself (enter, esc, the popup's) are not
+// repeated there.
+func (p *Pane) StatusHints() [][2]string {
+	p.lock()
+	defer p.mu.Unlock()
+	var out [][2]string
+	if p.input.empty() && !p.activity.open {
+		out = append(out, [2]string{"←", p.activityHintLocked()})
+	}
+	for _, h := range p.hostKeys {
+		out = append(out, [2]string{h.Key, h.Label})
+	}
+	return out
 }
 
 // hintsLocked picks the shortcuts for the composer's state: the main one,

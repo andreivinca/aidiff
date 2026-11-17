@@ -13,22 +13,27 @@ type leftCache struct {
 	valid bool
 	w, h  int
 	lines []string
+
+	footerValid bool // footer is the wrapped model's status line at footerW columns
+	footerW     int
+	footerHints [][2]string // the pane hints footer shows
+	footer      string
 }
 
 // View implements tea.Model.
 func (m Model) View() string {
-	if m.width == 0 {
+	if m.winW == 0 {
 		return m.inner.View()
 	}
 	view := m.columnView(m.leftBlock())
 	if m.palette.open {
-		view = overlayCenter(view, m.paletteView(), m.width, m.height)
+		view = overlayCenter(view, m.paletteView(), m.winW, m.height)
 	}
 	switch {
 	case m.quitDialog:
-		view = overlayCenter(view, m.quitDialogView(), m.width, m.height)
+		view = overlayCenter(view, m.quitDialogView(), m.winW, m.height)
 	case m.flash != "":
-		view = replaceLastLine(view, " "+m.flash+" ", m.width)
+		view = replaceLastLine(view, " "+m.flash+" ", m.winW)
 	}
 	return view
 }
@@ -48,20 +53,38 @@ func (m Model) leftBlock() []string {
 // dropLeftCache forgets the fitted view once the wrapped model has changed.
 func (m Model) dropLeftCache() {
 	m.leftCache.valid = false
+	m.leftCache.footerValid = false
 }
 
-// columnView renders the wrapped model's lines and the terminals side by
-// side, with a vertical line between neighbors.
+// columnView renders the sidebar, when shown, the wrapped model's lines and
+// the terminals side by side, with a vertical line between neighbors.
 func (m Model) columnView(left []string) string {
+	var side []string
+	if m.outerW() > 0 {
+		side = m.outerLines()
+	}
+	if m.sideW() > 0 {
+		lines := m.sidebarLines()
+		if side == nil {
+			side = lines
+		} else {
+			for y := range side {
+				side[y] += lines[y]
+			}
+		}
+	}
 	rects := m.termRects()
 	blocks := make([][]string, len(rects))
 	for i, r := range rects {
 		showCursor := m.focus == i && !m.palette.open
 		blocks[i] = strings.Split(fitBlock(m.terms[i].Render(showCursor), r.w, r.h), "\n")
 	}
-	rows := make([]string, m.height)
+	rows := make([]string, m.bodyH())
 	for y := range rows {
 		var b strings.Builder
+		if side != nil {
+			b.WriteString(side[y])
+		}
 		if m.mainGripAt(y) {
 			// our own divider over the wrapped model's last column; its
 			// content has no border of its own
@@ -77,6 +100,9 @@ func (m Model) columnView(left []string) string {
 			b.WriteString(blocks[i][y])
 		}
 		rows[y] = b.String()
+	}
+	if m.footerRows() > 0 {
+		rows = append(rows, m.footerLine())
 	}
 	return strings.Join(rows, "\n")
 }

@@ -128,7 +128,10 @@ func (p *Pane) applySuggestionLocked(enter bool) bool {
 			return true
 		}
 	}
-	if word, _, hasArg := strings.Cut(typed, " "); enter && !hasArg {
+	// The input as typed, not trimmed: "/effort" lists commands, and enter
+	// runs that exact one; "/effort " lists its arguments, and enter takes
+	// the one selected.
+	if word, _, hasArg := strings.Cut(p.input.text(), " "); enter && !hasArg {
 		if c, ok := p.findCommandLocked(strings.ToLower(word)); ok && (c.Args == "" || c.OptionalArg) {
 			p.submitLocked() // an exact command or alias runs, whatever else matches
 			return true

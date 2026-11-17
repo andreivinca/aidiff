@@ -54,9 +54,9 @@ func (h *harness) connect(t *testing.T, spec string, s *fakeSession) []tea.Msg {
 
 // openThread runs the palette row opening threadID on s and returns the
 // message that puts its review on screen.
-func (h *harness) openThread(t *testing.T, s Session, threadID string) splitview.ReplaceInnerMsg {
+func (h *harness) openThread(t *testing.T, s Session, threadID string) splitview.SwitchWorkspaceMsg {
 	t.Helper()
-	return find[splitview.ReplaceInnerMsg](t, run(h.p.openThread(s, threadID)(nil)))
+	return find[splitview.SwitchWorkspaceMsg](t, run(h.p.openThread(s, threadID)(nil)))
 }
 
 func commandNames(cmds []splitview.Command) []string {
@@ -73,8 +73,10 @@ func TestPalette_CommandsFollowState(t *testing.T) {
 
 	box := newFakeSession("ssh://boxdev", testShell())
 	msgs := h.connect(t, "ssh://boxdev", box)
-	picker := find[splitview.ShowPickerMsg](t, msgs)
-	assert.Equal(t, "New project…", picker.Items[0].Label, "connecting leads with a new project")
+	find[splitview.ShowSidebarMsg](t, msgs) // connecting shows the projects sidebar
+	picker, ok := h.p.projectList(box, testShell()).(splitview.ShowPickerMsg)
+	require.True(t, ok)
+	assert.Equal(t, "New project…", picker.Items[0].Label, "the project list leads with a new project")
 	assert.Equal(t, "Sabra2", picker.Items[1].Label)
 	assert.Contains(t, picker.Items[1].Detail, "2 threads")
 	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: Fix login", "T3: Older work",
@@ -83,7 +85,7 @@ func TestPalette_CommandsFollowState(t *testing.T) {
 	assert.Equal(t, "ssh://boxdev", h.p.Commands()[0].Detail)
 	assert.Nil(t, h.p.OnScreen())
 
-	swap(h.openThread(t, box, loginID), annotatedModel())
+	h.swap(h.openThread(t, box, loginID), annotatedModel())
 	cmds := h.p.Commands()
 	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: ▸ Fix login", "T3: Older work",
 		"T3: Diff…", "T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
@@ -113,7 +115,7 @@ func TestPalette_ConnectWhileOpeningKeepsTheOpeningSession(t *testing.T) {
 	h.settle()
 	assert.Zero(t, a.closes(), "a is on screen and under the opening review")
 
-	swap(opening, fakeModel{store: annotation.NewStore()})
+	h.swap(opening, fakeModel{store: annotation.NewStore()})
 	h.settle()
 	assert.Same(t, a, h.p.OnScreen().Session, "the review opened shows")
 	assert.Zero(t, a.closes(), "and its session stays open while it is on screen")
@@ -122,12 +124,12 @@ func TestPalette_ConnectWhileOpeningKeepsTheOpeningSession(t *testing.T) {
 	c := newFakeSession("ssh://c", testShell())
 	h.connect(t, "ssh://c", c)
 	h.settle()
-	assert.Equal(t, 1, b.closes(), "b is neither live nor on screen any more")
+	assert.Zero(t, b.closes(), "b stays connected while c is the one in use")
 	assert.Zero(t, a.closes())
 
-	swap(h.openThread(t, c, loginID), fakeModel{store: annotation.NewStore()})
+	h.swap(h.openThread(t, c, loginID), fakeModel{store: annotation.NewStore()})
 	h.settle()
-	assert.Equal(t, 1, a.closes(), "a left the screen")
+	assert.Zero(t, a.closes(), "a's project left the screen for c's: its workspace is parked, its session open")
 	assert.Zero(t, c.closes())
 
 	h.p.Close()
@@ -147,7 +149,7 @@ func TestPalette_CloseEndsLateSessions(t *testing.T) {
 	assert.Equal(t, 1, a.closes(), "the session of a review that never reached the screen is closed too")
 	assert.Equal(t, 1, b.closes())
 
-	swap(opening, fakeModel{store: annotation.NewStore()}) // a Retire after the end changes nothing
+	h.swap(opening, fakeModel{store: annotation.NewStore()}) // a Retire after the end changes nothing
 	late := newFakeSession("ssh://late", testShell())
 	msgs := h.connect(t, "ssh://late", late)
 	assert.Nil(t, msgs[len(msgs)-1], "a connection landing after Close reports nothing")
@@ -167,7 +169,7 @@ func TestPalette_ReconnectRebuildsTheReviewOverTheNewSession(t *testing.T) {
 	inner := annotatedModel()
 
 	msgs := run(h.p.reconnect(inner))
-	rebuilt := find[splitview.ReplaceInnerMsg](t, msgs)
+	rebuilt := find[splitview.SwitchWorkspaceMsg](t, msgs)
 	model, ok := rebuilt.Model.(fakeModel)
 	require.True(t, ok)
 	assert.Same(t, inner.store, model.store, "annotations are kept")
@@ -176,7 +178,7 @@ func TestPalette_ReconnectRebuildsTheReviewOverTheNewSession(t *testing.T) {
 	h.settle()
 	assert.Zero(t, a.closes(), "the old session serves the review on screen until it is replaced")
 
-	swap(rebuilt, inner)
+	h.swap(rebuilt, inner)
 	h.settle()
 	assert.Equal(t, 1, a.closes())
 	assert.Same(t, a2, h.p.liveSession())
@@ -213,7 +215,7 @@ func TestPalette_ReconnectYieldsToAConnectionMadeMeanwhile(t *testing.T) {
 	h.settle()
 	assert.Same(t, b, h.p.liveSession())
 	assert.Equal(t, 1, a2.closes(), "the reconnect closes the session it made")
-	assert.Equal(t, 1, a.closes(), "a was replaced by b")
+	assert.Zero(t, a.closes(), "a stays connected beside b")
 	assert.Zero(t, b.closes())
 }
 
@@ -222,7 +224,7 @@ func TestPalette_NoticesFollowTheConnection(t *testing.T) {
 	s := newFakeSession("http://box:3000", testShell())
 	s.notices = []string{"the T3 token travels unencrypted"}
 	msgs := h.connect(t, "http://box:3000", s)
-	find[splitview.ShowPickerMsg](t, msgs)
+	find[splitview.ShowSidebarMsg](t, msgs)
 	assert.Equal(t, "T3: the T3 token travels unencrypted", flashes(msgs)[len(flashes(msgs))-1])
 }
 
@@ -230,7 +232,7 @@ func TestPalette_NoWatchHoldsForEveryThread(t *testing.T) {
 	for _, noWatch := range []bool{false, true} {
 		a := newFakeSession("ssh://a", testShell())
 		h := newHarness(t, Config{NoWatch: noWatch, NoChat: true}, threadReview(t, a, loginID))
-		swap(h.openThread(t, a, olderID), fakeModel{store: annotation.NewStore()})
+		h.swap(h.openThread(t, a, olderID), fakeModel{store: annotation.NewStore()})
 		h.p.Close() // waits for the watches to end
 		if noWatch {
 			assert.Empty(t, a.server.watched(), "--no-watch holds after a thread switch")
@@ -273,7 +275,7 @@ func TestPalette_RetiredAnnotationsGoToHistory(t *testing.T) {
 	a := newFakeSession("ssh://a", testShell())
 	h.connect(t, "ssh://a", a)
 
-	first := swap(h.openThread(t, a, loginID), annotatedModel())
+	first := h.swap(h.openThread(t, a, loginID), annotatedModel())
 	h.settle()
 	require.Len(t, h.history(), 1)
 	assert.Nil(t, h.history()[0].review, "the run's local review is filed as itself")
@@ -283,12 +285,12 @@ func TestPalette_RetiredAnnotationsGoToHistory(t *testing.T) {
 	m, ok := first.(fakeModel)
 	require.True(t, ok)
 	m.store.Add(annotation.Annotation{File: "b.go", Line: 2, Type: "+", Comment: "and this"})
-	swap(h.openThread(t, a, olderID), m)
+	h.swap(h.openThread(t, a, olderID), m)
 	h.settle()
 	require.Len(t, h.history(), 2)
 	assert.Same(t, firstReview, h.history()[1].review, "a thread's annotations are filed under its review")
 
-	swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
+	h.swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
 	h.settle()
 	assert.Len(t, h.history(), 2, "a review without annotations leaves no history")
 }
@@ -327,7 +329,7 @@ func TestPalette_SendAnnotationsNeedsAThread(t *testing.T) {
 
 	a := newFakeSession("ssh://a", testShell())
 	h.connect(t, "ssh://a", a)
-	swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
+	h.swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
 	assert.Equal(t, []string{"T3: no annotations to send"}, flashes(run(h.p.sendAnnotations(fakeModel{store: annotation.NewStore()}))))
 
 	msgs := run(h.p.sendAnnotations(annotatedModel()))
@@ -341,7 +343,7 @@ func TestPalette_OpenWithAutoChat(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true}, nil)
 	h.connect(t, "ssh://a", a)
 	msgs := run(h.p.openThread(a, loginID)(nil))
-	find[splitview.ReplaceInnerMsg](t, msgs)
+	find[splitview.SwitchWorkspaceMsg](t, msgs)
 	find[splitview.OpenPaneMsg](t, msgs)
 
 	h = newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
@@ -356,7 +358,11 @@ func TestPalette_OpenOnAClosedSessionIsRefused(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
 	a := newFakeSession("ssh://a", testShell())
 	h.connect(t, "ssh://a", a)
-	h.connect(t, "ssh://b", newFakeSession("ssh://b", testShell()))
+	a2 := newFakeSession("ssh://a", testShell())
+	a.redial = func() (Session, error) {
+		return a2, nil
+	}
+	run(h.p.reconnect(nil)) // a2 takes a's place
 	h.settle()
 	require.Equal(t, 1, a.closes())
 

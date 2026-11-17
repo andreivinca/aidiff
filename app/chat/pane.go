@@ -29,6 +29,9 @@ type Config struct {
 	// HostKeys are shortcuts the pane's host handles, such as a command
 	// palette; the composer's hint row lists them with its own.
 	HostKeys []Hint
+	// HintsOutside leaves the hint row out of the composer: the host shows
+	// the shortcuts itself (StatusHints), e.g. on its status bar.
+	HintsOutside bool
 }
 
 // Hint is a shortcut as the composer's hint row shows it.
@@ -48,6 +51,7 @@ type Pane struct {
 	files    ImageFiles
 	quitNote string
 	hostKeys []Hint    // the host's shortcuts for the hint row
+	hintsOut bool      // the host shows the hints (Config.HintsOutside)
 	builtins []command // the pane's own slash commands
 	box      *mailbox  // what the backend delivered; it owns Updates
 
@@ -112,6 +116,7 @@ func New(b Backend, title string, width, height int, cfg Config) *Pane {
 		files:    cfg.Files,
 		quitNote: cfg.QuitNote,
 		hostKeys: cfg.HostKeys,
+		hintsOut: cfg.HintsOutside,
 		box:      newMailbox(),
 		width:    max(width, 1),
 		height:   max(height, 1),

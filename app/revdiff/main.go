@@ -158,7 +158,7 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 	defer src.close()
-	t3p := newT3Palette(deps, description, src) // owns src's T3 session from here on
+	t3p := newT3Palette(deps, description, src, store) // owns src's T3 session from here on
 	defer t3p.Close()
 	if src.tty != nil {
 		programOptions = append(programOptions, tea.WithInput(src.tty))

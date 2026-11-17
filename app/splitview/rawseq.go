@@ -33,7 +33,7 @@ func rawSequence(msg tea.Msg) ([]byte, bool) {
 // forwardRaw hands an unnamed escape sequence to the focused pane, or to the
 // wrapped model when it has focus or a popup is open.
 func (m Model) forwardRaw(seq []byte, msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.focus == focusDiff || m.palette.open || m.quitDialog {
+	if m.focus < 0 || m.palette.open || m.quitDialog {
 		return m.updateInner(msg)
 	}
 	m.terms[m.focus].SendText(string(seq))

@@ -32,6 +32,19 @@ type Config struct {
 	Quit QuitText
 	// Colors are the split's own chrome colors; nil fields take the defaults.
 	Colors Colors
+	// Sidebar, when set, is a column left of the wrapped model that
+	// Keys.Sidebar shows and hides.
+	Sidebar Sidebar
+	// OuterSidebar, when set, is a second column left of Sidebar, shown only
+	// while it has focus: Keys.FocusLeft reaches it past the sidebar.
+	OuterSidebar Sidebar
+	// SidebarWidth is the sidebar's width (each sidebar's) in columns, its separator left out;
+	// 30 by default.
+	SidebarWidth int
+	// Workspace names the workspace the split starts with; "" leaves it
+	// unnamed, so it closes once another one is switched to (see
+	// SwitchWorkspaceMsg).
+	Workspace string
 }
 
 // Keys are the keys the split handles before anything reaches the wrapped
@@ -41,6 +54,7 @@ type Keys struct {
 	FocusLeft string // move focus left without wrapping; alt+[ by default
 	Quit      string // quit, asking first; ctrl+q by default
 	Palette   string // open or close the command palette; ctrl+p by default
+	Sidebar   string // show or hide Config.Sidebar; ctrl+b by default
 }
 
 // QuitText is what the quit dialog says.
@@ -62,6 +76,9 @@ func (c Config) withDefaults() Config {
 		c.WidthPercent = defaultWidthPercent
 	}
 	c.Keys = c.Keys.withDefaults()
+	if c.SidebarWidth <= 0 {
+		c.SidebarWidth = defaultSidebarWidth
+	}
 	if c.Quit.Title == "" {
 		c.Quit.Title = "Quit?"
 	}
@@ -81,6 +98,9 @@ func (k Keys) withDefaults() Keys {
 	}
 	if k.Palette == "" {
 		k.Palette = "ctrl+p"
+	}
+	if k.Sidebar == "" {
+		k.Sidebar = "ctrl+b"
 	}
 	return k
 }

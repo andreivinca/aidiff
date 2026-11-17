@@ -57,7 +57,9 @@ aidiff handles these keys itself, before revdiff's keymap, so the keybindings fi
 | Key | Action |
 |---|---|
 | ctrl+p | command palette |
-| alt+[ / alt+] | focus the panel to the left / right, stopping at either end |
+| ctrl+b | show / hide the T3 projects panel (while connected to a T3 server) |
+| ctrl+1 … ctrl+9, alt+1 … alt+9 | switch to T3 project 1–9 (while connected) |
+| alt+[ / alt+] | focus the panel to the left / right, stopping at either end. Past the leftmost panel alt+[ shows the T3 projects panel (when connected), then the connections panel |
 | ctrl+q | quit (asks first when panes are open) |
 
 The review's own keys can be remapped in `~/.config/revdiff/keybindings` (`map <key> <action>`, `unmap <key>`). Run `aidiff --dump-keys` to see the current bindings.

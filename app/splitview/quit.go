@@ -42,7 +42,7 @@ func filterQuit(model tea.Model, msg tea.Msg) tea.Msg {
 // requestQuit quits when no pane is open and opens the quit dialog otherwise,
 // so a stray quit never drops a shell or a chat.
 func (m Model) requestQuit() (tea.Model, tea.Cmd) {
-	for _, t := range m.terms {
+	for _, t := range m.allTerms() {
 		if !t.Exited() {
 			return m.askQuit()
 		}
@@ -86,7 +86,7 @@ func (m Model) handleQuitDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) quitDetails() []string {
 	shells := 0
 	var notes []string
-	for _, t := range m.terms {
+	for _, t := range m.allTerms() {
 		if t.Exited() {
 			continue
 		}

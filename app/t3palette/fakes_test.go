@@ -192,6 +192,7 @@ type harness struct {
 	p       *Palette
 	program *fakeProgram
 	dials   map[string]*fakeSession // what dialing each spec reaches
+	parked  map[string]tea.Model    // the split's parked workspaces (see swap)
 
 	mu    sync.Mutex
 	saves []saved
@@ -201,7 +202,7 @@ type harness struct {
 // a local review).
 func newHarness(t *testing.T, cfg Config, start *Review) *harness {
 	t.Helper()
-	h := &harness{program: &fakeProgram{}, dials: map[string]*fakeSession{}}
+	h := &harness{program: &fakeProgram{}, dials: map[string]*fakeSession{}, parked: map[string]tea.Model{}}
 	cfg.NewReview = func(r *Review, store *annotation.Store) (tea.Model, error) {
 		return fakeModel{store: store, review: r}, nil
 	}
@@ -282,9 +283,35 @@ func flashes(msgs []tea.Msg) []string {
 	return out
 }
 
-// swap does what the split does with a ReplaceInnerMsg: it retires old and
-// returns the incoming model.
-func swap(msg splitview.ReplaceInnerMsg, old tea.Model) tea.Model {
-	msg.Retire(old)
-	return msg.Model
+// swap does what the split does with a SwitchWorkspaceMsg, old being the
+// review on screen, and returns the review it puts on screen: a review
+// replaces the one of its workspace, or starts a new one; the workspace
+// left is parked, unless it is the run's unnamed local one.
+func (h *harness) swap(msg splitview.SwitchWorkspaceMsg, old tea.Model) tea.Model {
+	cur := h.p.Workspace()
+	var sw splitview.WorkspaceSwitch
+	next := msg.Model
+	if msg.Key == cur {
+		sw.Replaced = old
+		if msg.Model == nil {
+			sw.Replaced, next = nil, old
+		}
+	} else {
+		sw.Left, sw.LeftKept = old, cur != ""
+		parked, ok := h.parked[msg.Key]
+		switch {
+		case !ok:
+			sw.Created = true
+		case msg.Model != nil && msg.Replace:
+			sw.Replaced = parked
+		default:
+			sw.Unused, next = msg.Model != nil, parked
+		}
+		delete(h.parked, msg.Key)
+		if sw.LeftKept {
+			h.parked[cur] = old
+		}
+	}
+	msg.Done(sw)
+	return next
 }

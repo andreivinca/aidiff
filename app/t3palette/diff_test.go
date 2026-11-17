@@ -31,7 +31,7 @@ func labels(items []splitview.PickerItem) []string {
 // shownReview is the review a ReplaceInnerMsg among msgs puts on screen.
 func shownReview(t *testing.T, msgs []tea.Msg) *Review {
 	t.Helper()
-	fm, ok := find[splitview.ReplaceInnerMsg](t, msgs).Model.(fakeModel)
+	fm, ok := find[splitview.SwitchWorkspaceMsg](t, msgs).Model.(fakeModel)
 	require.True(t, ok)
 	return fm.review
 }
@@ -62,9 +62,9 @@ func TestPalette_DiffPicksWhatToCompare(t *testing.T) {
 	r := shownReview(t, run(picker.OnPick(picker.Items[1])))
 	assert.Equal(t, t3client.DiffSource{Kind: t3client.SourceBranchRange, BaseRef: "origin/feature"}, r.Source)
 	assert.Equal(t, loginID, r.Target.Thread.ID, "the same thread")
-	replace := find[splitview.ReplaceInnerMsg](t, run(picker.OnPick(picker.Items[1])))
+	replace := find[splitview.SwitchWorkspaceMsg](t, run(picker.OnPick(picker.Items[1])))
 	assert.Same(t, shown.store, replace.Model.(fakeModel).store, "the annotations come along")
-	swap(replace, shown)
+	h.swap(replace, shown)
 	assert.Contains(t, commandDetail(h.p.Commands(), "T3: Diff…"), "unpushed")
 
 	branches := find[splitview.ShowPickerMsg](t, run(picker.OnPick(picker.Items[3])))

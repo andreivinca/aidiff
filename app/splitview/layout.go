@@ -42,7 +42,7 @@ func (m Model) paneRects(leftW int, weights []float64) []rect {
 	}
 	total := max(1, m.width-leftW)
 	avail := max(n, total-(n-1))
-	h := max(1, m.height)
+	h := max(1, m.bodyH())
 
 	widths := make([]int, n)
 	used := 0
@@ -74,17 +74,22 @@ func (m Model) paneRects(leftW int, weights []float64) []rect {
 // normWeights returns the terminal shares summing to 1, falling back to equal
 // shares when they are missing or out of sync with the terminal list.
 func (m Model) normWeights() []float64 {
-	n := len(m.terms)
+	return normWeights(m.weights, len(m.terms))
+}
+
+// normWeights are n panes' shares summing to 1, equal ones when weights is
+// missing or out of sync with the panes.
+func normWeights(weights []float64, n int) []float64 {
 	out := make([]float64, n)
 	sum := 0.0
-	if len(m.weights) == n {
-		for _, w := range m.weights {
+	if len(weights) == n {
+		for _, w := range weights {
 			sum += w
 		}
 	}
 	for i := range out {
 		if sum > 0 {
-			out[i] = m.weights[i] / sum
+			out[i] = weights[i] / sum
 		} else {
 			out[i] = 1 / float64(n)
 		}
@@ -106,6 +111,7 @@ func (m Model) grownWeights() []float64 {
 // relayout recomputes the split and pushes sizes to the wrapped model and the
 // terminals.
 func (m Model) relayout() (tea.Model, tea.Cmd) {
+	m.width = m.winW - m.leftCols()
 	m.leftW = m.leftWidth()
 	for i, r := range m.termRects() {
 		m.terms[i].Resize(r.w, r.h)

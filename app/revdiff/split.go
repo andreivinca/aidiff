@@ -14,6 +14,10 @@ import (
 // splitview's default, because chat panes list it among their shortcuts.
 const paletteKey = "ctrl+p"
 
+// projectsKey shows and hides the T3 projects sidebar, whose key help
+// names it.
+const projectsKey = "ctrl+b"
+
 // newSplit wraps the review in the split view. It always does: ctrl+p can
 // open terminals even when none start open, and the T3 commands live there
 // too.
@@ -26,7 +30,10 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local),
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
-		Keys:         splitview.Keys{Palette: paletteKey},
+		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey},
+		Sidebar:      t3p.Sidebar(),
+		OuterSidebar: t3p.Connections(),
+		Workspace:    t3p.Workspace(),
 	})
 }
 

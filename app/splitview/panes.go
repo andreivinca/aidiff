@@ -10,11 +10,11 @@ import (
 // dragging a separator.
 const minTermWidth = 10
 
-// Close stops every pane, in parallel, and waits until all of them, including
-// those closed earlier in the background, have finished. Safe to call more
-// than once.
+// Close stops every pane of every workspace, in parallel, and waits until all
+// of them, including those closed earlier in the background, have finished.
+// Safe to call more than once.
 func (m Model) Close() {
-	for _, t := range m.terms {
+	for _, t := range m.allTerms() {
 		m.closing.Go(t.Close)
 	}
 	m.closing.Wait()
@@ -25,7 +25,7 @@ func (m Model) requestPane(start StartFunc) (tea.Model, tea.Cmd) {
 	if start == nil {
 		return m, nil
 	}
-	if m.width == 0 {
+	if m.winW == 0 {
 		m.pending = append(m.pending, start)
 		return m, nil
 	}
@@ -55,7 +55,7 @@ func (m Model) openPending() (tea.Model, tea.Cmd) {
 // the user dragged them to. Nothing changes when there is no room or the pane
 // fails to start.
 func (m Model) openPane(start StartFunc) (tea.Model, tea.Cmd) {
-	if m.width == 0 || start == nil {
+	if m.winW == 0 || start == nil {
 		return m, nil
 	}
 	weights := m.grownWeights()
@@ -104,7 +104,7 @@ func (m Model) closeTerminal(i int) (tea.Model, tea.Cmd) {
 func (m Model) handleTermUpdate(msg termUpdateMsg) (tea.Model, tea.Cmd) {
 	i := slices.Index(m.terms, msg.term)
 	if i < 0 {
-		return m, nil // already closed
+		return m.parkedTermUpdate(msg.term) // a parked workspace's, or closed already
 	}
 	if msg.term.Exited() {
 		return m.closeTerminal(i)

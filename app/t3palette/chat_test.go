@@ -49,11 +49,13 @@ func TestPalette_FollowChatsForgetsClosedPanes(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, loginID))
 	open, closed := &fakeChatPane{}, &fakeChatPane{exited: true}
 	h.p.mu.Lock()
-	h.p.chats = []*openChat{{pane: open}, {pane: closed}}
+	other := &fakeChatPane{}
+	h.p.chats = []*openChat{{pane: open, ws: h.p.ws}, {pane: closed, ws: h.p.ws}, {pane: other, ws: "elsewhere"}}
 	h.p.followChatsLocked(threadReview(t, a, olderID))
 	live := len(h.p.chats)
 	h.p.mu.Unlock()
-	assert.Equal(t, 1, live)
+	assert.Equal(t, 2, live)
+	assert.Empty(t, other.follows, "a pane of another workspace stays on its thread")
 	assert.Equal(t, []string{"Older work"}, open.follows, "an open pane follows the thread on screen")
 	assert.Empty(t, closed.follows)
 }
@@ -72,7 +74,7 @@ func TestPalette_OpensChatPanes(t *testing.T) {
 	assert.Contains(t, pane.Render(false), "Fix login")
 	h.p.mu.Lock()
 	defer h.p.mu.Unlock()
-	assert.True(t, h.p.chatOpenLocked(), "the palette steers the pane it opened")
+	assert.True(t, h.p.chatOpenLocked(""), "the palette steers the pane it opened")
 }
 
 func TestPalette_ClearStartsANewThreadLikeTheChats(t *testing.T) {
@@ -86,7 +88,7 @@ func TestPalette_ClearStartsANewThreadLikeTheChats(t *testing.T) {
 	msgs := expand(h.program.msgs[0])
 	h.program.mu.Unlock()
 	assert.Contains(t, flashes(msgs), "T3: starting a new thread in Sabra2…")
-	replace := find[splitview.ReplaceInnerMsg](t, msgs)
+	replace := find[splitview.SwitchWorkspaceMsg](t, msgs)
 	shown, ok := replace.Model.(fakeModel)
 	require.True(t, ok)
 	assert.Equal(t, "fresh", shown.review.thread().ID, "the new thread takes the screen, and the chat follows it")

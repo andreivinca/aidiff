@@ -31,7 +31,7 @@ type Model struct {
 	styles styles
 
 	terms []Terminal
-	focus int // focusDiff, or an index into terms
+	focus int // focusOuter, focusSidebar, focusDiff, or an index into terms
 
 	palette       palette
 	quitDialog    bool   // the quit dialog is open
@@ -39,7 +39,8 @@ type Model struct {
 	quitConfirmed bool   // nothing stands in the way of quitting; QuitGuard lets tea.QuitMsg through
 	flash         string // one-line message shown until the next key
 
-	width, height int
+	winW          int       // the window's width
+	width, height int       // width: the columns right of the sidebar, for the wrapped model and the panes
 	leftW         int       // columns given to the wrapped model
 	termRatio     float64   // terminal area share of the width; changed by dragging
 	weights       []float64 // each terminal's share of the terminal area, parallel to terms
@@ -56,6 +57,16 @@ type Model struct {
 	closing   *sync.WaitGroup // panes being closed; shared across copies so Close can wait for them
 
 	pending []StartFunc // panes requested before the window had a size
+
+	wsKey  string               // the workspace on screen; "" is unnamed, closed when left
+	parked map[string]workspace // the named workspaces not on screen; shared across copies, cloned on write
+	wsID   int                  // the workspace on screen's wrapped model, as innerMsg names it
+
+	sideOpen   bool // the sidebar is shown
+	sideReturn int  // the focus before the sidebar was shown, given back when it hides
+
+	outerOpen   bool // the outer sidebar is shown
+	outerReturn int  // the focus before the outer sidebar was shown
 }
 
 // New wraps inner.
@@ -69,6 +80,8 @@ func New(inner tea.Model, cfg Config) Model {
 		termRatio: float64(cfg.WidthPercent) / 100,
 		leftCache: &leftCache{},
 		closing:   &sync.WaitGroup{},
+		wsKey:     cfg.Workspace,
+		wsID:      nextWorkspaceID(),
 	}
 }
 
@@ -79,7 +92,7 @@ func (m Model) Inner() tea.Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return m.inner.Init()
+	return m.tag(m.inner.Init())
 }
 
 // Update implements tea.Model.
@@ -131,8 +144,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FlashMsg:
 		m.flash = msg.Text
 		return m, nil
+	case ShowSidebarMsg:
+		return m.showSidebar()
+	case HideSidebarMsg:
+		return m.hideSidebar()
 	case ReplaceInnerMsg:
 		return m.replaceInner(msg)
+	case SwitchWorkspaceMsg:
+		return m.switchWorkspace(msg)
+	case innerMsg:
+		return m.routeInner(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -143,7 +164,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // resize takes the new window size, opening the panes that waited for one.
 func (m Model) resize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
-	m.width, m.height = msg.Width, msg.Height
+	m.winW, m.height = msg.Width, msg.Height
+	m.width = m.winW - m.leftCols()
 	if m.cfg.OpenOnStart && !m.opened {
 		m.opened = true
 		m.pending = append([]StartFunc{m.cfg.Start}, m.pending...)
@@ -164,13 +186,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case m.cfg.Keys.Focus:
-		return m.moveFocus(1), nil
+		return m.focusRight()
 	case m.cfg.Keys.FocusLeft:
-		return m.moveFocus(-1), nil
+		return m.focusLeft()
 	case m.cfg.Keys.Quit:
 		return m.askQuit()
 	case m.cfg.Keys.Palette:
 		return m.openPalette(), nil
+	}
+	if m.sidebarAvailable() {
+		if msg.String() == m.cfg.Keys.Sidebar {
+			return m.toggleSidebar()
+		}
+		if n, ok := altNumber(msg); ok {
+			return m.selectNumber(n)
+		}
+	}
+	if m.focus == focusOuter {
+		return m.outerKey(msg)
+	}
+	if m.focus == focusSidebar {
+		return m.sidebarKey(msg)
 	}
 	if m.focus == focusDiff {
 		return m.updateInner(msg)
@@ -179,15 +215,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// moveFocus moves between the review and panes, stopping at either end.
+// moveFocus moves between the sidebar, when shown, the review and panes,
+// stopping at either end.
 func (m Model) moveFocus(direction int) Model {
-	m.focus = max(focusDiff, min(m.focus+direction, len(m.terms)-1))
+	lowest := focusDiff
+	if m.sideOpen {
+		lowest = focusSidebar
+	}
+	m.focus = max(lowest, min(m.focus+direction, len(m.terms)-1)) // focusSidebar is focusDiff-1
 	return m
 }
 
 func (m Model) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.inner, cmd = m.inner.Update(msg)
+	cmd = m.tag(cmd)
 	m.dropLeftCache()
 	if m.palette.open {
 		m = m.refilterPalette() // the commands may follow the wrapped model's state
@@ -206,11 +248,12 @@ func (m Model) replaceInner(msg ReplaceInnerMsg) (tea.Model, tea.Cmd) {
 		msg.Retire(m.inner)
 	}
 	m.inner = msg.Model
+	m.wsID = nextWorkspaceID() // what the old model still had under way is dropped
 	m.dropLeftCache()
 	m.innerSized = false
 	m.refreshPending = false
 	m.flash = ""
-	initCmd := m.inner.Init()
+	initCmd := m.tag(m.inner.Init())
 	model, sizeCmd := m.relayout()
 	return model, tea.Batch(initCmd, sizeCmd)
 }

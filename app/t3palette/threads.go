@@ -270,8 +270,8 @@ func (t *Palette) openMsg(s Session, sh t3client.Shell, threadID string) tea.Msg
 		return t3Error("open thread", err)
 	}
 	r := t.newReview(s, target)
-	show := t.showMsg(r, annotation.NewStore(), "open thread")
-	if _, ok := show.(splitview.ReplaceInnerMsg); !ok {
+	show := t.showMsg(r, t.storeFor(r), "open thread")
+	if _, ok := show.(splitview.SwitchWorkspaceMsg); !ok {
 		return show
 	}
 	t.mu.Lock()
@@ -280,19 +280,27 @@ func (t *Palette) openMsg(s Session, sh t3client.Shell, threadID string) tea.Msg
 	if chat == nil {
 		return show
 	}
-	return tea.BatchMsg{
+	// in order: the chat opens in the workspace the review lands in
+	return tea.Sequence(
 		func() tea.Msg {
 			return show
 		},
 		func() tea.Msg {
 			return chat
 		},
-	}
+	)()
 }
 
 // showMsg builds the model of r over store and the message that puts it on
-// screen in place of the current review, which install retires.
+// screen in its project's workspace, in place of the review there (switched
+// retires it).
 func (t *Palette) showMsg(r *Review, store *annotation.Store, what string) tea.Msg {
+	return t.workspaceMsg(r, store, what, true)
+}
+
+// workspaceMsg is showMsg; with replace unset, a workspace the project
+// already has keeps its own review and r is dropped.
+func (t *Palette) workspaceMsg(r *Review, store *annotation.Store, what string, replace bool) tea.Msg {
 	if !t.prepare(r) {
 		return splitview.FlashMsg{Text: "T3: " + what + ": the connection was closed meanwhile"}
 	}
@@ -301,10 +309,13 @@ func (t *Palette) showMsg(r *Review, store *annotation.Store, what string) tea.M
 		t.abandon(r)
 		return t3Error(what, err)
 	}
-	return splitview.ReplaceInnerMsg{
-		Model: model,
-		Retire: func(old tea.Model) {
-			t.install(old, r, store)
+	key := wsKey(r)
+	return splitview.SwitchWorkspaceMsg{
+		Key:     key,
+		Model:   model,
+		Replace: replace,
+		Done: func(sw splitview.WorkspaceSwitch) {
+			t.switched(key, r, store, sw)
 		},
 	}
 }

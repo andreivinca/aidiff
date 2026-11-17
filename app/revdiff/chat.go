@@ -9,13 +9,17 @@ import (
 )
 
 // chatConfig is how chat panes look, what they reach on this machine (its
-// clipboard and its image files) and the split's palette key they list.
+// clipboard and its image files), the split's keys they list, and where
+// their shortcuts show.
 func chatConfig(opts options) chat.Config {
 	return chat.Config{
 		NoColor:   opts.NoColors,
 		Clipboard: chatClipboard{},
 		Files:     chatImages{},
 		HostKeys:  []chat.Hint{{Key: paletteKey, Label: "commands"}},
+		// the status bar under the whole window carries the focused chat's
+		// shortcuts; without one the chat keeps its own hint row
+		HintsOutside: !opts.NoStatusBar,
 	}
 }
 

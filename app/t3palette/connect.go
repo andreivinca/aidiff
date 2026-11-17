@@ -65,8 +65,8 @@ func serverSpec(s string) string {
 }
 
 // connect reaches the server named by spec, makes it the live session and
-// lists its projects. The review on screen stays, and so does its session
-// while it is there.
+// shows its projects in the sidebar. The review on screen stays, and so does
+// its session while it is there.
 func (t *Palette) connect(spec string) tea.Cmd {
 	return tea.Batch(flash("T3: connecting to "+spec+"…"), func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
@@ -81,13 +81,12 @@ func (t *Palette) connect(spec string) tea.Cmd {
 		if !t.adopt(s, sh, nil) {
 			return nil // the program is ending
 		}
-		picker := t.projectList(s, sh)
 		connected := tea.BatchMsg{
 			func() tea.Msg {
 				return ui.MachineIdentityMsg{Name: s.MachineName(), T3: true}
 			},
 			func() tea.Msg {
-				return picker
+				return splitview.ShowSidebarMsg{}
 			},
 		}
 		return withNotices(s, connected)

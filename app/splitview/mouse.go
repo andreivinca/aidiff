@@ -10,6 +10,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.palette.open || m.quitDialog {
 		return m, nil // modal: swallow
 	}
+	return m.hideOuterOffFocus(m.routeMouse(msg))
+}
+
+// routeMouse hands a mouse event to what is under the pointer.
+func (m Model) routeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	cols := m.leftCols()
+	msg.X -= cols // from here on x is relative to the area right of the sidebars
 	if m.dragging {
 		return m.dragMouse(msg)
 	}
@@ -17,6 +24,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	rects := m.termRects()
 	if m.routeCapturedMouse(msg, rects) {
 		return m, nil
+	}
+	if msg.Y >= m.bodyH() {
+		return m, nil // the status line under the whole window does nothing
+	}
+	if x := msg.X + cols; x < m.outerCols() {
+		return m.outerMouse(msg, x)
+	}
+	if msg.X < 0 {
+		return m.sidebarMouse(msg, msg.X+cols-m.outerCols())
 	}
 
 	if press {

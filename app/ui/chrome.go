@@ -5,6 +5,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/umputun/revdiff/app/ui/style"
 )
 
 // aidiff's additions to the pane chrome: the machine identity at the start of
@@ -76,4 +78,67 @@ func replaceDivider(row string) string {
 		}
 	}
 	return row
+}
+
+// HasStatusLine reports whether the review draws a status bar as its last
+// row. aidiff's split then draws that row across the whole window instead
+// (StatusLine), under every pane.
+func (m Model) HasStatusLine() bool {
+	return !m.cfg.noStatusBar
+}
+
+// minStatusWidth is the least the review's own status keeps when the bar
+// also carries a pane's hints.
+const minStatusWidth = 30
+
+// StatusLine is the status bar rendered width columns wide, for the split to
+// draw under the whole window: the review's own status, then hints, the
+// shortcuts of the focused pane as key and label pairs, on the right. Hints
+// that do not fit are left out from the last. While View shows no status
+// bar yet (still loading) only the hints show.
+func (m Model) StatusLine(width int, hints [][2]string) string {
+	bar := m.resolver.Style(style.StyleKeyStatusBar).Width(width)
+	inner := max(0, width-statusBarPadding)
+	sep := m.renderer.StatusBarSeparator()
+	loading := !m.ready || (!m.filesLoaded && !m.refreshLoading())
+	room := inner - lipgloss.Width(sep) - minStatusWidth
+	if loading {
+		room = inner
+	}
+	right := m.statusHints(hints, room)
+	if loading {
+		return bar.Render(strings.Repeat(" ", max(0, inner-lipgloss.Width(right))) + right)
+	}
+	if right == "" {
+		m.layout.width = width // a copy: the model's own layout is untouched
+		return bar.Render(m.statusBarWithMachine())
+	}
+	leftW := inner - lipgloss.Width(right) - lipgloss.Width(sep)
+	m.layout.width = leftW + statusBarPadding
+	left := m.statusBarWithMachine()
+	left += strings.Repeat(" ", max(0, leftW-lipgloss.Width(left)))
+	return bar.Render(left + sep + right)
+}
+
+// statusHints draws as many of hints as fit in width: each key in the
+// bar's color and its label muted, in raw ANSI so the bar's background
+// survives.
+func (m Model) statusHints(hints [][2]string, width int) string {
+	muted := string(m.resolver.Color(style.ColorKeyMutedFg))
+	normal := string(m.resolver.Color(style.ColorKeyStatusFg))
+	out := ""
+	for _, h := range hints {
+		text := muted + h[1] + normal
+		if h[0] != "" {
+			text = h[0] + " " + text
+		}
+		if out != "" {
+			text = out + "  " + text
+		}
+		if lipgloss.Width(text) > width {
+			break
+		}
+		out = text
+	}
+	return out
 }
