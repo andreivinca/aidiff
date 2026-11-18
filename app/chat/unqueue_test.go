@@ -41,3 +41,18 @@ func TestPane_UpWithoutAQueueScrolls(t *testing.T) {
 	})
 	assert.Empty(t, f.calls)
 }
+
+func TestPane_UpLeavesASteerAlone(t *testing.T) {
+	conv := fixture()
+	conv.Queued = []Queued{{ID: "m3", Text: "queued for later"}, {ID: "m4", Text: "read at the next step", Steer: true}}
+	p, f := newTestPane(t, 90, 24, conv)
+	assert.Contains(t, view(p), "read at the next step", "a steer shows as queued")
+	c := ask(t, p, f, func() {
+		p.SendKey(uv.KeyPressEvent{Code: uv.KeyUp})
+	})
+	assert.Equal(t, call{kind: "unqueue", id: "m3"}, c, "up takes back the newest message that can be taken back")
+
+	conv.Queued = []Queued{{ID: "m4", Text: "read at the next step", Steer: true}}
+	p, _ = newTestPane(t, 90, 24, conv)
+	assert.NotContains(t, view(p), "↑ edit queued", "a steer alone offers nothing to take back")
+}

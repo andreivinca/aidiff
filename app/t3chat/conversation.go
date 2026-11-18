@@ -109,7 +109,7 @@ func (t *thread) queue() []chat.Queued {
 	slices.SortFunc(runs, func(a, b t3client.Run) int {
 		return cmp.Compare(a.Ordinal, b.Ordinal)
 	})
-	var out []chat.Queued
+	out := t.unreadSteers()
 	for _, r := range runs {
 		if msg, ok := t.userMessages[r.UserMessageID]; ok {
 			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text, Images: len(msg.Attachments)})
@@ -121,6 +121,58 @@ func (t *thread) queue() []chat.Queued {
 		}
 	}
 	return out
+}
+
+// unreadSteers are the messages sent into the running turn that the agent
+// has not read yet, oldest first.
+func (t *thread) unreadSteers() []chat.Queued {
+	var out []chat.Queued
+	for _, it := range t.items {
+		if t.unreadSteer(it) {
+			out = append(out, chat.Queued{ID: it.MessageID, Text: it.Text, Steer: true})
+		}
+	}
+	slices.SortStableFunc(out, func(a, b chat.Queued) int {
+		return cmp.Compare(t.ordinalOf(a.ID), t.ordinalOf(b.ID))
+	})
+	return out
+}
+
+// unreadSteer reports a message sent into the running turn that the agent
+// has not read yet. A provider that says when it reads one (Pi) keeps the
+// row pending until then. Claude's says nothing: the row is complete as soon
+// as the message is handed over, and the agent reads it at its next step,
+// so the message counts as read once the agent starts thinking or writing
+// after it, or its run ends.
+func (t *thread) unreadSteer(it t3client.TurnItem) bool {
+	if it.Type != "user_message" || it.MessageID == "" || (it.InputIntent != "steer" && it.InputIntent != "promoted_queued_to_steer") {
+		return false
+	}
+	switch it.Status {
+	case "pending":
+		return true
+	case "completed":
+	default:
+		return false // cancelled or failed: it never reached the agent, nor will
+	}
+	if it.RunID != nil {
+		if r, ok := t.runs[*it.RunID]; ok && !r.Active() {
+			return false
+		}
+	}
+	return !slices.ContainsFunc(t.items, func(o t3client.TurnItem) bool {
+		return o.Ordinal > it.Ordinal && (o.Type == "assistant_message" || o.Type == "reasoning")
+	})
+}
+
+// ordinalOf is the transcript position of the user message messageID.
+func (t *thread) ordinalOf(messageID string) int {
+	for _, it := range t.items {
+		if it.MessageID == messageID {
+			return it.Ordinal
+		}
+	}
+	return 0
 }
 
 // holdsQueue reports any queued message, its text known or not.
@@ -178,7 +230,7 @@ func (t *thread) queuedTurn(it t3client.TurnItem) bool {
 func (t *thread) delivered() []string {
 	var out []string
 	for _, it := range t.items {
-		if it.Type == "user_message" && it.MessageID != "" {
+		if it.Type == "user_message" && it.MessageID != "" && !t.unreadSteer(it) {
 			out = append(out, it.MessageID)
 		}
 	}

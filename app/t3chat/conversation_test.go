@@ -227,3 +227,39 @@ func TestThread_RunsTheStopDialogOffers(t *testing.T) {
 	th.subagents["a1"] = t3client.Subagent{ID: "a1", Title: "review", Status: "completed"}
 	assert.Empty(t, th.activeRuns())
 }
+
+func TestBackend_SteerQueuedUntilRead(t *testing.T) {
+	f := newFakeServer(fixture())
+	s := subscribe(t, f)
+	f.live().TurnItem(t3client.TurnItem{ID: "steer-row", MessageID: "steer-msg", RunID: new("run-2"), Type: "user_message",
+		InputIntent: "steer", Status: "completed", Text: "also update the docs", Ordinal: 10})
+	c := s.v.latest()
+	assert.Equal(t, []chat.Queued{{ID: "steer-msg", Text: "also update the docs", Steer: true}}, c.Queued,
+		"handed to the agent, not read yet: it waits as queued")
+	assert.NotContains(t, c.Delivered, "steer-msg", "the pane keeps its card")
+	assert.NotContains(t, c.Entries, chat.UserMessage{Text: "also update the docs"})
+
+	f.live().TurnItem(t3client.TurnItem{ID: "tool-row", RunID: new("run-2"), Type: "command_execution", Status: "running", Ordinal: 11})
+	assert.Len(t, s.v.latest().Queued, 1, "a tool call says nothing about the message being read")
+
+	f.live().TurnItem(t3client.TurnItem{ID: "think-row", RunID: new("run-2"), Type: "reasoning", Status: "running", Ordinal: 12})
+	c = s.v.latest()
+	assert.Empty(t, c.Queued, "the agent's next step read it")
+	assert.Contains(t, c.Delivered, "steer-msg")
+	assert.Contains(t, c.Entries, chat.UserMessage{Text: "also update the docs"})
+
+	f.live().TurnItem(t3client.TurnItem{ID: "pi-row", MessageID: "pi-msg", RunID: new("run-2"), Type: "user_message",
+		InputIntent: "steer", Status: "pending", Text: "a provider that says when it reads", Ordinal: 13})
+	f.live().TurnItem(t3client.TurnItem{ID: "late-row", RunID: new("run-2"), Type: "assistant_message", Status: "running", Ordinal: 14})
+	assert.Len(t, s.v.latest().Queued, 1, "a pending row waits for the provider's word")
+
+	f.live().TurnItem(t3client.TurnItem{ID: "pi-row", MessageID: "pi-msg", RunID: new("run-2"), Type: "user_message",
+		InputIntent: "steer", Status: "completed", Text: "a provider that says when it reads", Ordinal: 13})
+	assert.Empty(t, s.v.latest().Queued)
+
+	f.live().TurnItem(t3client.TurnItem{ID: "end-row", MessageID: "end-msg", RunID: new("run-2"), Type: "user_message",
+		InputIntent: "steer", Status: "completed", Text: "sent as the turn ends", Ordinal: 15})
+	require.Len(t, s.v.latest().Queued, 1)
+	f.live().Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed"})
+	assert.Empty(t, s.v.latest().Queued, "a run that ended holds nothing unread")
+}

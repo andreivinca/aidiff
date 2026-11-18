@@ -15,10 +15,15 @@ func (p *Pane) unqueuerLocked() Unqueuer {
 // lastQueuedLocked is the newest message the backend holds queued, when the
 // input is empty and the backend can take it back; mu must be held.
 func (p *Pane) lastQueuedLocked() (Queued, bool) {
-	if !p.input.empty() || len(p.conv.Queued) == 0 || p.unqueuerLocked() == nil {
+	if !p.input.empty() || p.unqueuerLocked() == nil {
 		return Queued{}, false
 	}
-	return p.conv.Queued[len(p.conv.Queued)-1], true
+	for i := len(p.conv.Queued) - 1; i >= 0; i-- {
+		if q := p.conv.Queued[i]; !q.Steer { // a steer is already the agent's
+			return q, true
+		}
+	}
+	return Queued{}, false
 }
 
 // unqueueLastLocked takes the newest queued message back into an empty

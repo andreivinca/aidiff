@@ -175,6 +175,9 @@ type Queued struct {
 	ID     string // the message's id; a card of the pane's own with this id gives way to it
 	Text   string
 	Images int // the images it carries, which taking it back cannot return to the input
+	// Steer is a message sent into the running turn that the agent has not
+	// read yet; it cannot be taken back.
+	Steer bool
 }
 
 // Activity is a piece of the agent's background work: a subagent, a
