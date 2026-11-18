@@ -28,6 +28,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 - `app/editor/` - external `$EDITOR` invocation for multi-line annotations: temp-file lifecycle, editor resolution ($EDITOR → $VISUAL → vi), and `Command()` API returning `*exec.Cmd` + completion func for `tea.ExecProcess`. Consumed by `app/ui` via the `ExternalEditor` interface
 - `app/handoff/` - prepares user-configured post-flush shell commands. Annotation snapshots are provided on stdin; stdout is suppressed so helpers cannot overwrite the TUI. Consumed by `app/ui` via the `PostFlushHook` interface and `tea.ExecProcess`
 - `app/history/` - review session auto-save to `~/.config/revdiff/history/`
+- `app/localhist/` - the local folders aidiff reviewed (`~/.config/revdiff/history.json`), the rows of the history panel
 - `app/fsutil/` - filesystem utilities
 - `app/ptybridge/` - macOS/Linux PTY bridge (`package main`) built on demand by `plugins/opencode/v2/runtime-check.ts` to run a real OpenCode CLI in a terminal. Test helper only: `make build` and goreleaser build `./app/revdiff` alone, so it never ships
 - `app/ui/mocks/` - moq-generated mocks (never edit manually)

@@ -25,10 +25,36 @@ type projectsSidebar struct {
 	offset int // the first row shown, when they do not all fit
 }
 
-// Sidebar is the projects sidebar of the live server, for the split.
+// Sidebar is the split's sidebar: the projects of the live server, else,
+// while this machine is the selected connection, the history of its
+// folders.
 func (t *Palette) Sidebar() splitview.Sidebar {
-	return &projectsSidebar{t: t}
+	return &panelSidebar{projects: &projectsSidebar{t: t}, history: &historySidebar{t: t}}
 }
+
+// panelSidebar shows the projects sidebar while a server is live, the
+// history sidebar otherwise.
+type panelSidebar struct {
+	projects *projectsSidebar
+	history  *historySidebar
+}
+
+// current is the sidebar the selected connection shows.
+func (p *panelSidebar) current() splitview.Sidebar {
+	if p.projects.Available() {
+		return p.projects
+	}
+	return p.history
+}
+
+func (p *panelSidebar) Available() bool { return p.current().Available() }
+func (p *panelSidebar) Shown()          { p.current().Shown() }
+func (p *panelSidebar) View(width, height int, focused bool) string {
+	return p.current().View(width, height, focused)
+}
+func (p *panelSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) { return p.current().HandleKey(msg) }
+func (p *panelSidebar) Click(y int) (tea.Cmd, bool)              { return p.current().Click(y) }
+func (p *panelSidebar) Select(n int) (tea.Cmd, bool)             { return p.current().Select(n) }
 
 // Available reports whether a server is connected.
 func (b *projectsSidebar) Available() bool {

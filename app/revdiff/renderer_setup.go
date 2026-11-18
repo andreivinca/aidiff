@@ -26,6 +26,11 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 	if cwdErr != nil {
 		cwd = "."
 	}
+	return setupVCSRendererIn(opts, cwd)
+}
+
+// setupVCSRendererIn is setupVCSRenderer for the folder cwd.
+func setupVCSRendererIn(opts options, cwd string) (vcsSetup, error) {
 	vcsType, vcsRoot := diff.DetectVCS(cwd)
 
 	switch vcsType {

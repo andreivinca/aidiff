@@ -1,6 +1,7 @@
 package t3palette
 
 import (
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -57,22 +58,27 @@ func TestConnections_UseAnotherServer(t *testing.T) {
 	assert.Equal(t, "T3 Code: connect to", find[splitview.ShowPickerMsg](t, run(cmd)).Title)
 }
 
-func TestConnections_LocalDrivesTheProjects(t *testing.T) {
-	h := newHarness(t, Config{NoWatch: true, NoChat: true, LocalName: "andrei-pc"}, nil)
-	h.p.localServer = func() bool { return false }
+func TestConnections_LocalShowsTheHistory(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, LocalName: "andrei-pc",
+		Local: LocalConfig{History: func() []string { return []string{dir} }}}, nil)
 	b := newFakeSession("ssh://b", twoProjectShell())
 	h.connect(t, "ssh://b", b)
-	projects, conns := h.p.Sidebar(), h.p.Connections()
-	assert.Contains(t, ansi.Strip(projects.View(30, 14, false)), "Alpha", "b's projects")
+	panel, conns := h.p.Sidebar(), h.p.Connections()
+	assert.Contains(t, ansi.Strip(panel.View(30, 14, false)), "Alpha", "b's projects")
 
 	cmd, hide := conns.Click(connectionsHeader) // this machine
 	assert.True(t, hide)
 	msgs := run(cmd)
-	find[splitview.HideSidebarMsg](t, msgs) // the projects panel is a T3 server's
+	find[splitview.ShowSidebarMsg](t, msgs) // its history shows
 	assert.Equal(t, ui.MachineIdentityMsg{Name: "andrei-pc"}, find[ui.MachineIdentityMsg](t, msgs))
-	assert.Nil(t, h.p.liveSession(), "with no T3 Code here, no server is in use")
-	assert.False(t, projects.Available(), "and there is no projects panel to show")
-	view := ansi.Strip(conns.View(40, 12, false))
+	assert.Nil(t, h.p.liveSession(), "no server is in use")
+	require.True(t, panel.Available(), "the panel lists this machine's folders")
+	view := ansi.Strip(panel.View(40, 14, false))
+	assert.Contains(t, view, " History")
+	assert.Contains(t, view, filepath.Base(dir))
+	assert.NotContains(t, view, "Alpha")
+	view = ansi.Strip(conns.View(40, 12, false))
 	assert.Contains(t, view, " ▸ local andrei-pc", "the arrow follows the selection")
 	assert.Contains(t, view, "   ssh://b")
 	h.settle()
@@ -83,15 +89,17 @@ func TestConnections_LocalDrivesTheProjects(t *testing.T) {
 	assert.Same(t, b, h.p.liveSession())
 	_, err := h.p.fetchShell(t.Context(), b)
 	require.NoError(t, err)
-	assert.Contains(t, ansi.Strip(projects.View(30, 14, false)), "Alpha", "b's projects are back")
+	assert.Contains(t, ansi.Strip(panel.View(30, 14, false)), "Alpha", "b's projects are back")
+}
 
-	h.p.localServer = func() bool { return true }
-	h.dials["local"] = newFakeSession("local", testShell())
-	cmd, _ = conns.Click(connectionsHeader)
-	run(cmd)
-	assert.Equal(t, "local", h.p.liveSession().Label(), "T3 Code on this machine is connected to")
-	assert.Contains(t, ansi.Strip(projects.View(30, 14, false)), "Sabra2", "and its projects show")
+func TestConnections_LocalT3CodeIsAServerOfItsOwn(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, LocalName: "andrei-pc"}, nil)
+	h.connect(t, "local", newFakeSession("local", testShell()))
 	rows := h.p.connRows()
-	assert.Len(t, rows, 3, "local stands for its T3 Code: local, b, connect")
-	assert.True(t, rows[0].live)
+	require.Len(t, rows, 3, "local, local T3 Code, connect")
+	assert.True(t, rows[0].local)
+	assert.False(t, rows[0].live)
+	assert.Equal(t, localT3Row, rows[1].label)
+	assert.True(t, rows[1].live)
+	assert.Contains(t, ansi.Strip(h.p.Sidebar().View(30, 14, false)), "Sabra2", "its projects show")
 }

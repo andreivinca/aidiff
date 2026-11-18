@@ -39,6 +39,8 @@ type Config struct {
 	LocalName string
 	// StartStore holds the annotations of the review the run opens with.
 	StartStore *annotation.Store
+	// Local reaches this machine's folders, for the history panel.
+	Local LocalConfig
 }
 
 // Program receives what the palette sends outside a command: the refreshes
@@ -60,28 +62,29 @@ type dialFunc func(ctx context.Context, spec string) (Session, error)
 type Palette struct {
 	cfg  Config
 	dial dialFunc
-	// localServer reports whether T3 Code runs on this machine.
-	localServer func() bool
-	bg          sync.WaitGroup // background work: thread watches, closing sessions, stopping refreshes, saving history
+	bg   sync.WaitGroup // background work: thread watches, closing sessions, stopping refreshes, saving history
 
-	mu         sync.Mutex
-	closed     bool
-	program    Program                      // set by Start
-	held       map[Session]bool             // the sessions the palette holds open
-	pending    map[*Review]bool             // reviews built for the screen and not there yet
-	live       Session                      // the session the commands use; nil before the first connection
-	onScreen   *Review                      // the T3 review on screen; nil while the run's local review is
-	stop       func()                       // live refresh of the review on screen
-	chats      []*openChat                  // open chat panes; they follow the thread on screen
-	shell      t3client.Shell               // the live server's projects and threads, from the last fetch
-	shellAt    time.Time                    // when shell was fetched
-	refreshing Session                      // the session a background fetch of shell runs for
-	project    *t3client.Project            // the live server's project new threads start in; nil until chosen
-	diff       diffChoice                   // what T3: Diff View… chose for the reviews of its folder
-	ws         string                       // the split's workspace on screen: wsKey of its review, "" for the run's local one
-	parked     map[string]*Review           // the reviews of the workspaces not on screen, by key; their sessions stay open
-	connected  map[Session]bool             // the newest connection to each server the user connected to; they stay open
-	stores     map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
+	mu          sync.Mutex
+	closed      bool
+	program     Program                      // set by Start
+	held        map[Session]bool             // the sessions the palette holds open
+	pending     map[*Review]bool             // reviews built for the screen and not there yet
+	live        Session                      // the session the commands use; nil before the first connection
+	onScreen    *Review                      // the T3 review on screen; nil while the run's local review is
+	stop        func()                       // live refresh of the review on screen
+	chats       []*openChat                  // open chat panes; they follow the thread on screen
+	shell       t3client.Shell               // the live server's projects and threads, from the last fetch
+	shellAt     time.Time                    // when shell was fetched
+	refreshing  Session                      // the session a background fetch of shell runs for
+	project     *t3client.Project            // the live server's project new threads start in; nil until chosen
+	diff        diffChoice                   // what T3: Diff View… chose for the reviews of its folder
+	ws          string                       // the split's workspace on screen: wsKey of its review, localKey of its folder, "" for a local review of no folder
+	parked      map[string]*Review           // the reviews of the workspaces not on screen, by key; their sessions stay open
+	local       *LocalWorkspace              // the local folder on screen; nil while a T3 review, or a local review of no folder, is
+	parkedLocal map[string]*LocalWorkspace   // the local folders of the workspaces not on screen, by key
+	history     []string                     // the history panel's folders, most recently opened first as of the start
+	connected   map[Session]bool             // the newest connection to each server the user connected to; they stay open
+	stores      map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
 }
 
 // New builds the palette. start is the T3 review the run opens with, nil for
@@ -97,18 +100,15 @@ func New(cfg Config, start *Review) *Palette {
 // newPalette is New with the way palette connections are made.
 func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 	t := &Palette{
-		cfg:  cfg,
-		dial: dial,
-		localServer: func() bool {
-			_, err := t3client.LocalOrigin()
-			return err == nil
-		},
-		held:      map[Session]bool{},
-		pending:   map[*Review]bool{},
-		stop:      noop,
-		parked:    map[string]*Review{},
-		connected: map[Session]bool{},
-		stores:    map[string]*annotation.Store{},
+		cfg:         cfg,
+		dial:        dial,
+		held:        map[Session]bool{},
+		pending:     map[*Review]bool{},
+		stop:        noop,
+		parked:      map[string]*Review{},
+		parkedLocal: map[string]*LocalWorkspace{},
+		connected:   map[Session]bool{},
+		stores:      map[string]*annotation.Store{},
 	}
 	if start != nil {
 		t.held[start.Session] = true
@@ -119,6 +119,7 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 		t.ws = wsKey(start)
 		t.rememberLocked(start, cfg.StartStore)
 	}
+	t.initLocalLocked()
 	return t
 }
 
@@ -158,6 +159,7 @@ func (t *Palette) Close() {
 	clear(t.connected)
 	clear(t.pending)
 	clear(t.parked)
+	clear(t.parkedLocal)
 	t.live = nil
 	t.mu.Unlock()
 	stop()
@@ -253,22 +255,23 @@ func (t *Palette) abandon(r *Review) {
 	}
 }
 
-// note is annotations leaving the screen, filed under review (nil: the
-// run's local one).
+// note is annotations leaving the screen, filed under review, else under
+// local folder dir, else as the run's own.
 type note struct {
 	review      *Review
+	dir         string
 	annotations string
 	files       []string
 }
 
 // noteOf is what model leaves to history, nothing when the model coming in
 // keeps its store (next).
-func noteOf(review *Review, model tea.Model, next *annotation.Store) []note {
+func noteOf(review *Review, dir string, model tea.Model, next *annotation.Store) []note {
 	annotations, files := leavingNotes(model, next)
 	if annotations == "" {
 		return nil
 	}
-	return []note{{review: review, annotations: annotations, files: files}}
+	return []note{{review: review, dir: dir, annotations: annotations, files: files}}
 }
 
 // switched brings the palette in line with what a SwitchWorkspaceMsg did
@@ -292,15 +295,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 	var notes []note
 	on := prev
 	if sw.Left != nil { // another workspace
-		if prev != nil {
-			t.stores[reviewKey(prev)] = storeOf(sw.Left) // kept for coming back to it
-		}
-		notes = append(notes, noteOf(prev, sw.Left, nil)...) // a safety net, parked or not
-		if sw.LeftKept && prev != nil {
-			t.parked[t.ws] = prev
-		} else {
-			t.dropChatsLocked(t.ws) // the split closed them with their workspace
-		}
+		notes = append(notes, t.leaveLocked(sw)...)
 		on = t.parked[key]
 		delete(t.parked, key)
 	}
@@ -309,7 +304,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 			if on != nil {
 				t.stores[reviewKey(on)] = storeOf(sw.Replaced)
 			}
-			notes = append(notes, noteOf(on, sw.Replaced, store)...)
+			notes = append(notes, noteOf(on, "", sw.Replaced, store)...)
 		}
 		on = r
 	}
@@ -319,7 +314,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 		return
 	}
 	t.rememberLocked(on, store)
-	t.onScreen = on
+	t.onScreen, t.local = on, nil
 	t.stop = t.watchLocked(on)
 	if on.Session == t.live {
 		t.project = &on.Target.Project
@@ -335,9 +330,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 	t.laterLocked(func() {
 		prevStop()
 		closeAll(unused)
-		for _, n := range notes {
-			t.cfg.SaveHistory(n.review, n.annotations, n.files)
-		}
+		t.saveNotes(notes)
 	})
 }
 

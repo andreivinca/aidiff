@@ -158,12 +158,13 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 	defer src.close()
-	t3p := newT3Palette(deps, description, src, store) // owns src's T3 session from here on
+	reviewDescription := src.reviewDescription(description)
+	local, diffs := newLocalDiff(deps, src, reviewDescription), &localDiffs{}
+	t3p := newT3Palette(deps, description, src, store, newLocalConfig(deps, src, diffs, local)) // owns src's T3 session from here on
 	defer t3p.Close()
 	if src.tty != nil {
 		programOptions = append(programOptions, tea.WithInput(src.tty))
 	}
-	reviewDescription := src.reviewDescription(description)
 
 	if opts.Annotations != "" {
 		if perr := preloadAnnotations(opts.Annotations, store, src.renderer, opts.ref(), opts.Staged,
@@ -178,7 +179,7 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 
-	p := tea.NewProgram(newSplit(opts, model, t3p, newLocalDiff(deps, src, reviewDescription)), append(programOptions, splitProgramOptions()...)...)
+	p := tea.NewProgram(newSplit(opts, model, t3p, local, diffs), append(programOptions, splitProgramOptions()...)...)
 	t3p.Start(p, src.watch(opts, p))
 	guard := &shutdownGuard{deadline: deadline} // a signal bounds the exit even when the quit never lands
 	stop := guard.watch(forceQuitter{p})
@@ -199,9 +200,9 @@ func run(opts options) (int, error) {
 	// EIO that races the guard's QuitMsg — so the history safety net must run
 	// whenever the model is available and the exit was graceful or signaled.
 	if m, ok := finalModel.(ui.Model); ok && (runErr == nil || signaled) {
-		hist := src.history(opts, t3p.OnScreen()) // the review on screen may not be the one the run opened
+		hist := src.exitHistory(opts, t3p) // the review on screen may not be the one the run opened
 		return finalize(finalizeReq{
-			opts:        opts,
+			opts:        hist.opts,
 			annotations: m.Store().FormatOutput(),
 			files:       m.Store().Files(),
 			discarded:   m.Discarded(),

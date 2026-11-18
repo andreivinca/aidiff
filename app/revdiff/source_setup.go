@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/ui"
@@ -63,12 +61,17 @@ func setupSource(opts options) (sourceSetup, error) {
 // --only names no files (with --only, setupVCSRenderer reviews just those).
 // ok reports whether this is the source; refs and --staged need a repository.
 func setupFolder(opts options) (src sourceSetup, ok bool, err error) {
-	if len(opts.Only) > 0 {
-		return sourceSetup{}, false, nil
-	}
 	cwd, cwdErr := os.Getwd()
 	if cwdErr != nil {
 		cwd = "."
+	}
+	return setupFolderIn(opts, cwd)
+}
+
+// setupFolderIn is setupFolder for the folder cwd.
+func setupFolderIn(opts options, cwd string) (src sourceSetup, ok bool, err error) {
+	if len(opts.Only) > 0 {
+		return sourceSetup{}, false, nil
 	}
 	if vcsType, _ := diff.DetectVCS(cwd); vcsType != diff.VCSNone {
 		return sourceSetup{}, false, nil
@@ -83,7 +86,7 @@ func setupFolder(opts options) (src sourceSetup, ok bool, err error) {
 // watch starts live refresh for the source and returns its stop function:
 // file watching for git and plain folders. A T3 thread's refresh is the T3
 // palette's, since it follows the thread on screen.
-func (s sourceSetup) watch(opts options, p *tea.Program) (stop func()) {
+func (s sourceSetup) watch(opts options, p msgSender) (stop func()) {
 	switch {
 	case opts.NoWatch:
 		return func() {}

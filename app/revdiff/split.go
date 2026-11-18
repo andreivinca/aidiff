@@ -14,21 +14,21 @@ import (
 // splitview's default, because chat panes list it among their shortcuts.
 const paletteKey = "ctrl+p"
 
-// projectsKey shows and hides the T3 projects sidebar, whose key help
-// names it.
+// projectsKey shows and hides the sidebar, the T3 projects or this
+// machine's history, whose key help names it.
 const projectsKey = "ctrl+b"
 
 // newSplit wraps the review in the split view. It always does: ctrl+p can
 // open terminals even when none start open, and the T3 commands live there
 // too.
-func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff) splitview.Model {
+func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
 		OpenOnStart:  opts.Terminal,
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
-		Commands:     paletteCommands(t3p, local),
+		Commands:     paletteCommands(t3p, local, diffs),
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
 		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey},
 		Sidebar:      t3p.Sidebar(),
@@ -37,15 +37,23 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 	})
 }
 
-// paletteCommands are the palette's own entries: Diff View… while the run's local
-// review is on screen, then the T3 commands.
-func paletteCommands(t3p *t3palette.Palette, local *localDiff) func() []splitview.Command {
+// paletteCommands are the palette's own entries: Diff View… while a local
+// review is on screen (the run's own, or a folder's from the history), then
+// the T3 commands.
+func paletteCommands(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func() []splitview.Command {
 	return func() []splitview.Command {
 		cmds := t3p.Commands()
-		if local == nil || t3p.OnScreen() != nil {
+		if t3p.OnScreen() != nil {
 			return cmds
 		}
-		return append([]splitview.Command{local.command()}, cmds...)
+		l := local
+		if dir := t3p.LocalDir(); dir != "" {
+			l = diffs.get(dir)
+		}
+		if l == nil {
+			return cmds
+		}
+		return append([]splitview.Command{l.command()}, cmds...)
 	}
 }
 

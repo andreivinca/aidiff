@@ -1,0 +1,420 @@
+package t3palette
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/umputun/revdiff/app/splitview"
+)
+
+// The history panel is the sidebar while this machine is the selected
+// connection: the local folders aidiff reviewed, most recently opened first
+// as of the run's start, so the numbers stay put while it runs. Each folder
+// is a split workspace of its own, as each project of a T3 server is: its
+// review, terminals and pane sizes, kept while the user works elsewhere.
+
+// LocalConfig is how the palette reaches this machine's folders.
+type LocalConfig struct {
+	// History lists the folders reviewed before, most recently opened
+	// first. It is read once, when the palette is built.
+	History func() []string
+	// Remember records dir as opened now. It runs in the background.
+	Remember func(dir string)
+	// Open builds the review of dir.
+	Open func(dir string) (LocalReview, error)
+	// SaveHistory files the annotations of dir's review leaving the screen.
+	// It runs in the background.
+	SaveHistory func(dir, annotations string, files []string)
+	// Start is the folder the run's local review shows, nil when it shows
+	// none (stdin, a compare pair, a T3 thread).
+	Start *LocalWorkspace
+}
+
+// LocalReview is the review of a local folder.
+type LocalReview struct {
+	Model tea.Model
+	// Watch starts the live refresh of the folder, nil for none.
+	Watch func(p Program) (stop func())
+}
+
+// LocalWorkspace is a local folder's workspace.
+type LocalWorkspace struct {
+	Dir string
+	// Watch starts the live refresh of the folder, nil for none.
+	Watch func(p Program) (stop func())
+}
+
+// historyHeader is how many rows the history sidebar draws above its list:
+// the title, the machine, a blank line.
+const historyHeader = 3
+
+// historyHelp is the key help drawn under the folders, after a blank row.
+var historyHelp = []string{
+	"",
+	" enter        open folder",
+	" ctrl+b       show / hide",
+	" ctrl/alt+1…9 switch folder",
+	" alt+← alt+→  move focus",
+}
+
+// localKey is the split workspace of local folder dir. A T3 key starts with
+// its server's label, never empty, so the two never meet.
+func localKey(dir string) string {
+	return "\x00local\x00" + dir
+}
+
+// LocalDir is the local folder whose review is on screen, "" while a T3
+// review is, or a local review of no folder.
+func (t *Palette) LocalDir() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.local == nil {
+		return ""
+	}
+	return t.local.Dir
+}
+
+// initLocalLocked loads the history, the folders gone from disk left out,
+// and puts the run's folder, when it reviews one, on top. mu must be held
+// or the palette not shared yet.
+func (t *Palette) initLocalLocked() {
+	lc := t.cfg.Local
+	if lc.History != nil {
+		for _, d := range lc.History() {
+			if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+				t.history = appendDir(t.history, d)
+			}
+		}
+	}
+	if lc.Start == nil || t.onScreen != nil {
+		return
+	}
+	start := *lc.Start
+	t.local = &start
+	t.ws = localKey(start.Dir)
+	t.history = append([]string{start.Dir}, removeDir(t.history, start.Dir)...)
+	if lc.Remember != nil {
+		go lc.Remember(start.Dir)
+	}
+}
+
+// appendDir appends dir to dirs unless it is there already.
+func appendDir(dirs []string, dir string) []string {
+	if dir == "" || containsDir(dirs, dir) {
+		return dirs
+	}
+	return append(dirs, dir)
+}
+
+// removeDir is dirs without dir.
+func removeDir(dirs []string, dir string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if d != dir {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// containsDir reports whether dir is one of dirs.
+func containsDir(dirs []string, dir string) bool {
+	for _, d := range dirs {
+		if d == dir {
+			return true
+		}
+	}
+	return false
+}
+
+// historyDirs are the history panel's folders.
+func (t *Palette) historyDirs() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.history
+}
+
+// openLocal puts local folder dir on screen: its workspace as it was left,
+// when it has one, else a new one with its review. The folder on screen
+// stays as it is.
+func (t *Palette) openLocal(dir string) tea.Cmd {
+	key := localKey(dir)
+	t.mu.Lock()
+	onScreen := t.ws == key
+	ws, parked := t.parkedLocal[key]
+	remember := t.cfg.Local.Remember
+	t.mu.Unlock()
+	if remember != nil && !onScreen {
+		go remember(dir)
+	}
+	switch {
+	case onScreen:
+		return nil
+	case parked:
+		return func() tea.Msg {
+			return splitview.SwitchWorkspaceMsg{Key: key, Done: func(sw splitview.WorkspaceSwitch) {
+				t.switchedLocal(key, ws, sw)
+			}}
+		}
+	case t.cfg.Local.Open == nil:
+		return nil
+	}
+	name := filepath.Base(dir)
+	return tea.Batch(flash("opening "+name+"…"), func() tea.Msg {
+		r, err := t.cfg.Local.Open(dir)
+		if err != nil {
+			return splitview.FlashMsg{Text: "open " + name + ": " + err.Error()}
+		}
+		ws := &LocalWorkspace{Dir: dir, Watch: r.Watch}
+		return splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
+			t.switchedLocal(key, ws, sw)
+		}}
+	})
+}
+
+// switchedLocal brings the palette in line with a switch to local folder
+// workspace key, ws: switched's counterpart for a folder of this machine.
+// The workspace left is parked, a T3 review keeping its session; the old
+// refresh stops and the folder's starts.
+func (t *Palette) switchedLocal(key string, ws *LocalWorkspace, sw splitview.WorkspaceSwitch) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || sw.Left == nil {
+		return // on screen already
+	}
+	prevStop := t.stop
+	notes := t.leaveLocked(sw)
+	delete(t.parkedLocal, key)
+	t.ws, t.onScreen, t.local = key, nil, ws
+	t.stop = t.localWatchLocked(ws)
+	if !sw.Created && t.program != nil {
+		p := t.program
+		t.laterLocked(func() {
+			p.Send(splitview.FilesChangedMsg{}) // back from the background: catch up
+		})
+	}
+	unused := t.takeUnusedLocked()
+	t.laterLocked(func() {
+		prevStop()
+		closeAll(unused)
+		t.saveNotes(notes)
+	})
+}
+
+// leaveLocked records the workspace on screen as left by sw: its review's
+// store, and the workspace parked when the split kept it. It returns the
+// annotations to file in history. mu must be held.
+func (t *Palette) leaveLocked(sw splitview.WorkspaceSwitch) []note {
+	prev := t.onScreen
+	if prev != nil {
+		t.stores[reviewKey(prev)] = storeOf(sw.Left) // kept for coming back to it
+	}
+	notes := noteOf(prev, t.localDirLocked(), sw.Left, nil) // a safety net, parked or not
+	switch {
+	case sw.LeftKept && prev != nil:
+		t.parked[t.ws] = prev
+	case sw.LeftKept && t.local != nil:
+		t.parkedLocal[t.ws] = t.local
+	default:
+		t.dropChatsLocked(t.ws) // the split closed them with their workspace
+	}
+	return notes
+}
+
+// localDirLocked is the local folder on screen, "" when none. mu must be
+// held.
+func (t *Palette) localDirLocked() string {
+	if t.local == nil {
+		return ""
+	}
+	return t.local.Dir
+}
+
+// localWatchLocked starts the live refresh of local folder ws. There is
+// none with NoWatch or before Start. mu must be held.
+func (t *Palette) localWatchLocked(ws *LocalWorkspace) (stop func()) {
+	if t.cfg.NoWatch || t.program == nil || ws == nil || ws.Watch == nil {
+		return noop
+	}
+	return ws.Watch(t.program)
+}
+
+// saveNotes files notes in history: a T3 review's by its server, a local
+// folder's by its folder, the run's own as the run's source.
+func (t *Palette) saveNotes(notes []note) {
+	for _, n := range notes {
+		if n.review == nil && n.dir != "" && t.cfg.Local.SaveHistory != nil {
+			t.cfg.Local.SaveHistory(n.dir, n.annotations, n.files)
+			continue
+		}
+		if t.cfg.SaveHistory != nil {
+			t.cfg.SaveHistory(n.review, n.annotations, n.files)
+		}
+	}
+}
+
+// historySidebar lists this machine's folders, numbered; picking one puts
+// it on screen (openLocal). It lives on the UI goroutine.
+type historySidebar struct {
+	t      *Palette
+	sel    int
+	offset int
+}
+
+// Available reports whether there is a folder to list.
+func (b *historySidebar) Available() bool {
+	return len(b.t.historyDirs()) > 0
+}
+
+// Shown selects the folder on screen.
+func (b *historySidebar) Shown() {
+	current := b.t.LocalDir()
+	b.sel = 0
+	for i, d := range b.t.historyDirs() {
+		if d == current {
+			b.sel = i
+			return
+		}
+	}
+}
+
+// View draws the title, the machine and the numbered folders: the one on
+// screen marked, the selected one highlighted.
+func (b *historySidebar) View(width, height int, focused bool) string {
+	if height < historyHeader+2 {
+		return ""
+	}
+	dirs := b.t.historyDirs()
+	b.sel = min(b.sel, max(0, len(dirs)-1))
+	bold := lipgloss.NewStyle().Bold(true)
+	faint := lipgloss.NewStyle().Faint(true)
+	lines := []string{bold.Render(" History"), faint.Render(" " + b.t.cfg.LocalName), ""}
+	if len(dirs) == 0 {
+		lines = append(lines, faint.Render(" no folders yet"))
+	}
+	help := historyHelp
+	if height < historyHeader+len(help)+3 {
+		help = nil // too short: the folders come first
+	}
+	rows := max(1, height-historyHeader-len(help))
+	b.offset = min(max(b.offset, b.sel-rows+1), b.sel)
+	b.offset = max(0, min(b.offset, len(dirs)-rows))
+	current := b.t.LocalDir()
+	for i := b.offset; i < min(len(dirs), b.offset+rows); i++ {
+		lines = append(lines, historyRow(i, dirs[i], width, i == b.sel, focused, dirs[i] == current))
+	}
+	for _, h := range help {
+		lines = append(lines, faint.Render(ansi.Truncate(h, width, "…")))
+	}
+	return strings.Join(lines[:min(len(lines), height)], "\n")
+}
+
+// historyRow draws folder dir, the list's row i: its name, then its parent
+// folder dim.
+func historyRow(i int, dir string, width int, selected, focused, current bool) string {
+	num := " "
+	if i < 9 {
+		num = fmt.Sprint(i + 1)
+	}
+	mark := "  "
+	if current {
+		mark = "▸ "
+	}
+	style := lipgloss.NewStyle()
+	switch {
+	case selected && focused:
+		style = style.Reverse(true)
+	case selected:
+		style = style.Underline(true)
+	}
+	if current {
+		style = style.Bold(true)
+	}
+	label := ansi.Truncate(" "+num+" "+mark+filepath.Base(dir), width, "…")
+	rest := width - ansi.StringWidth(label)
+	detail := ""
+	if parent := homeRelative(filepath.Dir(dir)); rest > 2 {
+		detail = " " + parent
+		if over := ansi.StringWidth(detail) - rest; over > 0 { // keep the nearest folders
+			detail = " …" + ansi.TruncateLeft(parent, over+1, "")
+		}
+	}
+	detail += strings.Repeat(" ", max(0, rest-ansi.StringWidth(detail)))
+	// each part styled whole: a style nested in another would end it early
+	return style.Render(label) + style.Faint(true).Render(detail)
+}
+
+// homeRelative writes dir under the home folder as ~/….
+func homeRelative(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	if rel, ok := strings.CutPrefix(dir, home+string(filepath.Separator)); ok {
+		return "~/" + rel
+	}
+	return dir
+}
+
+// HandleKey moves the selection and opens the selected folder; a digit
+// opens its folder, esc hides the sidebar.
+func (b *historySidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	dirs := b.t.historyDirs()
+	switch msg.String() {
+	case "up", "k":
+		b.sel = max(0, b.sel-1)
+	case "down", "j":
+		b.sel = max(0, min(len(dirs)-1, b.sel+1))
+	case "home", "g":
+		b.sel = 0
+	case "end", "G":
+		b.sel = max(0, len(dirs)-1)
+	case "enter", " ":
+		return b.open(dirs, b.sel)
+	case "esc":
+		return nil, true
+	default:
+		if r := msg.Runes; msg.Type == tea.KeyRunes && len(r) == 1 && r[0] >= '1' && r[0] <= '9' {
+			return b.Select(int(r[0] - '0'))
+		}
+	}
+	return nil, false
+}
+
+// Click opens the folder on row y.
+func (b *historySidebar) Click(y int) (tea.Cmd, bool) {
+	i := b.offset + y - historyHeader
+	dirs := b.t.historyDirs()
+	if y < historyHeader || i >= len(dirs) {
+		return nil, false
+	}
+	b.sel = i
+	return b.open(dirs, i)
+}
+
+// Select opens folder n, counted from 1.
+func (b *historySidebar) Select(n int) (tea.Cmd, bool) {
+	dirs := b.t.historyDirs()
+	if n < 1 || n > len(dirs) {
+		return flash(fmt.Sprintf("there is no folder %d in the history", n)), false
+	}
+	b.sel = n - 1
+	return b.open(dirs, n-1)
+}
+
+// open puts dirs[i] on screen and hides the sidebar.
+func (b *historySidebar) open(dirs []string, i int) (tea.Cmd, bool) {
+	if i < 0 || i >= len(dirs) {
+		return nil, false
+	}
+	return b.t.openLocal(dirs[i]), true
+}
