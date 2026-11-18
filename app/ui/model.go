@@ -854,6 +854,13 @@ type ModelConfig struct {
 	// Compare is what the toolbar's Compare button runs, such as the
 	// palette's Diff View…; nil hides the button.
 	Compare func() tea.Cmd
+	// ShowFiles rebuilds the review as a browser of every file in its folder
+	// (files) or as its changes again: the View menu's first rows. nil hides
+	// them.
+	ShowFiles func(files bool) tea.Cmd
+	// Comparisons lists what the changes can be compared as, for the View
+	// menu under Changes, answering with a ComparisonsMsg; nil lists none.
+	Comparisons func() tea.Cmd
 	// KeepFileTree keeps the file tree for a review of one file instead of
 	// switching to the single-file view, so the layout stays put while a live
 	// review grows from one file to several.
@@ -953,7 +960,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
 		loadBranch:    cfg.LoadBranch,
 		keepFileTree:  cfg.KeepFileTree,
-		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare},
+		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare, showFiles: cfg.ShowFiles, loadComparisons: cfg.Comparisons},
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -1065,6 +1072,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseMsg:
 		return m.handleToolbarAndMouse(msg) // toolbar.go
+	case ComparisonsMsg:
+		return m.handleComparisons(msg) // toolbar.go
 	case tea.WindowSizeMsg:
 		return m.handleResize(m.reserveToolbarRow(msg)) // toolbar.go
 	case filesLoadedMsg:

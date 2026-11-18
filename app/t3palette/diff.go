@@ -1,6 +1,7 @@
 package t3palette
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ type diffChoice struct {
 // The rows of the diff picker that are not a branch.
 type (
 	againstBranchRow struct{} // leads to the branch picker
+	fileTreeRow      struct{} // every file of the folder instead of its changes
 	// wholeFilesRow switches the review on screen between whole files and
 	// the changed blocks only, as C does
 	wholeFilesRow struct {
@@ -104,6 +106,70 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 // diffPicker is the list of what to compare, given the repository's refs,
 // then the view rows.
 func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store, view ...splitview.PickerItem) tea.Msg {
+	items := compareItems(refs)
+	items = append(items, splitview.PickerItem{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTreeRow{}})
+	items = append(items, view...)
+	return splitview.ShowPickerMsg{
+		Title:  "T3 Code: diff of " + r.Target.Label(),
+		Items:  items,
+		OnPick: t.onPick(r, refs, store),
+	}
+}
+
+// onPick does what a T3: Diff View… row says, with the annotations in
+// store.
+func (t *Palette) onPick(r *Review, refs []t3client.Ref, store *annotation.Store) func(it splitview.PickerItem) tea.Cmd {
+	return func(it splitview.PickerItem) tea.Cmd {
+		switch v := it.Value.(type) {
+		case againstBranchRow:
+			return func() tea.Msg {
+				return t.branchPicker(r, refs, store)
+			}
+		case fileTreeRow:
+			return t.showFiles(r, store)
+		case wholeFilesRow:
+			t.mu.Lock()
+			t.view.WholeFiles = !v.compact
+			t.mu.Unlock()
+			return func() tea.Msg { return ui.SetCompactMsg{On: v.compact} }
+		}
+		d, _ := it.Value.(diffChoice)
+		return t.showDiff(r, d, store)
+	}
+}
+
+// Comparisons are the comparison rows for the toolbar's View menu, after
+// asking the server for the branches: the rows, a report of the one the
+// review on screen shows, and how one is picked with the annotations in a
+// store.
+func (t *Palette) Comparisons(ctx context.Context) ([]splitview.PickerItem, func(splitview.PickerItem) bool,
+	func(splitview.PickerItem, *annotation.Store) tea.Cmd, error) {
+	r := t.OnScreen()
+	if r == nil {
+		return nil, nil, nil, errors.New("open a thread first")
+	}
+	refs, err := r.Session.Server().ListRefs(ctx, r.Target.Cwd)
+	if errors.Is(err, t3client.ErrNotRepository) {
+		return nil, nil, nil, errors.New(r.Target.Label() + " is not a git repository")
+	}
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("list branches: %w", err)
+	}
+	current := cmp.Or(r.SourceLabel, t.cfg.DiffLabel)
+	isCurrent := func(it splitview.PickerItem) bool {
+		d, ok := it.Value.(diffChoice)
+		return ok && d.label == current
+	}
+	pick := func(it splitview.PickerItem, store *annotation.Store) tea.Cmd {
+		return t.onPick(r, refs, store)(it)
+	}
+	return compareItems(refs), isCurrent, pick, nil
+}
+
+// compareItems are what a T3 review can compare: the uncommitted changes,
+// the unpushed ones when the branch has an upstream, the branch's, and a
+// branch to pick.
+func compareItems(refs []t3client.Ref) []splitview.PickerItem {
 	items := []splitview.PickerItem{
 		{Label: "Uncommitted changes", Detail: "the working tree",
 			Value: diffChoice{source: t3client.DiffSource{Kind: t3client.SourceWorkingTree}, label: "uncommitted"}},
@@ -118,26 +184,7 @@ func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.S
 		splitview.PickerItem{Label: "Branch changes", Detail: "vs the default branch, uncommitted included",
 			Value: diffChoice{source: t3client.DiffSource{Kind: t3client.SourceBranchRange}, label: "branch"}},
 		splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranchRow{}})
-	items = append(items, view...)
-	return splitview.ShowPickerMsg{
-		Title: "T3 Code: diff of " + r.Target.Label(),
-		Items: items,
-		OnPick: func(it splitview.PickerItem) tea.Cmd {
-			switch v := it.Value.(type) {
-			case againstBranchRow:
-				return func() tea.Msg {
-					return t.branchPicker(r, refs, store)
-				}
-			case wholeFilesRow:
-				t.mu.Lock()
-				t.view.WholeFiles = !v.compact
-				t.mu.Unlock()
-				return func() tea.Msg { return ui.SetCompactMsg{On: v.compact} }
-			}
-			d, _ := it.Value.(diffChoice)
-			return t.showDiff(r, d, store)
-		},
-	}
+	return items
 }
 
 // branchPicker lists the refs to compare the branch against, the current
@@ -172,6 +219,44 @@ func (t *Palette) branchPicker(r *Review, refs []t3client.Ref, store *annotation
 		},
 		TextLabel: "Compare against %s",
 	}
+}
+
+// showFiles rebuilds r as a browser of every file in its folder, with the
+// annotations in store. What the folder's diffs compare stays chosen, for
+// the way back.
+func (t *Palette) showFiles(r *Review, store *annotation.Store) tea.Cmd {
+	t.mu.Lock()
+	view := t.view
+	t.mu.Unlock()
+	next := &Review{Session: r.Session, Target: r.Target, Source: t3client.DiffSource{Kind: t3client.SourceFiles},
+		SourceLabel: "file tree", View: view}
+	return tea.Batch(flash("T3: file tree…"), func() tea.Msg {
+		return t.showMsg(next, store, "show the file tree")
+	})
+}
+
+// ShowView is the toolbar's switch for the T3 review on screen: every file
+// of its folder, or its changes again, compared as chosen last for that
+// folder.
+func (t *Palette) ShowView(inner tea.Model, files bool) tea.Cmd {
+	r := t.OnScreen()
+	if r == nil {
+		return flash("T3: open a thread first")
+	}
+	store := storeOf(inner)
+	if files {
+		return t.showFiles(r, store)
+	}
+	t.mu.Lock()
+	d := t.diff
+	t.mu.Unlock()
+	if d.cwd != r.Target.Cwd {
+		d = diffChoice{} // the run's --t3-source
+	}
+	if d.label == "" {
+		d.label = t.cfg.DiffLabel
+	}
+	return t.showDiff(r, d, store)
 }
 
 // showDiff makes d the choice for r's folder and rebuilds r comparing it,

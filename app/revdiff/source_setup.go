@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/umputun/revdiff/app/diff"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/sidepane"
@@ -21,8 +22,11 @@ import (
 type sourceSetup struct {
 	vcsSetup
 	folder *diff.FolderReader // plain-folder mode: the folder browsed lazily
-	tty    *os.File           // stdin mode: the terminal to read keys from
-	t3     *t3palette.Review  // T3 mode: the thread under review and its session
+	// remote is a T3 host's folder browsed lazily, every file of it rather
+	// than its changes (t3client.SourceFiles)
+	remote *t3client.FolderReader
+	tty    *os.File          // stdin mode: the terminal to read keys from
+	t3     *t3palette.Review // T3 mode: the thread under review and its session
 }
 
 // setupSource picks the diff source for this run. T3 mode connects here,
@@ -158,6 +162,9 @@ func (s sourceSetup) reviewDescription(user string) string {
 func (s sourceSetup) newFileTree(entries []diff.FileEntry) ui.FileTreeComponent {
 	if s.folder != nil {
 		return sidepane.NewFolderTree(s.folder)
+	}
+	if s.remote != nil {
+		return sidepane.NewFolderTree(s.remote)
 	}
 	return sidepane.NewFileTree(entries)
 }

@@ -30,9 +30,18 @@ type toolbarState struct {
 	on      bool           // the row is wanted (ModelConfig.Toolbar)
 	shown   bool           // the row is drawn: on, and the window has room for it
 	compare func() tea.Cmd // what the Compare button runs; nil hides it
-	open    bool           // a button is active: its menu shows, keys go to it
-	button  int            // the active button, an index of toolbarButtons
-	item    int            // the highlighted item of its menu
+	// showFiles switches the review to every file of its folder, or back to
+	// its changes; nil hides the View menu's rows for it
+	showFiles func(files bool) tea.Cmd
+	// loadComparisons lists what the changes can be compared as, for the View
+	// menu, answering with a ComparisonsMsg; nil lists none
+	loadComparisons func() tea.Cmd
+	comparisons     []Comparison // the latest list
+	comparisonsErr  string       // why it could not be listed, "" when it was
+	loading         bool         // a list is on its way
+	open            bool         // a button is active: its menu shows, keys go to it
+	button          int          // the active button, an index of toolbarButtons
+	item            int          // the highlighted item of its menu
 }
 
 // tbButton is one button of the toolbar.
@@ -50,6 +59,7 @@ type tbItem struct {
 	checked    bool
 	sep        bool // a divider line, not an item
 	disabled   bool
+	indent     bool // a choice under the item above it
 	keepOpen   bool // the menu stays open after it, for settings tried in a row
 	run        func(m Model) (tea.Model, tea.Cmd)
 }
@@ -144,6 +154,24 @@ func (m Model) toggleItem(label string, action keymap.Action, on bool) tbItem {
 // viewMenu is the View dropdown: whole files or blocks, then the toggles.
 func (m Model) viewMenu() []tbItem {
 	var items []tbItem
+	if show := m.toolbar.showFiles; show != nil {
+		files := m.browsingFolders()
+		switchTo := func(toFiles bool) func(m Model) (tea.Model, tea.Cmd) {
+			return func(m Model) (tea.Model, tea.Cmd) {
+				if m.browsingFolders() == toFiles {
+					return m, nil
+				}
+				return m, show(toFiles)
+			}
+		}
+		items = append(items,
+			tbItem{label: "Changes", checked: !files, run: switchTo(false)},
+			tbItem{label: "Project files", checked: files, run: switchTo(true)},
+			tbItem{sep: true})
+		if comparisons := m.comparisonItems(); !files && len(comparisons) > 0 {
+			items = append(append(items, comparisons...), tbItem{sep: true}) // what the changes compare, then how they show
+		}
+	}
 	if m.compact.applicable {
 		compact := m.modes.compact
 		switchTo := func(on bool) func(m Model) (tea.Model, tea.Cmd) {
@@ -172,6 +200,27 @@ func (m Model) viewMenu() []tbItem {
 		items = append(items, m.toggleItem("Untracked files", keymap.ActionToggleUntracked, m.modes.showUntracked))
 	}
 	return append(items, m.toggleItem("File tree", keymap.ActionToggleTree, !m.layout.treeHidden))
+}
+
+// comparisonItems are the comparisons under Changes: what the changes are
+// compared as, the one shown checked.
+func (m Model) comparisonItems() []tbItem {
+	t := m.toolbar
+	switch {
+	case t.loadComparisons == nil:
+		return nil
+	case t.comparisonsErr != "" && !t.loading:
+		return []tbItem{{label: t.comparisonsErr, disabled: true}}
+	case len(t.comparisons) == 0:
+		return []tbItem{{label: "loading…", disabled: true}}
+	}
+	items := make([]tbItem, 0, len(t.comparisons))
+	for _, c := range t.comparisons {
+		choose := c.Choose
+		items = append(items, tbItem{label: c.Label, checked: c.Current,
+			run: func(m Model) (tea.Model, tea.Cmd) { return m, choose }})
+	}
+	return items
 }
 
 // contextSizes are the context menu's sizes, lines around each change.
@@ -209,6 +258,29 @@ func (m Model) toolbarKey(action keymap.Action) string {
 		}
 		return shifted(a) - shifted(b) // alt+= before alt++, which takes shift
 	})
+}
+
+// indentW is the cells an item is indented by.
+func indentW(it tbItem) int {
+	if it.indent {
+		return 2
+	}
+	return 0
+}
+
+// Comparison is a comparison under the View menu's Changes: a way the
+// review's changes can be compared, such as the uncommitted ones.
+type Comparison struct {
+	Label   string
+	Current bool    // the review on screen compares this
+	Choose  tea.Cmd // rebuilds the review comparing it
+}
+
+// ComparisonsMsg brings the comparisons ModelConfig.Comparisons listed, or
+// why it could not.
+type ComparisonsMsg struct {
+	Items []Comparison
+	Err   error
 }
 
 // shifted reports 1 for a key that needs shift on a US layout, such as
@@ -348,7 +420,7 @@ func (m Model) menuGeometry() (menuBox, bool) {
 	}
 	labelW, keyW := 0, 0
 	for _, it := range items {
-		labelW = max(labelW, lipgloss.Width(it.label))
+		labelW = max(labelW, lipgloss.Width(it.label)+indentW(it))
 		keyW = max(keyW, lipgloss.Width(it.key))
 	}
 	inner := 3 + labelW + 1 // a space, the check, the label, a space
@@ -378,7 +450,8 @@ func (m Model) menuGeometry() (menuBox, bool) {
 		if it.checked {
 			check = " ✓ "
 		}
-		text := check + it.label + strings.Repeat(" ", labelW-lipgloss.Width(it.label)+1)
+		check = strings.Repeat(" ", indentW(it)) + check
+		text := check + it.label + strings.Repeat(" ", labelW-lipgloss.Width(it.label)-indentW(it)+1)
 		key := ""
 		if keyW > 0 {
 			key = "  " + strings.Repeat(" ", keyW-lipgloss.Width(it.key)) + it.key
@@ -420,11 +493,34 @@ func (m Model) composeMenu(screen string) string {
 
 // openToolbar activates button, its first item highlighted, and gives the
 // diff pane focus: the tools act on the diff.
-func (m *Model) openToolbar(button int) {
+func (m *Model) openToolbar(button int) tea.Cmd {
 	m.clearPendingInputState()
 	m.toolbar.open, m.toolbar.button, m.toolbar.item = true, button, -1
 	m.layout.focus = paneDiff
 	m.moveMenuItem(1)
+	return m.loadComparisonsFor(button)
+}
+
+// loadComparisonsFor asks for the comparisons when button is View and the
+// review shows its changes: they are listed afresh each time the menu opens,
+// as branches come and go.
+func (m *Model) loadComparisonsFor(button int) tea.Cmd {
+	buttons := m.toolbarButtons()
+	if m.toolbar.loadComparisons == nil || m.browsingFolders() || button >= len(buttons) || buttons[button].action != keymap.ActionViewMenu {
+		return nil
+	}
+	m.toolbar.loading = true
+	return m.toolbar.loadComparisons()
+}
+
+// handleComparisons keeps the comparisons a ComparisonsMsg brings.
+func (m Model) handleComparisons(msg ComparisonsMsg) (tea.Model, tea.Cmd) {
+	m.toolbar.loading = false
+	m.toolbar.comparisons, m.toolbar.comparisonsErr = msg.Items, ""
+	if msg.Err != nil {
+		m.toolbar.comparisonsErr = msg.Err.Error()
+	}
+	return m, nil
 }
 
 // closeToolbar closes the open menu.
@@ -445,12 +541,12 @@ func (m *Model) moveMenuItem(delta int) {
 }
 
 // moveButton activates the next (or previous) button, wrapping around.
-func (m *Model) moveButton(delta int) {
+func (m *Model) moveButton(delta int) tea.Cmd {
 	n := len(m.toolbarButtons())
 	if n == 0 {
-		return
+		return nil
 	}
-	m.openToolbar((m.toolbar.button + delta + n) % n)
+	return m.openToolbar((m.toolbar.button + delta + n) % n)
 }
 
 // activate runs the active button, or the highlighted item of its menu.
@@ -487,11 +583,11 @@ func (m Model) handleToolbarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.closeToolbar()
 		return m, nil
 	case "left", "h", "shift+tab":
-		m.moveButton(-1)
-		return m, nil
+		cmd := m.moveButton(-1)
+		return m, cmd
 	case "right", "l", "tab":
-		m.moveButton(1)
-		return m, nil
+		cmd := m.moveButton(1)
+		return m, cmd
 	case "up", "k":
 		m.moveMenuItem(-1)
 		return m, nil
@@ -522,8 +618,8 @@ func (m Model) toggleMenu(action keymap.Action) (tea.Model, tea.Cmd) {
 			m.closeToolbar()
 			return m, nil
 		}
-		m.openToolbar(i)
-		return m, nil
+		cmd := m.openToolbar(i)
+		return m, cmd
 	}
 	if action == keymap.ActionContextMenu {
 		m.compact.hint = "context size not applicable in this mode"
@@ -541,8 +637,8 @@ func (m Model) toggleToolbar() (tea.Model, tea.Cmd) {
 	if !m.toolbarShown() {
 		return m, nil
 	}
-	m.openToolbar(0)
-	return m, nil
+	cmd := m.openToolbar(0)
+	return m, cmd
 }
 
 // handleToolbarMouse takes a left click while a menu is open or on the
@@ -575,12 +671,12 @@ func (m Model) handleToolbarMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd, bool) {
 				m.closeToolbar()
 				return m, nil, true
 			}
-			m.openToolbar(i)
+			load := m.openToolbar(i)
 			if m.activeMenu() == nil {
 				model, cmd := m.activate() // a plain button runs at once
 				return model, cmd, true
 			}
-			return m, nil, true
+			return m, load, true
 		}
 	}
 	m.closeToolbar()

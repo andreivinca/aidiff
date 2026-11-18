@@ -30,7 +30,8 @@ type reviewDeps struct {
 	res           style.Resolver
 	themes        *themeCatalog
 	postFlushHook ui.PostFlushHook
-	hostname      string // this machine, shown in the status bar for local reviews
+	hostname      string      // this machine, shown in the status bar for local reviews
+	views         *viewSwitch // the toolbar's switch between changes and every file (view_switch.go)
 }
 
 // newReviewDeps builds the shared dependencies from the options.
@@ -44,10 +45,11 @@ func newReviewDeps(opts options) reviewDeps {
 		res = style.NewResolver(optsToStyleColors(opts))
 	}
 	d := reviewDeps{
-		opts: opts,
-		hl:   highlight.New(opts.ChromaStyle, !opts.NoColors),
-		km:   keymap.LoadOrDefault(resolveKeysPath(opts)),
-		res:  res,
+		views: &viewSwitch{},
+		opts:  opts,
+		hl:    highlight.New(opts.ChromaStyle, !opts.NoColors),
+		km:    keymap.LoadOrDefault(resolveKeysPath(opts)),
+		res:   res,
 		themes: &themeCatalog{
 			catalog:    theme.NewCatalog(defaultThemesDir()),
 			configPath: resolveFlagPath(os.Args[1:], "config", "REVDIFF_CONFIG", defaultConfigPath),
@@ -98,6 +100,8 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		NoStatusBar:          opts.NoStatusBar,
 		Toolbar:              !opts.NoToolbar,
 		Compare:              openDiffView,
+		ShowFiles:            d.views.forSource(src),
+		Comparisons:          d.views.comparisonsFor(src),
 		NoConfirmDiscard:     opts.NoConfirmDiscard,
 		NoConfirmReload:      opts.NoConfirmReload,
 		NoTree:               opts.NoTree,

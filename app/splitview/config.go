@@ -55,6 +55,10 @@ type Keys struct {
 	Quit      string // quit, asking first; ctrl+q by default
 	Palette   string // open or close the command palette; ctrl+p by default
 	Sidebar   string // show or hide Config.Sidebar; ctrl+b by default
+	// PaletteAlt and SidebarAlt do the same as Palette and Sidebar; alt+p
+	// and alt+b by default, for terminals that keep ctrl+p or ctrl+b
+	PaletteAlt string
+	SidebarAlt string
 }
 
 // QuitText is what the quit dialog says.
@@ -101,6 +105,12 @@ func (k Keys) withDefaults() Keys {
 	}
 	if k.Sidebar == "" {
 		k.Sidebar = "ctrl+b"
+	}
+	if k.PaletteAlt == "" {
+		k.PaletteAlt = "alt+p"
+	}
+	if k.SidebarAlt == "" {
+		k.SidebarAlt = "alt+b"
 	}
 	return k
 }

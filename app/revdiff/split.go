@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,6 +56,50 @@ func paletteCommands(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs
 			return cmds
 		}
 		return append([]splitview.Command{l.command()}, cmds...)
+	}
+}
+
+// switchView is the toolbar's switch between a review's changes and every
+// file of its folder: T3's for a T3 review on screen, else the Diff View…
+// of the local folder on screen, as paletteCommands picks it.
+func switchView(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func(inner tea.Model, files bool) tea.Cmd {
+	return func(inner tea.Model, files bool) tea.Cmd {
+		if t3p.OnScreen() != nil {
+			return t3p.ShowView(inner, files)
+		}
+		l := local
+		if dir := t3p.LocalDir(); dir != "" {
+			l = diffs.get(dir)
+		}
+		if l == nil {
+			return func() tea.Msg { return splitview.FlashMsg{Text: "this review has no other view"} }
+		}
+		return l.showView(inner, files)
+	}
+}
+
+// listComparisons lists what the changes of the review on screen can be
+// compared as, for the toolbar's View menu: T3's for a T3 review, else
+// those of the local folder's Diff View….
+func listComparisons(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func() (comparisonList, error) {
+	return func() (comparisonList, error) {
+		if t3p.OnScreen() != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), localDiffTimeout)
+			defer cancel()
+			items, current, pick, err := t3p.Comparisons(ctx)
+			if err != nil {
+				return comparisonList{}, err //nolint:wrapcheck // said as it is, under Changes
+			}
+			return comparisonList{items: items, current: current, pick: pick}, nil
+		}
+		l := local
+		if dir := t3p.LocalDir(); dir != "" {
+			l = diffs.get(dir)
+		}
+		if l == nil {
+			return comparisonList{}, errors.New("nothing else to compare")
+		}
+		return l.comparisons(), nil
 	}
 }
 

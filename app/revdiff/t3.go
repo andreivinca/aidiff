@@ -79,6 +79,10 @@ func setupT3Review(opts options) (*t3palette.Review, error) {
 // it in the target's folder.
 func t3Source(opts options, r *t3palette.Review) sourceSetup {
 	src := r.Source
+	if src.Kind == t3client.SourceFiles {
+		folder := t3client.NewFolderReader(r.Session.Conn(), r.Target.Cwd)
+		return sourceSetup{vcsSetup: vcsSetup{renderer: folder}, remote: folder, t3: r}
+	}
 	if src.Kind == "" {
 		src = t3client.DiffSource{Kind: opts.t3SourceKind()}
 	}

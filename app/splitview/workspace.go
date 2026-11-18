@@ -260,7 +260,8 @@ func tagMsg(id int, msg tea.Msg) tea.Msg {
 	if t.PkgPath() == teaPackage {
 		return msg
 	}
-	if _, split := msg.(RunCommandMsg); split {
+	switch msg.(type) {
+	case RunCommandMsg, RunMsg:
 		return msg // addressed to the split, not back to the model
 	}
 	return innerMsg{ws: id, msg: msg}

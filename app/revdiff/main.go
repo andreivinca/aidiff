@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/fsutil"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 )
@@ -162,6 +163,7 @@ func run(opts options) (int, error) {
 	local, diffs := newLocalDiff(deps, src, reviewDescription), &localDiffs{}
 	t3p := newT3Palette(deps, description, src, store, newLocalConfig(deps, src, diffs, local)) // owns src's T3 session from here on
 	defer t3p.Close()
+	deps.views.set(switchView(t3p, local, diffs), listComparisons(t3p, local, diffs))
 	if src.tty != nil {
 		programOptions = append(programOptions, tea.WithInput(src.tty))
 	}
@@ -398,7 +400,8 @@ func compactApplicable(opts options, r ui.Renderer) bool {
 	if opts.Stdin || opts.AllFiles {
 		return false
 	}
-	if _, ok := r.(*diff.FileReader); ok {
+	switch r.(type) {
+	case *diff.FileReader, *diff.FolderReader, *t3client.FolderReader: // every file, whole: there are no changes to frame
 		return false
 	}
 	return true

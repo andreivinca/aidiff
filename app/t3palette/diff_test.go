@@ -56,7 +56,7 @@ func TestPalette_DiffPicksWhatToCompare(t *testing.T) {
 	assert.Equal(t, "uncommitted", commandDetail(h.p.Commands(), "T3: Diff View…"), "the run's default until something else is chosen")
 
 	picker := find[splitview.ShowPickerMsg](t, run(h.p.diffCmd(shown)))
-	assert.Equal(t, []string{"Uncommitted changes", "Unpushed changes", "Branch changes", "Against a branch…"}, labels(picker.Items))
+	assert.Equal(t, []string{"Uncommitted changes", "Unpushed changes", "Branch changes", "Against a branch…", "File tree"}, labels(picker.Items))
 	assert.Equal(t, "vs origin/feature, uncommitted included", picker.Items[1].Detail, "unpushed compares with the branch's upstream")
 
 	r := shownReview(t, run(picker.OnPick(picker.Items[1])))
@@ -135,4 +135,29 @@ func TestViewRowSwitchesWholeFiles(t *testing.T) {
 	assert.Equal(t, wholeFilesRow{compact: true}, rows[0].Value)
 	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.view)
 	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.newReview(nil, t3client.Target{}).View, "a new review shows its files the same way")
+}
+
+func TestPalette_ShowViewSwitchesToFilesAndBack(t *testing.T) {
+	a := newFakeSession("ssh://a", testShell())
+	a.server.refs = diffRefs()
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, DiffLabel: "uncommitted"}, threadReview(t, a, loginID))
+	h.connect(t, "ssh://a", a)
+	shown := annotatedModel()
+
+	picker := find[splitview.ShowPickerMsg](t, run(h.p.diffCmd(shown)))
+	h.swap(find[splitview.SwitchWorkspaceMsg](t, run(picker.OnPick(picker.Items[1]))), shown) // unpushed
+
+	files := shownReview(t, run(h.p.ShowView(shown, true)))
+	assert.Equal(t, t3client.SourceFiles, files.Source.Kind, "every file of the folder")
+	assert.Equal(t, loginID, files.Target.Thread.ID)
+	h.swap(find[splitview.SwitchWorkspaceMsg](t, run(h.p.ShowView(shown, true))), shown)
+	assert.Contains(t, commandDetail(h.p.Commands(), "T3: Diff View…"), "file tree")
+
+	back := shownReview(t, run(h.p.ShowView(shown, false)))
+	assert.Equal(t, t3client.DiffSource{Kind: t3client.SourceBranchRange, BaseRef: "origin/feature"}, back.Source,
+		"the changes come back compared as chosen last")
+
+	picker = find[splitview.ShowPickerMsg](t, run(h.p.diffCmd(shown)))
+	tree := shownReview(t, run(picker.OnPick(picker.Items[len(picker.Items)-1])))
+	assert.Equal(t, t3client.SourceFiles, tree.Source.Kind, "the picker's File tree row does the same")
 }

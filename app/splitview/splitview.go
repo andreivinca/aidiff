@@ -147,6 +147,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case RunCommandMsg:
 		return m.runCommandNamed(msg)
+	case RunMsg:
+		if msg.Run == nil {
+			return m, nil
+		}
+		return m, msg.Run(m.inner)
 	case ShowSidebarMsg:
 		return m.showSidebar()
 	case HideSidebarMsg:
@@ -194,11 +199,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.focusLeft()
 	case m.cfg.Keys.Quit:
 		return m.askQuit()
-	case m.cfg.Keys.Palette:
+	case m.cfg.Keys.Palette, m.cfg.Keys.PaletteAlt:
 		return m.openPalette(), nil
 	}
 	if m.sidebarAvailable() {
-		if msg.String() == m.cfg.Keys.Sidebar {
+		if k := msg.String(); k == m.cfg.Keys.Sidebar || k == m.cfg.Keys.SidebarAlt {
 			return m.toggleSidebar()
 		}
 		if n, ok := altNumber(msg); ok {

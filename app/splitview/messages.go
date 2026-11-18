@@ -62,6 +62,13 @@ type RunCommandMsg struct {
 	Missing string
 }
 
+// RunMsg runs Run with the wrapped model on screen, for a model's command
+// that acts on the split's level, such as rebuilding the review in
+// another view; its command's messages go where any command's do.
+type RunMsg struct {
+	Run func(inner tea.Model) tea.Cmd
+}
+
 // FlashMsg shows a one-line message on the bottom row until the next key.
 type FlashMsg struct {
 	Text string

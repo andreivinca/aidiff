@@ -86,6 +86,12 @@ func TestSidebar_ToggleShrinksTheReview(t *testing.T) {
 	hs.send(ShowSidebarMsg{})
 	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.False(t, hs.m.sideOpen, "the sidebar can ask to hide itself")
+
+	alt := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true}
+	hs.send(alt)
+	assert.True(t, hs.m.sideOpen, "alt+b shows it, as ctrl+b does")
+	hs.send(alt)
+	assert.False(t, hs.m.sideOpen, "and hides it")
 }
 
 func TestSidebar_UnavailableLeavesTheKey(t *testing.T) {

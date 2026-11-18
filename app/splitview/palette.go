@@ -212,7 +212,7 @@ func fuzzyMatch(query, s string) bool {
 // and down/tab/ctrl+j, wrapping around) or runs the selection.
 func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", m.cfg.Keys.Palette:
+	case "esc", m.cfg.Keys.Palette, m.cfg.Keys.PaletteAlt:
 		m.palette = palette{}
 		return m, nil
 	case "enter":

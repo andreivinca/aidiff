@@ -27,9 +27,10 @@ type localDiff struct {
 	git         localGit
 
 	mu      sync.Mutex
-	label   string // what the review on screen compares
-	compact bool   // changed blocks only, kept when Diff View… rebuilds the review
-	context int    // lines around each change, kept the same way (alt+= / alt+-)
+	label   string       // what the review on screen compares
+	compact bool         // changed blocks only, kept when Diff View… rebuilds the review
+	context int          // lines around each change, kept the same way (alt+= / alt+-)
+	last    *localChoice // the comparison shown last, nil for the run's own
 }
 
 // localChoice is what a review compares: a ref (the working tree against it,
@@ -97,38 +98,68 @@ func (l *localDiff) pick(inner tea.Model) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), localDiffTimeout)
 		defer cancel()
-		items := []splitview.PickerItem{
-			{Label: "Uncommitted changes", Detail: "staged and unstaged", Value: localChoice{ref: "HEAD", label: "uncommitted"}},
-			{Label: "Unstaged changes", Detail: "not staged yet", Value: localChoice{label: "unstaged"}},
-			{Label: "Staged changes", Detail: "what the next commit takes", Value: localChoice{staged: true, label: "staged"}},
-		}
-		up := l.git.upstream(ctx)
-		if up != "" {
-			items = append(items, splitview.PickerItem{Label: "Unpushed changes", Detail: "vs " + up + ", uncommitted included",
-				Value: localChoice{ref: up, label: "unpushed (vs " + up + ")"}})
-		}
-		if def := l.git.defaultBranch(ctx); def != "" && def != up { // on the default branch, unpushed says it already
-			items = append(items, splitview.PickerItem{Label: "Branch changes", Detail: "vs " + def + ", uncommitted included",
-				Value: localChoice{ref: def, label: "vs " + def}})
-		}
-		items = append(items, splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranch{}})
-		items = append(items, view...)
 		return splitview.ShowPickerMsg{
-			Title: "Diff of " + l.src.projectName(),
-			Items: items,
-			OnPick: func(it splitview.PickerItem) tea.Cmd {
-				switch v := it.Value.(type) {
-				case againstBranch:
-					return l.pickBranch(store)
-				case fileTree:
-					return l.showTree(store)
-				case wholeFiles:
-					return l.setCompact(v.compact)
-				}
-				c, _ := it.Value.(localChoice)
-				return l.show(c, store)
-			},
+			Title:  "Diff of " + l.src.projectName(),
+			Items:  append(l.compareItems(ctx), view...),
+			OnPick: l.onPick(store),
 		}
+	}
+}
+
+// compareItems are what the review can compare: the uncommitted, unstaged
+// and staged changes, the unpushed ones and the branch's when git knows the
+// upstream and the default branch, and a branch to pick.
+func (l *localDiff) compareItems(ctx context.Context) []splitview.PickerItem {
+	items := []splitview.PickerItem{
+		{Label: "Uncommitted changes", Detail: "staged and unstaged", Value: localChoice{ref: "HEAD", label: "uncommitted"}},
+		{Label: "Unstaged changes", Detail: "not staged yet", Value: localChoice{label: "unstaged"}},
+		{Label: "Staged changes", Detail: "what the next commit takes", Value: localChoice{staged: true, label: "staged"}},
+	}
+	up := l.git.upstream(ctx)
+	if up != "" {
+		items = append(items, splitview.PickerItem{Label: "Unpushed changes", Detail: "vs " + up + ", uncommitted included",
+			Value: localChoice{ref: up, label: "unpushed (vs " + up + ")"}})
+	}
+	if def := l.git.defaultBranch(ctx); def != "" && def != up { // on the default branch, unpushed says it already
+		items = append(items, splitview.PickerItem{Label: "Branch changes", Detail: "vs " + def + ", uncommitted included",
+			Value: localChoice{ref: def, label: "vs " + def}})
+	}
+	return append(items, splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranch{}})
+}
+
+// onPick does what a Diff View… row says, with the annotations in store.
+func (l *localDiff) onPick(store *annotation.Store) func(it splitview.PickerItem) tea.Cmd {
+	return func(it splitview.PickerItem) tea.Cmd {
+		switch v := it.Value.(type) {
+		case againstBranch:
+			return l.pickBranch(store)
+		case fileTree:
+			return l.showTree(store)
+		case wholeFiles:
+			return l.setCompact(v.compact)
+		}
+		c, _ := it.Value.(localChoice)
+		return l.show(c, store)
+	}
+}
+
+// comparisons are the comparison rows for the toolbar's View menu, which
+// of them the review on screen shows, and how one is picked.
+func (l *localDiff) comparisons() comparisonList {
+	ctx, cancel := context.WithTimeout(context.Background(), localDiffTimeout)
+	defer cancel()
+	l.mu.Lock()
+	current := l.label
+	l.mu.Unlock()
+	return comparisonList{
+		items: l.compareItems(ctx),
+		current: func(it splitview.PickerItem) bool {
+			c, ok := it.Value.(localChoice)
+			return ok && c.label == current
+		},
+		pick: func(it splitview.PickerItem, store *annotation.Store) tea.Cmd {
+			return l.onPick(store)(it)
+		},
 	}
 }
 
@@ -256,6 +287,39 @@ func (l *localDiff) show(c localChoice, store *annotation.Store) tea.Cmd {
 		}
 		l.mu.Lock()
 		l.label = c.label
+		l.last = &c
+		l.mu.Unlock()
+		return splitview.ReplaceInnerMsg{Model: model}
+	})
+}
+
+// showView is the toolbar's switch: every file of the repository, or its
+// changes again, compared as they were last.
+func (l *localDiff) showView(inner tea.Model, files bool) tea.Cmd {
+	store := reviewStore(inner)
+	if files {
+		return l.showTree(store)
+	}
+	l.mu.Lock()
+	last := l.last
+	l.mu.Unlock()
+	if last != nil {
+		return l.show(*last, store)
+	}
+	return tea.Batch(func() tea.Msg { return splitview.FlashMsg{Text: "Diff: " + runLabel(l.deps.opts) + "…"} }, func() tea.Msg {
+		deps := l.deps
+		l.mu.Lock()
+		deps.opts.Compact = l.compact
+		if l.context > 0 {
+			deps.opts.CompactContext = l.context
+		}
+		l.mu.Unlock()
+		model, err := deps.newModel(l.src, store, l.description)
+		if err != nil {
+			return splitview.FlashMsg{Text: "Diff: " + err.Error()}
+		}
+		l.mu.Lock()
+		l.label = runLabel(l.deps.opts)
 		l.mu.Unlock()
 		return splitview.ReplaceInnerMsg{Model: model}
 	})

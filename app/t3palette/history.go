@@ -58,7 +58,7 @@ const historyHeader = 3
 var historyHelp = []string{
 	"",
 	" enter        open folder",
-	" ctrl+b       show / hide",
+	" ctrl/alt+b   show / hide",
 	" ctrl/alt+1…9 switch folder",
 	" alt+← alt+→  move focus",
 }

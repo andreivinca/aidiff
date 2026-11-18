@@ -246,3 +246,72 @@ func TestToolbar_MenuKeys(t *testing.T) {
 	assert.False(t, m.toolbar.open, "no context menu where the context cannot change")
 	assert.NotEmpty(t, m.compact.hint)
 }
+
+func TestToolbar_ViewSwitchesBetweenChangesAndFiles(t *testing.T) {
+	m := toolbarModel(t)
+	var asked []bool
+	m.toolbar.showFiles = func(files bool) tea.Cmd {
+		asked = append(asked, files)
+		return nil
+	}
+	chosen := ""
+	loads := 0
+	m.toolbar.loadComparisons = func() tea.Cmd {
+		loads++
+		return func() tea.Msg {
+			return ComparisonsMsg{Items: []Comparison{
+				{Label: "Uncommitted changes", Current: true, Choose: func() tea.Msg { chosen = "uncommitted"; return nil }},
+				{Label: "Against a branch…", Choose: func() tea.Msg { chosen = "branch"; return nil }},
+			}}
+		}
+	}
+
+	r, cmd := m.Update(key("f10"))
+	m = r.(Model)
+	require.NotNil(t, cmd, "opening View lists the comparisons")
+	assert.Contains(t, strings.Join(screenRows(m), "\n"), "loading…", "until they come")
+	r, _ = m.Update(cmd())
+	m = r.(Model)
+	menu := strings.Join(screenRows(m), "\n")
+	assert.Contains(t, menu, "✓ Changes")
+	assert.Contains(t, menu, " ✓ Uncommitted changes", "the one shown checked")
+	assert.Contains(t, menu, "   Against a branch…")
+	assert.Contains(t, menu, "Project files")
+	rows := screenRows(m)
+	at := func(label string) int {
+		for i, row := range rows {
+			if strings.Contains(row, label) {
+				return i
+			}
+		}
+		return -1
+	}
+	assert.Less(t, at("Project files"), at("Uncommitted changes"), "the comparisons follow Changes and Project files")
+	assert.Less(t, at("Against a branch"), at("Changed blocks only"), "and come right above how the changes show")
+
+	for range 3 { // Project files, then over the divider to the comparisons
+		r, cmd = m.Update(key("down"))
+		m = r.(Model)
+	}
+	r, cmd = m.Update(key("enter"))
+	m = r.(Model)
+	require.NotNil(t, cmd)
+	cmd()
+	assert.Equal(t, "branch", chosen, "a comparison is picked from the menu")
+	assert.False(t, m.toolbar.open)
+
+	r, _ = m.Update(key("f10"))
+	m = r.(Model)
+	m = press(t, m, "down", "enter") // Project files
+	assert.Equal(t, []bool{true}, asked)
+	assert.Equal(t, 2, loads, "listed afresh each time the menu opens")
+
+	m.toolbar.loadComparisons = nil
+	m = press(t, m, "f10")
+	assert.NotContains(t, strings.Join(screenRows(m), "\n"), "Uncommitted", "nothing to list, no rows")
+	m = press(t, m, "esc")
+
+	m.toolbar.showFiles = nil
+	m = press(t, m, "f10")
+	assert.NotContains(t, strings.Join(screenRows(m), "\n"), "Project files", "no switch, no rows")
+}

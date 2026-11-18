@@ -255,3 +255,31 @@ func TestSplit_RunCommandMsg(t *testing.T) {
 	assert.Nil(t, hs.send(RunCommandMsg{Suffix: "Nothing…", Missing: "not here"}))
 	assert.Equal(t, "not here", hs.m.flash)
 }
+
+func TestSplit_RunMsg(t *testing.T) {
+	hs := newCommandHarness(t, nil)
+	var sawInner tea.Model
+	msg := RunMsg{Run: func(inner tea.Model) tea.Cmd {
+		sawInner = inner
+		return ran("view")
+	}}
+	_, wrapped := tagMsg(1, msg).(innerMsg)
+	assert.False(t, wrapped, "a model's command reaches the split, not the model")
+	cmd := hs.send(msg)
+	require.NotNil(t, cmd)
+	assert.Equal(t, ranMsg{"view"}, cmd())
+	assert.IsType(t, innerModel{}, sawInner, "it runs with the wrapped model")
+	assert.Nil(t, hs.send(RunMsg{}))
+}
+
+func TestSplit_AltKeysOpenThePaletteAndSidebar(t *testing.T) {
+	hs := newCommandHarness(t, nil)
+	alt := func(r rune) {
+		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: true})
+	}
+	alt('p')
+	assert.True(t, hs.m.palette.open, "alt+p opens the palette, as ctrl+p does")
+	alt('p')
+	assert.False(t, hs.m.palette.open, "and closes it")
+	assert.Equal(t, "alt+b", hs.m.cfg.Keys.SidebarAlt)
+}
