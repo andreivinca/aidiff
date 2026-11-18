@@ -68,7 +68,7 @@ func TestRendererComparesWithItsBase(t *testing.T) {
 	r := NewSourceRenderer(dialFake(t, url), "/srv/wt", DiffSource{Kind: SourceBranchRange, BaseRef: "v1.0"})
 	_, err := r.ChangedFiles("", false)
 	require.NoError(t, err)
-	_, err = r.FileDiff(diff.FileDiffRequest{Path: "f.txt"})
+	_, err = r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
 	require.NoError(t, err)
 	mu.Lock()
 	defer mu.Unlock()

@@ -31,11 +31,15 @@ func TestOutgoingMessageCommand(t *testing.T) {
 	assert.Equal(t, true, cmd["freshContext"])
 	assert.Equal(t, model, cmd["modelSelection"])
 	assert.Equal(t, []any{}, cmd["attachments"])
+	assert.Equal(t, map[string]any{"type": "queue_after_active"}, cmd["dispatchMode"], "a fresh session waits for the next turn")
+	assert.NotContains(t, cmd, "deliveryIntent")
 
 	plain := OutgoingMessage{ThreadID: "th-1", MessageID: "m-2", Text: "more"}.Command()
 	for _, key := range []string{"titleSeed", "freshContext", "modelSelection"} {
 		assert.NotContains(t, plain, key)
 	}
+	assert.Equal(t, "auto", plain["deliveryIntent"])
+	assert.Equal(t, map[string]any{"type": "start_immediately"}, plain["dispatchMode"])
 }
 
 func TestImageUploadValidate(t *testing.T) {

@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -93,6 +96,8 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		NoColors:             opts.NoColors,
 		MouseTracking:        !opts.NoMouse,
 		NoStatusBar:          opts.NoStatusBar,
+		Toolbar:              !opts.NoToolbar,
+		Compare:              openDiffView,
 		NoConfirmDiscard:     opts.NoConfirmDiscard,
 		NoConfirmReload:      opts.NoConfirmReload,
 		NoTree:               opts.NoTree,
@@ -100,8 +105,8 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		WrapIndent:           opts.WrapIndent,
 		PageOverlap:          opts.PageOverlap,
 		Collapsed:            opts.Collapsed,
-		Compact:              opts.Compact,
-		CompactContext:       opts.CompactContext,
+		Compact:              compactAtStart(opts, src),
+		CompactContext:       compactContextAtStart(opts, src),
 		CrossFileHunks:       opts.CrossFileHunks,
 		CrossFileMotion:      opts.CrossFileMotion,
 		StopAtAnnotations:    opts.StopAtAnnotations,
@@ -140,4 +145,31 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		return ui.Model{}, fmt.Errorf("create model: %w", err)
 	}
 	return model, nil
+}
+
+// compactAtStart reports whether a review starts in the changed blocks: a T3
+// review does unless T3: Diff View… was showing whole files, as its patches
+// did before they could be expanded; any other follows --compact.
+func compactAtStart(opts options, src sourceSetup) bool {
+	if src.t3 != nil {
+		return !src.t3.View.WholeFiles
+	}
+	return opts.Compact
+}
+
+// compactContextAtStart is the lines around each change a review starts
+// with: what T3: Diff View… last saw for a T3 review, else --compact-context.
+func compactContextAtStart(opts options, src sourceSetup) int {
+	if src.t3 != nil && src.t3.View.Context > 0 {
+		return src.t3.View.Context
+	}
+	return opts.CompactContext
+}
+
+// openDiffView is the toolbar's Compare button: the palette's Diff View…,
+// the local one or T3's, whichever the review has.
+func openDiffView() tea.Cmd {
+	return func() tea.Msg {
+		return splitview.RunCommandMsg{Suffix: "Diff View…", Missing: "Diff View… is not available for this review"}
+	}
 }

@@ -15,8 +15,12 @@ const MaxImageBytes = 10 << 20
 // maxTitleRunes bounds a thread title taken from its first message.
 const maxTitleRunes = 80
 
-// OutgoingMessage is a user message for a thread's agent. A busy thread gets
-// it as its next turn; nothing running is interrupted.
+// OutgoingMessage is a user message for a thread's agent. It is delivered as
+// T3's own client delivers it: a thread at rest starts a turn with it, and a
+// busy one gets it in the running turn, between the agent's steps, when its
+// provider can take it there (steering), and as its next turn otherwise.
+// Nothing running is interrupted. A message that starts a fresh session
+// always waits for the next turn.
 type OutgoingMessage struct {
 	ThreadID     string
 	MessageID    string // minted with NewID; PersistImages stores attachments under it
@@ -41,13 +45,16 @@ func (m OutgoingMessage) Command() Command {
 		"attachments":    atts,
 		"createdBy":      "user",
 		"creationSource": "web",
-		"dispatchMode":   map[string]any{"type": "queue_after_active"},
+		"dispatchMode":   map[string]any{"type": "start_immediately"},
+		"deliveryIntent": "auto", // the server picks: start, steer the active turn, or queue after it
 	}
 	if m.TitleSeed != "" {
 		cmd["titleSeed"] = m.TitleSeed
 	}
 	if m.FreshContext {
 		cmd["freshContext"] = true
+		cmd["dispatchMode"] = map[string]any{"type": "queue_after_active"}
+		delete(cmd, "deliveryIntent")
 	}
 	if m.Model != nil {
 		cmd["modelSelection"] = *m.Model

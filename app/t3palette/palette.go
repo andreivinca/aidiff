@@ -78,6 +78,7 @@ type Palette struct {
 	refreshing  Session                      // the session a background fetch of shell runs for
 	project     *t3client.Project            // the live server's project new threads start in; nil until chosen
 	diff        diffChoice                   // what T3: Diff View… chose for the reviews of its folder
+	view        View                         // how the reviews T3: Diff View… builds show their files
 	ws          string                       // the split's workspace on screen: wsKey of its review, localKey of its folder, "" for a local review of no folder
 	parked      map[string]*Review           // the reviews of the workspaces not on screen, by key; their sessions stay open
 	local       *LocalWorkspace              // the local folder on screen; nil while a T3 review, or a local review of no folder, is

@@ -621,6 +621,7 @@ type Model struct {
 	refresh     refreshState      // quiet reloads requested by a file watcher (refresh.go)
 	divider     dividerState      // tree/diff divider dragged with the mouse (treedrag.go)
 	identity    machineIdentity   // the host and source named in the status bar (identity.go)
+	toolbar     toolbarState      // the toolbar under the diff header and its menus (toolbar.go)
 
 	loadBranch   func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
 	keepFileTree bool                   // never the single-file view (ModelConfig.KeepFileTree)
@@ -848,6 +849,11 @@ type ModelConfig struct {
 	LoadBranch func() (string, error)
 	// T3Mode marks a review that comes from T3 Code, labeled in the status bar.
 	T3Mode bool
+	// Toolbar shows the toolbar under the diff header (toolbar.go).
+	Toolbar bool
+	// Compare is what the toolbar's Compare button runs, such as the
+	// palette's Diff View…; nil hides the button.
+	Compare func() tea.Cmd
 	// KeepFileTree keeps the file tree for a review of one file instead of
 	// switching to the single-file view, so the layout stays put while a live
 	// review grows from one file to several.
@@ -947,6 +953,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
 		loadBranch:    cfg.LoadBranch,
 		keepFileTree:  cfg.KeepFileTree,
+		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare},
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -1057,9 +1064,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleKey(msg)
 	case tea.MouseMsg:
-		return m.handleMouse(msg)
+		return m.handleToolbarAndMouse(msg) // toolbar.go
 	case tea.WindowSizeMsg:
-		return m.handleResize(msg)
+		return m.handleResize(m.reserveToolbarRow(msg)) // toolbar.go
 	case filesLoadedMsg:
 		return m.handleFilesLoaded(msg)
 	case commitsLoadedMsg:
@@ -1132,6 +1139,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// pending-reload intercept: y confirms, any other key cancels
 	if m.reload.pending {
 		return m.handlePendingReload(msg)
+	}
+
+	if m.toolbar.open {
+		return m.handleToolbarKey(msg)
 	}
 
 	// chord-second guard: a second key arriving while a chord is pending must
@@ -1221,6 +1232,13 @@ func (m Model) dispatchAction(action keymap.Action) (tea.Model, tea.Cmd) {
 		return m.handleReload()
 	case keymap.ActionFlushOutput:
 		return m.handleFlushOutput()
+	case keymap.ActionToolbarMenu:
+		return m.toggleToolbar()
+	case keymap.ActionViewMenu, keymap.ActionContextMenu:
+		return m.toggleMenu(action)
+	case keymap.ActionMoreContext, keymap.ActionLessContext:
+		cmd := m.changeCompactContext(action == keymap.ActionMoreContext)
+		return m, cmd
 	default: // remaining actions (navigation, search, etc.) handled by pane-specific handlers below
 	}
 

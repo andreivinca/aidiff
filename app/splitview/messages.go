@@ -54,6 +54,14 @@ type ShowPromptMsg struct {
 	OnSubmit    func(string) tea.Cmd
 }
 
+// RunCommandMsg runs the palette command whose name ends with Suffix, the
+// first one, as picking it in the palette would; Missing is flashed when
+// there is none.
+type RunCommandMsg struct {
+	Suffix  string
+	Missing string
+}
+
 // FlashMsg shows a one-line message on the bottom row until the next key.
 type FlashMsg struct {
 	Text string

@@ -105,3 +105,34 @@ func TestPalette_DiffWithoutBranches(t *testing.T) {
 	h = newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
 	assert.Equal(t, []string{"T3: open a thread first"}, flashes(run(h.p.diffCmd(nil))))
 }
+
+// fakeCompacter is a review that can show the changed blocks only.
+type fakeCompacter struct {
+	tea.Model
+	compact, applicable bool
+}
+
+func (f fakeCompacter) Compact() bool           { return f.compact }
+func (f fakeCompacter) CompactApplicable() bool { return f.applicable }
+func (f fakeCompacter) CompactContext() int     { return 7 }
+
+func TestViewRowSwitchesWholeFiles(t *testing.T) {
+	p := &Palette{}
+	assert.Nil(t, p.viewRow(nil), "a model that cannot show blocks gets no row")
+	assert.Nil(t, p.viewRow(fakeCompacter{applicable: false}))
+
+	rows := p.viewRow(fakeCompacter{compact: true, applicable: true})
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Whole files", rows[0].Label)
+	assert.Equal(t, wholeFilesRow{}, rows[0].Value)
+
+	assert.Equal(t, View{Context: 7}, p.view, "the blocks on screen are kept for the next review")
+
+	rows = p.viewRow(fakeCompacter{applicable: true})
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Changed blocks only", rows[0].Label)
+	assert.Equal(t, "7 lines around each change", rows[0].Detail)
+	assert.Equal(t, wholeFilesRow{compact: true}, rows[0].Value)
+	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.view)
+	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.newReview(nil, t3client.Target{}).View, "a new review shows its files the same way")
+}

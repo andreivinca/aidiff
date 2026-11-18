@@ -23,6 +23,7 @@ type options struct {
 	TabWidth              int      `long:"tab-width" ini-name:"tab-width" env:"REVDIFF_TAB_WIDTH" default:"4" description:"number of spaces per tab character"`
 	NoColors              bool     `long:"no-colors" ini-name:"no-colors" env:"REVDIFF_NO_COLORS" description:"disable all colors including syntax highlighting"`
 	NoStatusBar           bool     `long:"no-status-bar" ini-name:"no-status-bar" env:"REVDIFF_NO_STATUS_BAR" description:"hide the status bar"`
+	NoToolbar             bool     `long:"no-toolbar" ini-name:"no-toolbar" env:"REVDIFF_NO_TOOLBAR" description:"hide the toolbar"`
 	NoConfirmDiscard      bool     `long:"no-confirm-discard" ini-name:"no-confirm-discard" env:"REVDIFF_NO_CONFIRM_DISCARD" description:"skip confirmation prompt when discarding annotations with Q"`
 	NoConfirmReload       bool     `long:"no-confirm-reload" ini-name:"no-confirm-reload" env:"REVDIFF_NO_CONFIRM_RELOAD" description:"skip confirmation prompt when dropping annotations on reload with R"`
 	NoMouse               bool     `long:"no-mouse" ini-name:"no-mouse" env:"REVDIFF_NO_MOUSE" description:"disable mouse support (scroll wheel, click)"`
@@ -139,7 +140,9 @@ func (o options) twoRef() bool {
 // config file is loaded first, then CLI args override.
 // precedence: CLI flags > env vars > config file > built-in defaults.
 func parseArgs(args []string) (options, error) {
-	var opts options
+	// aidiff shows line numbers unless the config file or
+	// REVDIFF_LINE_NUMBERS=false turns them off
+	opts := options{LineNumbers: true}
 	p := flags.NewParser(&opts, flags.Default)
 	p.Usage = "[OPTIONS] [base] [against]"
 

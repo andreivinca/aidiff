@@ -13,8 +13,8 @@ import (
 	"github.com/umputun/revdiff/app/ui/style"
 )
 
-// View renders the full TUI.
-func (m Model) View() string {
+// reviewView renders the full TUI below aidiff's toolbar (toolbar.go).
+func (m Model) reviewView() string {
 	if !m.ready {
 		return "loading..."
 	}

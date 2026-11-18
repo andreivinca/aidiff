@@ -145,6 +145,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FlashMsg:
 		m.flash = msg.Text
 		return m, nil
+	case RunCommandMsg:
+		return m.runCommandNamed(msg)
 	case ShowSidebarMsg:
 		return m.showSidebar()
 	case HideSidebarMsg:

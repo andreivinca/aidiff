@@ -29,6 +29,7 @@ type localDiff struct {
 	mu      sync.Mutex
 	label   string // what the review on screen compares
 	compact bool   // changed blocks only, kept when Diff View… rebuilds the review
+	context int    // lines around each change, kept the same way (alt+= / alt+-)
 }
 
 // localChoice is what a review compares: a ref (the working tree against it,
@@ -55,6 +56,7 @@ type wholeFiles struct {
 type compacter interface {
 	Compact() bool
 	CompactApplicable() bool
+	CompactContext() int
 }
 
 // newLocalDiff is the Diff View… of the run's review, nil unless that is a
@@ -65,7 +67,8 @@ func newLocalDiff(deps reviewDeps, src sourceSetup, description string) *localDi
 	if src.vcsType != diff.VCSGit || src.folder != nil || src.t3 != nil || opts.Stdin || opts.AllFiles || opts.CompareOld != "" {
 		return nil
 	}
-	return &localDiff{deps: deps, src: src, description: description, git: localGit{dir: src.workDir}, label: runLabel(opts), compact: opts.Compact}
+	return &localDiff{deps: deps, src: src, description: description, git: localGit{dir: src.workDir}, label: runLabel(opts), compact: opts.Compact,
+		context: opts.CompactContext}
 }
 
 // runLabel names what the run's own review compares.
@@ -138,15 +141,19 @@ func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
 	if ok && c.CompactApplicable() {
 		l.mu.Lock()
 		l.compact = c.Compact() // C may have switched it since
+		l.context = c.CompactContext()
 		l.mu.Unlock()
 	}
+	l.mu.Lock()
+	context := l.context
+	l.mu.Unlock()
 	switch {
 	case !ok || !c.CompactApplicable():
 	case c.Compact():
 		rows = append(rows, splitview.PickerItem{Label: "Whole files", Detail: "each file in full, changes marked", Value: wholeFiles{}})
 	default:
 		rows = append(rows, splitview.PickerItem{Label: "Changed blocks only",
-			Detail: fmt.Sprintf("%d lines around each change", l.deps.opts.CompactContext), Value: wholeFiles{compact: true}})
+			Detail: fmt.Sprintf("%d lines around each change", context), Value: wholeFiles{compact: true}})
 	}
 	return rows
 }
@@ -239,6 +246,9 @@ func (l *localDiff) show(c localChoice, store *annotation.Store) tea.Cmd {
 		deps.opts.Refs.Base, deps.opts.Refs.Against, deps.opts.Staged = ref, "", c.staged
 		l.mu.Lock()
 		deps.opts.Compact = l.compact
+		if l.context > 0 {
+			deps.opts.CompactContext = l.context
+		}
 		l.mu.Unlock()
 		model, err := deps.newModel(l.src, store, l.description+"\n\ndiff: "+c.label)
 		if err != nil {

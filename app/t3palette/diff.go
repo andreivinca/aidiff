@@ -3,12 +3,14 @@ package t3palette
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
+	"github.com/umputun/revdiff/app/ui"
 )
 
 // diffChoice is what T3: Diff View… chose. It applies to the reviews of the
@@ -23,15 +25,46 @@ type diffChoice struct {
 // The rows of the diff picker that are not a branch.
 type (
 	againstBranchRow struct{} // leads to the branch picker
+	// wholeFilesRow switches the review on screen between whole files and
+	// the changed blocks only, as C does
+	wholeFilesRow struct {
+		compact bool // what picking it switches to
+	}
 )
+
+// compacter is a review that can show the changed blocks only.
+type compacter interface {
+	Compact() bool
+	CompactApplicable() bool
+	CompactContext() int
+}
+
+// viewRow is the diff picker's row that switches the review on screen to
+// whole files, or back to the changed blocks; none for a review that
+// cannot. It keeps how inner shows its files for the reviews built from
+// here, since C and alt+= / alt+- may have changed it.
+func (t *Palette) viewRow(inner tea.Model) []splitview.PickerItem {
+	c, ok := inner.(compacter)
+	if !ok || !c.CompactApplicable() {
+		return nil
+	}
+	t.mu.Lock()
+	t.view = View{WholeFiles: !c.Compact(), Context: c.CompactContext()}
+	t.mu.Unlock()
+	if c.Compact() {
+		return []splitview.PickerItem{{Label: "Whole files", Detail: "each file in full, changes marked", Value: wholeFilesRow{}}}
+	}
+	return []splitview.PickerItem{{Label: "Changed blocks only",
+		Detail: fmt.Sprintf("%d lines around each change", c.CompactContext()), Value: wholeFilesRow{compact: true}}}
+}
 
 // newReview is the review of target over s, comparing what was chosen for
 // its folder.
 func (t *Palette) newReview(s Session, target t3client.Target) *Review {
 	t.mu.Lock()
-	d := t.diff
+	d, view := t.diff, t.view
 	t.mu.Unlock()
-	r := &Review{Session: s, Target: target}
+	r := &Review{Session: s, Target: target, View: view}
 	if d.cwd != "" && d.cwd == target.Cwd {
 		r.Source, r.SourceLabel = d.source, d.label
 	}
@@ -55,6 +88,7 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 		return flash("T3: open a thread first")
 	}
 	store := storeOf(inner)
+	view := t.viewRow(inner)
 	return asking("listing branches", func(ctx context.Context) tea.Msg {
 		refs, err := r.Session.Server().ListRefs(ctx, r.Target.Cwd)
 		if errors.Is(err, t3client.ErrNotRepository) {
@@ -63,12 +97,13 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 		if err != nil {
 			return t3Error("list branches", err)
 		}
-		return t.diffPicker(r, refs, store)
+		return t.diffPicker(r, refs, store, view...)
 	})
 }
 
-// diffPicker is the list of what to compare, given the repository's refs.
-func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store) tea.Msg {
+// diffPicker is the list of what to compare, given the repository's refs,
+// then the view rows.
+func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store, view ...splitview.PickerItem) tea.Msg {
 	items := []splitview.PickerItem{
 		{Label: "Uncommitted changes", Detail: "the working tree",
 			Value: diffChoice{source: t3client.DiffSource{Kind: t3client.SourceWorkingTree}, label: "uncommitted"}},
@@ -83,14 +118,21 @@ func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.S
 		splitview.PickerItem{Label: "Branch changes", Detail: "vs the default branch, uncommitted included",
 			Value: diffChoice{source: t3client.DiffSource{Kind: t3client.SourceBranchRange}, label: "branch"}},
 		splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranchRow{}})
+	items = append(items, view...)
 	return splitview.ShowPickerMsg{
 		Title: "T3 Code: diff of " + r.Target.Label(),
 		Items: items,
 		OnPick: func(it splitview.PickerItem) tea.Cmd {
-			if _, pick := it.Value.(againstBranchRow); pick {
+			switch v := it.Value.(type) {
+			case againstBranchRow:
 				return func() tea.Msg {
 					return t.branchPicker(r, refs, store)
 				}
+			case wholeFilesRow:
+				t.mu.Lock()
+				t.view.WholeFiles = !v.compact
+				t.mu.Unlock()
+				return func() tea.Msg { return ui.SetCompactMsg{On: v.compact} }
 			}
 			d, _ := it.Value.(diffChoice)
 			return t.showDiff(r, d, store)
@@ -138,8 +180,9 @@ func (t *Palette) showDiff(r *Review, d diffChoice, store *annotation.Store) tea
 	d.cwd = r.Target.Cwd
 	t.mu.Lock()
 	t.diff = d
+	view := t.view
 	t.mu.Unlock()
-	next := &Review{Session: r.Session, Target: r.Target, Source: d.source, SourceLabel: d.label}
+	next := &Review{Session: r.Session, Target: r.Target, Source: d.source, SourceLabel: d.label, View: view}
 	return tea.Batch(flash("T3: diff: "+d.label), func() tea.Msg {
 		return t.showMsg(next, store, "show diff")
 	})

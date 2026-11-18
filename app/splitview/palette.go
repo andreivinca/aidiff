@@ -133,6 +133,17 @@ func (m Model) commands() []row {
 	return rows
 }
 
+// runCommandNamed runs the first command whose name ends with msg.Suffix.
+func (m Model) runCommandNamed(msg RunCommandMsg) (tea.Model, tea.Cmd) {
+	for _, r := range m.commands() {
+		if strings.HasSuffix(r.label, msg.Suffix) {
+			return r.run(m)
+		}
+	}
+	m.flash = msg.Missing
+	return m, nil
+}
+
 // runCommand adapts an outside command to a palette row.
 func runCommand(c Command) func(Model) (tea.Model, tea.Cmd) {
 	return func(m Model) (tea.Model, tea.Cmd) {

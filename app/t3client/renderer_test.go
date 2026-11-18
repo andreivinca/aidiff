@@ -61,7 +61,7 @@ func TestRendererDropsAPatchFetchedForAnOlderListing(t *testing.T) {
 
 	staleDone := make(chan []diff.DiffLine, 1)
 	go func() {
-		lines, ferr := r.FileDiff(diff.FileDiffRequest{Path: "f.txt"})
+		lines, ferr := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
 		assert.NoError(t, ferr)
 		staleDone <- lines
 	}()
@@ -73,7 +73,7 @@ func TestRendererDropsAPatchFetchedForAnOlderListing(t *testing.T) {
 	close(release)
 	assert.Equal(t, "stale", (<-staleDone)[1].Content, "the old view gets its own answer")
 
-	lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt"})
+	lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
 	require.NoError(t, err)
 	require.Len(t, lines, 2)
 	assert.Equal(t, "fresh", lines[1].Content, "the new listing fetches its own patch")
@@ -103,7 +103,7 @@ func TestRendererFetchesAPatchOnceForConcurrentViews(t *testing.T) {
 	results := make(chan string, views)
 	for range views {
 		wg.Go(func() {
-			lines, ferr := r.FileDiff(diff.FileDiffRequest{Path: "f.txt"})
+			lines, ferr := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
 			if assert.NoError(t, ferr) && assert.Len(t, lines, 2) {
 				results <- lines[1].Content
 			}

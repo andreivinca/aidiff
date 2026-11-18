@@ -76,6 +76,11 @@ const (
 	ActionOpenEditor             Action = "open_editor"
 	ActionOpenFileInEditor       Action = "open_file_in_editor"
 	ActionFlushOutput            Action = "flush_output"
+	ActionMoreContext            Action = "more_context"
+	ActionLessContext            Action = "less_context"
+	ActionToolbarMenu            Action = "toolbar_menu"
+	ActionViewMenu               Action = "view_menu"
+	ActionContextMenu            Action = "context_menu"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -106,6 +111,11 @@ var validActions = map[Action]bool{
 	ActionOpenEditor:       true,
 	ActionOpenFileInEditor: true,
 	ActionFlushOutput:      true,
+	ActionMoreContext:      true,
+	ActionLessContext:      true,
+	ActionToolbarMenu:      true,
+	ActionViewMenu:         true,
+	ActionContextMenu:      true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -243,6 +253,11 @@ func defaultDescriptions() []HelpEntry {
 		// view toggles
 		{ActionToggleCollapsed, "toggle collapsed view", "View"},
 		{ActionToggleCompact, "toggle compact diff view", "View"},
+		{ActionMoreContext, "more context lines around changes", "View"},
+		{ActionLessContext, "fewer context lines around changes", "View"},
+		{ActionToolbarMenu, "open the toolbar menus", "View"},
+		{ActionViewMenu, "open the toolbar's View menu", "View"},
+		{ActionContextMenu, "open the toolbar's context menu", "View"},
 		{ActionToggleWrap, "toggle word wrap", "View"},
 		{ActionToggleTree, "toggle tree pane", "View"},
 		{ActionToggleLineNums, "toggle line numbers", "View"},
@@ -305,6 +320,13 @@ func defaultBindings() map[string]Action {
 		"O":      ActionFlushOutput,
 		"v":      ActionToggleCollapsed,
 		"C":      ActionToggleCompact,
+		"alt+=":  ActionMoreContext,
+		"alt++":  ActionMoreContext,
+		"alt+-":  ActionLessContext,
+		"f10":    ActionToolbarMenu,
+		"alt+m":  ActionToolbarMenu,
+		"alt+v":  ActionViewMenu,
+		"alt+c":  ActionContextMenu,
 		"w":      ActionToggleWrap,
 		"t":      ActionToggleTree,
 		"L":      ActionToggleLineNums,

@@ -20,6 +20,16 @@ type Review struct {
 	Source t3client.DiffSource
 	// SourceLabel names Source for the user; "" for the zero source.
 	SourceLabel string
+	// View is how the review shows its files, as T3: Diff View… last saw
+	// or chose it; the zero view is the changed blocks at --compact-context.
+	View View
+}
+
+// View is how a review shows its files: whole or the changed blocks only,
+// and how many lines around each change.
+type View struct {
+	WholeFiles bool
+	Context    int // 0: the run's --compact-context
 }
 
 // Open connects with o to the server named by spec and resolves the review

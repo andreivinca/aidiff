@@ -39,7 +39,7 @@ func TestParseArgs_Defaults(t *testing.T) {
 	assert.False(t, opts.CrossFileMotion)
 	assert.False(t, opts.StopAtAnnotations)
 	assert.False(t, opts.StartAtChange)
-	assert.False(t, opts.LineNumbers)
+	assert.True(t, opts.LineNumbers, "aidiff shows line numbers by default")
 	assert.False(t, opts.Blame)
 	assert.False(t, opts.FilterUnreviewed)
 	assert.False(t, opts.ExitCodeOnAnnotations)

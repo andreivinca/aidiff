@@ -143,9 +143,10 @@ type Renderer struct {
 	baseRef string // the branch range's base; "" for the server's default
 
 	mu        sync.Mutex
-	stats     map[string]diffFileStat // the latest listing, by path
-	patches   map[string]*patchFetch  // the patches of that listing, fetched or in flight, by path
-	whole     patch                   // an older server's one patch
+	stats     map[string]diffFileStat   // the latest listing, by path
+	patches   map[string]*patchFetch    // the patches of that listing, fetched or in flight, by path
+	contents  map[string]*contentsFetch // the new contents of that listing's files, by path (expand.go)
+	whole     patch                     // an older server's one patch
 	truncated bool
 }
 
@@ -187,6 +188,7 @@ func (r *Renderer) ChangedFiles(_ string, _ bool) ([]diff.FileEntry, error) {
 	defer r.mu.Unlock()
 	r.stats = map[string]diffFileStat{}
 	r.patches = map[string]*patchFetch{}
+	r.contents = map[string]*contentsFetch{}
 	r.whole, r.truncated = patch{}, false
 	if len(src.Files) == 0 {
 		return r.fromPatchLocked(src)
@@ -215,7 +217,11 @@ func (r *Renderer) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.fileDiff(req)
+	lines, err := p.fileDiff(req)
+	if err != nil {
+		return nil, err
+	}
+	return r.withContext(req, lines), nil
 }
 
 // patchOf is the patch holding path's changes: the server's one patch, or

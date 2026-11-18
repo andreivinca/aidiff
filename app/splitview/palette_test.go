@@ -240,3 +240,18 @@ func TestSplit_ReplaceInnerAndFlash(t *testing.T) {
 	hs.key("y")
 	assert.Contains(t, got2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}, "keys now reach the new model")
 }
+
+func TestSplit_RunCommandMsg(t *testing.T) {
+	hs := newCommandHarness(t, func() []Command {
+		return []Command{{Name: "T3: Diff View…", Run: func(tea.Model) tea.Cmd { return ran("diff") }}}
+	})
+	msg := tagMsg(1, RunCommandMsg{Suffix: "Diff View…"})
+	assert.Equal(t, RunCommandMsg{Suffix: "Diff View…"}, msg, "a model's command reaches the split, not the model")
+
+	cmd := hs.send(msg)
+	require.NotNil(t, cmd)
+	assert.Equal(t, ranMsg{"diff"}, cmd(), "the command whose name ends with the suffix runs")
+
+	assert.Nil(t, hs.send(RunCommandMsg{Suffix: "Nothing…", Missing: "not here"}))
+	assert.Equal(t, "not here", hs.m.flash)
+}

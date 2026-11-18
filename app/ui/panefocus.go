@@ -54,5 +54,5 @@ func (m Model) switchPane() (Model, bool) {
 // belong to typing or a popup, and its pane focus stays where it is.
 func (m Model) paneFocusBusy() bool {
 	return !m.ready || m.annot.annotating || m.search.active || m.reload.pending ||
-		m.inConfirmDiscard || m.overlay.Active()
+		m.inConfirmDiscard || m.overlay.Active() || m.toolbar.open
 }
