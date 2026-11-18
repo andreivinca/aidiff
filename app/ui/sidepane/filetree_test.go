@@ -683,7 +683,7 @@ func TestFileTree_RenderTruncatesLongDirNames(t *testing.T) {
 
 	result := ft.Render(FileTreeRender{Width: 30, Height: 10, Resolver: res, Renderer: rnd})
 	assert.Contains(t, result, "…", "long dir name should be truncated with ellipsis")
-	assert.Contains(t, result, "references/", "truncated dir should show trailing path")
+	assert.Contains(t, result, ".claude-plugin/skills/revd…", "a truncated dir keeps the start of its path")
 	assert.NotContains(t, result, ".claude-plugin/skills/revdiff/references/", "full dir name should not appear")
 }
 
@@ -697,13 +697,14 @@ func TestFileTree_RenderTruncatesLongFileNames(t *testing.T) {
 
 	var fileLine string
 	for _, l := range lines {
-		if strings.Contains(l, ".md") {
+		if strings.Contains(l, "20260402") {
 			fileLine = l
 			break
 		}
 	}
-	require.NotEmpty(t, fileLine, "should find the .md file entry")
-	assert.Contains(t, fileLine, "…", "long filename should be truncated with ellipsis")
+	require.NotEmpty(t, fileLine, "should find the file entry")
+	assert.Contains(t, fileLine, "  20260402-status-line-he…", "a long filename keeps its start and loses its end")
+	assert.NotContains(t, fileLine, ".md", "the end is what is trimmed")
 	assert.LessOrEqual(t, lipgloss.Width(fileLine), 30, "file entry should not exceed pane width")
 }
 
@@ -833,10 +834,11 @@ func TestFileTree_TruncateDirName(t *testing.T) {
 		{name: "no truncation needed", input: "short", maxWidth: 10, expected: "short"},
 		{name: "exact fit", input: "exact", maxWidth: 5, expected: "exact"},
 		{name: "zero width", input: "anything", maxWidth: 0, expected: "anything"},
-		{name: "ascii truncation", input: "very/long/path/name", maxWidth: 10, expected: "…path/name"},
-		{name: "cjk truncation", input: "目录/很长的路径/名称", maxWidth: 6, expected: "…/名称"},
-		{name: "emoji truncation", input: "📁folder/📂sub/file", maxWidth: 10, expected: "…sub/file"},
-		{name: "mixed ascii and cjk", input: "abc/目录/xyz", maxWidth: 7, expected: "…录/xyz"},
+		{name: "ascii truncation", input: "very/long/path/name", maxWidth: 10, expected: "very/long…"},
+		{name: "cjk truncation", input: "目录/很长的路径/名称", maxWidth: 6, expected: "目录/…"},
+		{name: "emoji truncation", input: "📁folder/📂sub/file", maxWidth: 10, expected: "📁folder/…"},
+		{name: "mixed ascii and cjk", input: "abc/目录/xyz", maxWidth: 7, expected: "abc/目…"},
+		{name: "indent kept", input: "    deeply-nested-name.go", maxWidth: 12, expected: "    deeply-…"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

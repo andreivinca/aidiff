@@ -580,22 +580,12 @@ func (ft *FileTree) renderFileEntry(e treeEntry, idx, width int, rc renderCtx) s
 	name := prefix + e.name + marker
 	maxWidth := width - 2
 
-	// truncate from the left of the filename when it exceeds pane width
+	// truncate the end of the filename when it exceeds pane width, as a file
+	// explorer does: the indent and the start of the name stay readable
 	if lipgloss.Width(name) > maxWidth && maxWidth > 4 {
-		budget := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(marker) - 1 // 1 for "…"
-		if budget > 0 && runewidth.StringWidth(e.name) > budget {
-			runes := []rune(e.name)
-			w := 0
-			start := len(runes)
-			for i, r := range slices.Backward(runes) {
-				rw := runewidth.RuneWidth(r)
-				if w+rw > budget {
-					break
-				}
-				w += rw
-				start = i
-			}
-			name = prefix + "…" + string(runes[start:]) + marker
+		budget := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(marker)
+		if budget > 1 && runewidth.StringWidth(e.name) > budget {
+			name = prefix + truncateEnd(e.name, budget) + marker
 		}
 	}
 
@@ -637,24 +627,32 @@ func (ft *FileTree) fileIndices() []int {
 	return indices
 }
 
-// truncateDirName trims a directory name from the left to fit maxWidth display cells,
-// prepending an ellipsis when truncated.
+// truncateDirName trims the end of a directory name to fit maxWidth display
+// cells, appending an ellipsis when truncated.
 func (ft *FileTree) truncateDirName(name string, maxWidth int) string {
-	if maxWidth <= 0 || runewidth.StringWidth(name) <= maxWidth {
+	if maxWidth <= 0 {
 		return name
 	}
-	runes := []rune(name)
-	w := 0
-	start := len(runes)
-	for i, r := range slices.Backward(runes) {
+	return truncateEnd(name, maxWidth)
+}
+
+// truncateEnd trims the end of s to fit maxWidth display cells, the last
+// cell an ellipsis when it is trimmed. maxWidth must be positive.
+func truncateEnd(s string, maxWidth int) string {
+	if runewidth.StringWidth(s) <= maxWidth {
+		return s
+	}
+	runes := []rune(s)
+	w, end := 0, 0
+	for i, r := range runes {
 		rw := runewidth.RuneWidth(r)
 		if w+rw > maxWidth-1 { // reserve 1 cell for "…"
 			break
 		}
 		w += rw
-		start = i
+		end = i + 1
 	}
-	return "…" + string(runes[start:])
+	return string(runes[:end]) + "…"
 }
 
 // moveDown moves cursor to the next file entry (skips directories).
