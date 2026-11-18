@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -161,24 +162,49 @@ func (s sourceSetup) newFileTree(entries []diff.FileEntry) ui.FileTreeComponent 
 	return sidepane.NewFileTree(entries)
 }
 
-// branchName resolves the current branch in the reviewed repository.
+// branchName resolves the current branch in the reviewed repository, ""
+// when there is none or it cannot be read.
 func (s sourceSetup) branchName() string {
+	name, _ := s.branch()
+	return name
+}
+
+// branchLoader re-reads the branch for the status bar, nil when the source
+// has no branch to follow (stdin, a compare pair, a folder outside git).
+func (s sourceSetup) branchLoader() func() (string, error) {
+	if s.t3 == nil && s.vcsType != diff.VCSGit {
+		return nil
+	}
+	return s.branch
+}
+
+// branch is the current branch of the reviewed repository: "" on a detached
+// HEAD, an error when it could not be read.
+func (s sourceSetup) branch() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if s.t3 != nil {
 		refs, err := s.t3.Session.Conn().ListRefs(ctx, s.t3.Target.Cwd)
-		if err == nil {
-			for _, ref := range refs {
-				if ref.Current {
-					return ref.Name
-				}
+		if err != nil {
+			return "", fmt.Errorf("list refs: %w", err)
+		}
+		for _, ref := range refs {
+			if ref.Current {
+				return ref.Name, nil
 			}
 		}
-		return ""
+		return "", nil
 	}
 	if s.vcsType != diff.VCSGit {
-		return ""
+		return "", nil
 	}
-	name, _ := (localGit{dir: s.workDir}).run(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
-	return name
+	g := localGit{dir: s.workDir}
+	name, err := g.run(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err == nil {
+		return name, nil
+	}
+	if _, headErr := g.run(ctx, "rev-parse", "--verify", "--quiet", "HEAD"); headErr == nil {
+		return "", nil // detached: no branch
+	}
+	return "", err
 }

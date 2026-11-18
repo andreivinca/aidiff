@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -92,4 +93,36 @@ func TestWatchInBackground_StopWaitsForStartAndRunsOnce(t *testing.T) {
 	stop()
 	stop()
 	assert.Equal(t, 1, stops, "stop runs what start returned, once")
+}
+
+func TestSourceSetup_BranchFollowsCheckout(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "first")
+
+	src := sourceSetup{vcsSetup: vcsSetup{vcsType: diff.VCSGit, workDir: dir}}
+	load := src.branchLoader()
+	require.NotNil(t, load)
+	name, err := load()
+	require.NoError(t, err)
+	assert.Equal(t, "main", name)
+
+	git("checkout", "-q", "-b", "feature")
+	name, err = load()
+	require.NoError(t, err)
+	assert.Equal(t, "feature", name, "the loader reads the branch now, not the one at startup")
+
+	git("checkout", "-q", "--detach")
+	name, err = load()
+	require.NoError(t, err, "a detached HEAD is no error")
+	assert.Empty(t, name)
+
+	assert.Nil(t, sourceSetup{}.branchLoader(), "no git, no T3: no branch to follow")
 }

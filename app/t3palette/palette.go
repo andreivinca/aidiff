@@ -433,7 +433,8 @@ type Place struct {
 }
 
 // TerminalPlace is where a new terminal opens: the machine and folder of the
-// T3 review on screen, else of the live server in its selected project. The
+// T3 review on screen, else the local folder on screen, else the live server
+// in its selected project. The
 // folders of a remote server reached without SSH are not this machine's, so
 // a terminal for one starts in no folder.
 func (t *Palette) TerminalPlace() Place {
@@ -444,6 +445,8 @@ func (t *Palette) TerminalPlace() Place {
 	switch {
 	case t.onScreen != nil:
 		s, dir = t.onScreen.Session, t.onScreen.Target.Cwd
+	case t.local != nil:
+		return Place{Dir: t.local.Dir}
 	case t.live != nil:
 		s = t.live
 		if t.project != nil {

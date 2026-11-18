@@ -622,6 +622,8 @@ type Model struct {
 	divider     dividerState      // tree/diff divider dragged with the mouse (treedrag.go)
 	identity    machineIdentity   // the host and source named in the status bar (identity.go)
 
+	loadBranch func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
+
 	ready        bool   // true after first WindowSizeMsg
 	filesLoaded  bool   // true after the first filesLoadedMsg is handled (keeps the loading view pinned until real data arrives)
 	filesLoadSeq uint64 // bumped before each new file-list load; stale filesLoadedMsg (seq mismatch) is dropped
@@ -840,6 +842,9 @@ type ModelConfig struct {
 	Project string
 	// Branch is the current Git branch shown in the status bar.
 	Branch string
+	// LoadBranch re-reads the branch on every reload, and every few seconds
+	// in T3 mode, so a checkout shows. Nil keeps Branch as it is.
+	LoadBranch func() (string, error)
 	// T3Mode marks a review that comes from T3 Code, labeled in the status bar.
 	T3Mode bool
 }
@@ -935,6 +940,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 
 	return Model{
 		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
+		loadBranch:    cfg.LoadBranch,
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -1033,7 +1039,7 @@ func (m Model) OutputFlushed() bool {
 // (e.g. --stdin, standalone file, working-tree review), so tea.Batch harmlessly
 // drops it in those cases.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadFiles(), m.loadCommits())
+	return tea.Batch(m.loadFiles(), m.loadCommits(), m.pollBranch())
 }
 
 // Update handles messages and updates the model state.
@@ -1072,6 +1078,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRefresh()
 	case MachineIdentityMsg:
 		return m.handleMachineIdentity(msg), nil
+	case branchLoadedMsg:
+		return m.handleBranchLoaded(msg)
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).

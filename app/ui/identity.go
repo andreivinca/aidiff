@@ -2,6 +2,9 @@ package ui
 
 import (
 	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/ui/style"
 )
@@ -62,4 +65,51 @@ func (id machineIdentity) label(sep string) string {
 		parts = append(parts, "T3")
 	}
 	return strings.Join(parts, sep)
+}
+
+// branchPollInterval is how often a T3 review re-reads its branch: a
+// checkout on the T3 host, in one of its terminals say, reaches no watcher
+// here, so nothing else would reload the review.
+const branchPollInterval = 5 * time.Second
+
+// branchLoadedMsg is the branch a loadBranchCmd read. poll marks the T3
+// poll's own read, which schedules the next one.
+type branchLoadedMsg struct {
+	branch string
+	err    error
+	poll   bool
+}
+
+// loadBranchCmd re-reads the branch; nil when the branch is fixed.
+func (m Model) loadBranchCmd(poll bool) tea.Cmd {
+	load := m.loadBranch
+	if load == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		branch, err := load()
+		return branchLoadedMsg{branch: branch, err: err, poll: poll}
+	}
+}
+
+// pollBranch schedules the T3 poll's next read; nil outside T3 mode, where
+// the file watcher's reloads re-read the branch.
+func (m Model) pollBranch() tea.Cmd {
+	if !m.identity.t3 || m.loadBranch == nil {
+		return nil
+	}
+	load := m.loadBranchCmd(true)
+	return tea.Tick(branchPollInterval, func(time.Time) tea.Msg { return load() })
+}
+
+// handleBranchLoaded shows the branch read; a failed read keeps the one
+// shown, since a dropped connection says nothing about the branch.
+func (m Model) handleBranchLoaded(msg branchLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err == nil {
+		m.identity.branch = style.SanitizeFilenameForDisplay(msg.branch)
+	}
+	if msg.poll {
+		return m, m.pollBranch()
+	}
+	return m, nil
 }

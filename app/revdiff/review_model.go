@@ -70,6 +70,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		MachineName:          src.machineName(d.hostname),
 		Project:              src.projectName(),
 		Branch:               src.branchName(),
+		LoadBranch:           src.branchLoader(),
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,

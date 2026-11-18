@@ -84,6 +84,7 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	require.True(t, sb.Available(), "this machine is selected: its history shows")
 	assert.Equal(t, localKey(a), h.p.Workspace(), "the run's folder is a workspace of its own")
 	assert.Equal(t, a, h.p.LocalDir())
+	assert.Equal(t, Place{Dir: a}, h.p.TerminalPlace(), "a terminal opens in the folder on screen")
 
 	view := ansi.Strip(sb.View(40, 14, true))
 	assert.Contains(t, view, " History\n andrei-pc")
@@ -100,6 +101,7 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	inner = h.swap(msg, inner)
 	h.settle()
 	assert.Equal(t, b, h.p.LocalDir())
+	assert.Equal(t, Place{Dir: b}, h.p.TerminalPlace(), "beta's terminals open in beta, not where the run started")
 	assert.Equal(t, localKey(b), h.p.Workspace())
 	assert.Equal(t, []string{b}, f.opened)
 	assert.Contains(t, f.remembered, b, "the folder opened is recorded as opened now")
@@ -137,6 +139,7 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	inner = h.swap(pick(t, sb, 2), inner)
 	h.settle()
 	assert.Equal(t, b, h.p.LocalDir(), "beta comes back from the history")
+	assert.Equal(t, Place{Dir: b}, h.p.TerminalPlace(), "the local folder wins over the live server's project")
 	assert.Nil(t, h.p.OnScreen())
 	assert.Equal(t, 1, f.watches(b))
 	_ = inner

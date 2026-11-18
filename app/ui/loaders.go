@@ -419,7 +419,7 @@ func (m *Model) triggerReload() tea.Cmd {
 	m.reviewed.cache = make(map[string]string)
 	m.reviewed.pending = make(map[string]uint64)
 	m.clearPendingJumps() // the reset-to-top contract above: no queued landing survives a reload
-	return tea.Batch(m.loadFiles(), m.loadCommits())
+	return tea.Batch(m.loadFiles(), m.loadCommits(), m.loadBranchCmd(false))
 }
 
 // handleFilesLoaded processes the result of loadFiles, populating the file tree

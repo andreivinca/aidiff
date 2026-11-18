@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestModel_ViewSeparatorOnly(t *testing.T) {
@@ -136,4 +139,66 @@ func TestModel_MachineIdentityKeepsProjectAndBranch(t *testing.T) {
 	updated, _ = m.Update(MachineIdentityMsg{Name: "other", Project: "Sabra2", Branch: "dev", T3: true})
 	m = updated.(Model)
 	assert.Equal(t, "other | Sabra2 | dev | T3", m.identity.label(" | "), "named ones replace them")
+}
+
+func TestModel_BranchFollowsReloads(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.layout.width = 120
+	m.identity = newMachineIdentity("workstation", "aidiff", false, "main")
+	assert.Nil(t, m.loadBranchCmd(false), "no loader: the branch is fixed")
+	assert.Nil(t, m.pollBranch())
+
+	branch, fail := "feature", false
+	m.loadBranch = func() (string, error) {
+		if fail {
+			return "", errors.New("connection lost")
+		}
+		return branch, nil
+	}
+	assert.Nil(t, m.pollBranch(), "a local review is not polled: the watcher's reloads re-read the branch")
+
+	updated, cmd := m.Update(m.loadBranchCmd(false)())
+	m = updated.(Model)
+	assert.Nil(t, cmd, "a reload's read schedules nothing")
+	assert.Contains(t, ansi.Strip(m.statusBarWithMachine()), "feature")
+	assert.NotContains(t, ansi.Strip(m.statusBarWithMachine()), "main")
+
+	fail = true
+	updated, _ = m.Update(m.loadBranchCmd(false)())
+	m = updated.(Model)
+	assert.Equal(t, "feature", m.identity.branch, "a failed read keeps the branch shown")
+
+	fail, branch = false, ""
+	updated, _ = m.Update(m.loadBranchCmd(false)())
+	m = updated.(Model)
+	assert.Empty(t, m.identity.branch, "a detached HEAD shows no branch")
+}
+
+func TestModel_ReloadRereadsBranch(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.loadBranch = func() (string, error) { return "dev", nil }
+	cmd := m.triggerReload()
+	var got []tea.Msg
+	for _, c := range cmd().(tea.BatchMsg) {
+		if c != nil {
+			if msg, ok := c().(branchLoadedMsg); ok {
+				got = append(got, msg)
+			}
+		}
+	}
+	assert.Equal(t, []tea.Msg{branchLoadedMsg{branch: "dev"}}, got)
+}
+
+func TestModel_T3PollsBranch(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.identity = newMachineIdentity("box", "Sabra2", true, "main")
+	m.loadBranch = func() (string, error) { return "hotfix", nil }
+	require.NotNil(t, m.pollBranch(), "a T3 checkout reaches no watcher here: the branch is polled")
+
+	updated, cmd := m.Update(branchLoadedMsg{branch: "hotfix", poll: true})
+	m = updated.(Model)
+	assert.Equal(t, "hotfix", m.identity.branch)
+	assert.NotNil(t, cmd, "the poll's read schedules the next one")
+	_, cmd = m.Update(branchLoadedMsg{err: errors.New("down"), poll: true})
+	assert.NotNil(t, cmd, "a failed read keeps polling")
 }
