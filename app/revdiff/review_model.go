@@ -71,6 +71,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		Project:              src.projectName(),
 		Branch:               src.branchName(),
 		LoadBranch:           src.branchLoader(),
+		KeepFileTree:         true, // aidiff has no single-file view
 		Renderer:             src.renderer,
 		Store:                store,
 		Highlighter:          d.hl,

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/ui"
@@ -114,7 +115,7 @@ func TestLocalDiff(t *testing.T) {
 		labels, details = append(labels, it.Label), append(details, it.Detail)
 	}
 	assert.Equal(t, []string{"Uncommitted changes", "Unstaged changes", "Staged changes", "Unpushed changes", "Branch changes",
-		"Against a branch…"}, labels)
+		"Against a branch…", "File tree"}, labels, "no review on screen: nothing to switch to whole files")
 	assert.Equal(t, "vs origin/feature, uncommitted included", details[3])
 	assert.Equal(t, "vs origin/main, uncommitted included", details[4])
 
@@ -137,6 +138,64 @@ func TestLocalDiff(t *testing.T) {
 	msgs := runCmd(branches.OnText("no-such-ref"))
 	assert.Contains(t, msgs, splitview.FlashMsg{Text: "Diff: no common commit with no-such-ref: git merge-base: fatal: Not a valid object name no-such-ref"})
 	assert.Equal(t, "vs origin/main", l.command().Detail, "a failed switch keeps the review as it was")
+}
+
+func TestLocalDiff_FileTreeAndWholeFiles(t *testing.T) {
+	work, _ := branchRepo(t)
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(work, "deep", "er"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(work, "deep", "er", "x.txt"), []byte("x\n"), 0o600))
+	t.Chdir(work)
+	opts, err := parseArgs(noConfigArgs(t))
+	require.NoError(t, err)
+	src, err := setupSource(opts)
+	require.NoError(t, err)
+	deps := newReviewDeps(opts)
+	l := newLocalDiff(deps, src, "")
+	require.NotNil(t, l)
+	review, err := deps.newModel(src, annotation.NewStore(), "")
+	require.NoError(t, err)
+
+	rows := func(inner tea.Model) (labels []string, items []splitview.PickerItem, picker splitview.ShowPickerMsg) {
+		picker, ok := l.pick(inner)().(splitview.ShowPickerMsg)
+		require.True(t, ok)
+		for _, it := range picker.Items {
+			labels = append(labels, it.Label)
+		}
+		return labels, picker.Items, picker
+	}
+	labels, items, picker := rows(review)
+	assert.Equal(t, []string{"File tree", "Changed blocks only"}, labels[len(labels)-2:], "whole files on screen: changed blocks offered")
+	assert.Equal(t, []tea.Msg{ui.SetCompactMsg{On: true}}, runCmd(picker.OnPick(items[len(items)-1])))
+	assert.True(t, l.compact, "kept for the next review Diff View… builds")
+
+	updated, _ := review.Update(ui.SetCompactMsg{On: true})
+	review = updated.(ui.Model)
+	assert.True(t, review.Compact())
+	labels, _, _ = rows(review)
+	assert.Equal(t, "Whole files", labels[len(labels)-1], "changed blocks on screen: whole files offered")
+
+	var tree ui.Model
+	for _, m := range runCmd(picker.OnPick(items[len(items)-2])) {
+		if r, ok := m.(splitview.ReplaceInnerMsg); ok {
+			tree, _ = r.Model.(ui.Model)
+		}
+	}
+	require.NotNil(t, tree.Store(), "the review is rebuilt as a file tree")
+	assert.Equal(t, "file tree", l.command().Detail)
+	assert.False(t, tree.CompactApplicable(), "a file browser shows whole files")
+	labels, _, _ = rows(tree)
+	assert.Equal(t, "File tree", labels[len(labels)-1], "no blocks to switch to in the tree")
+
+	folder := diff.NewFolderReader(work, nil, nil)
+	entries, err := folder.ChangedFiles("", false)
+	require.NoError(t, err)
+	var paths []string
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
+	assert.Contains(t, paths, "deep")
+	assert.NotContains(t, paths, "deep/er/x.txt", "a folder is listed only once opened")
 }
 
 func TestNewLocalDiff_OnlyForGitChanges(t *testing.T) {

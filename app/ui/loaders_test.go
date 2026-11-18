@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1093,6 +1094,19 @@ func TestModel_FilesLoadedSingleFileViewportWidth(t *testing.T) {
 	assert.True(t, model.file.singleFile)
 	assert.Equal(t, 0, model.layout.treeWidth, "treeWidth should be 0 in single-file mode")
 	assert.Equal(t, 98, model.layout.viewport.Width, "viewport width should be width - 2 (borders only)")
+}
+
+func TestModel_FilesLoadedKeepFileTree(t *testing.T) {
+	m := testModel(nil, nil)
+	m.keepFileTree = true
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = resized.(Model)
+	result, _ := m.Update(filesLoadedMsg{entries: []diff.FileEntry{{Path: "main.go"}}})
+	model := result.(Model)
+	assert.False(t, model.file.singleFile, "one file keeps the tree view")
+	assert.Positive(t, model.layout.treeWidth, "the tree pane is shown")
+	assert.Equal(t, 100-model.layout.treeWidth-4, model.layout.viewport.Width)
+	assert.Contains(t, ansi.Strip(model.View()), "main.go")
 }
 
 func TestModel_FilesLoadedGrowsPastSingleFile(t *testing.T) {

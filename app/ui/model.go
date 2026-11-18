@@ -622,7 +622,8 @@ type Model struct {
 	divider     dividerState      // tree/diff divider dragged with the mouse (treedrag.go)
 	identity    machineIdentity   // the host and source named in the status bar (identity.go)
 
-	loadBranch func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
+	loadBranch   func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
+	keepFileTree bool                   // never the single-file view (ModelConfig.KeepFileTree)
 
 	ready        bool   // true after first WindowSizeMsg
 	filesLoaded  bool   // true after the first filesLoadedMsg is handled (keeps the loading view pinned until real data arrives)
@@ -847,6 +848,10 @@ type ModelConfig struct {
 	LoadBranch func() (string, error)
 	// T3Mode marks a review that comes from T3 Code, labeled in the status bar.
 	T3Mode bool
+	// KeepFileTree keeps the file tree for a review of one file instead of
+	// switching to the single-file view, so the layout stays put while a live
+	// review grows from one file to several.
+	KeepFileTree bool
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -941,6 +946,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 	return Model{
 		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
 		loadBranch:    cfg.LoadBranch,
+		keepFileTree:  cfg.KeepFileTree,
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -1080,6 +1086,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMachineIdentity(msg), nil
 	case branchLoadedMsg:
 		return m.handleBranchLoaded(msg)
+	case SetCompactMsg:
+		return m.handleSetCompact(msg)
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).

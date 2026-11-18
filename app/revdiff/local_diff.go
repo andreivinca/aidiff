@@ -1,7 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/ui"
 )
 
 // localDiffTimeout bounds the git queries of one Diff View… step.
@@ -23,8 +26,9 @@ type localDiff struct {
 	description string
 	git         localGit
 
-	mu    sync.Mutex
-	label string // what the review on screen compares
+	mu      sync.Mutex
+	label   string // what the review on screen compares
+	compact bool   // changed blocks only, kept when Diff View… rebuilds the review
 }
 
 // localChoice is what a review compares: a ref (the working tree against it,
@@ -38,6 +42,21 @@ type localChoice struct {
 // againstBranch is the Diff View… row that leads to the branch picker.
 type againstBranch struct{}
 
+// fileTree is the Diff View… row that browses every file of the repository.
+type fileTree struct{}
+
+// wholeFiles is the Diff View… row that switches between whole files and
+// the changed blocks only.
+type wholeFiles struct {
+	compact bool // what picking it switches to
+}
+
+// compacter is a review that can show the changed blocks only.
+type compacter interface {
+	Compact() bool
+	CompactApplicable() bool
+}
+
 // newLocalDiff is the Diff View… of the run's review, nil unless that is a
 // review of a git repository's changes: not stdin, a compare pair, a plain
 // folder, every file, or a T3 thread.
@@ -46,7 +65,7 @@ func newLocalDiff(deps reviewDeps, src sourceSetup, description string) *localDi
 	if src.vcsType != diff.VCSGit || src.folder != nil || src.t3 != nil || opts.Stdin || opts.AllFiles || opts.CompareOld != "" {
 		return nil
 	}
-	return &localDiff{deps: deps, src: src, description: description, git: localGit{dir: src.workDir}, label: runLabel(opts)}
+	return &localDiff{deps: deps, src: src, description: description, git: localGit{dir: src.workDir}, label: runLabel(opts), compact: opts.Compact}
 }
 
 // runLabel names what the run's own review compares.
@@ -71,6 +90,7 @@ func (l *localDiff) command() splitview.Command {
 // upstream and the default branch.
 func (l *localDiff) pick(inner tea.Model) tea.Cmd {
 	store := reviewStore(inner)
+	view := l.viewRows(inner)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), localDiffTimeout)
 		defer cancel()
@@ -89,18 +109,76 @@ func (l *localDiff) pick(inner tea.Model) tea.Cmd {
 				Value: localChoice{ref: def, label: "vs " + def}})
 		}
 		items = append(items, splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranch{}})
+		items = append(items, view...)
 		return splitview.ShowPickerMsg{
 			Title: "Diff of " + l.src.projectName(),
 			Items: items,
 			OnPick: func(it splitview.PickerItem) tea.Cmd {
-				if _, branches := it.Value.(againstBranch); branches {
+				switch v := it.Value.(type) {
+				case againstBranch:
 					return l.pickBranch(store)
+				case fileTree:
+					return l.showTree(store)
+				case wholeFiles:
+					return l.setCompact(v.compact)
 				}
 				c, _ := it.Value.(localChoice)
 				return l.show(c, store)
 			},
 		}
 	}
+}
+
+// viewRows are the Diff View… rows after the comparisons: the file tree,
+// then whole files or the changed blocks only, whichever the review on
+// screen does not show.
+func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
+	rows := []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
+	c, ok := inner.(compacter)
+	if ok && c.CompactApplicable() {
+		l.mu.Lock()
+		l.compact = c.Compact() // C may have switched it since
+		l.mu.Unlock()
+	}
+	switch {
+	case !ok || !c.CompactApplicable():
+	case c.Compact():
+		rows = append(rows, splitview.PickerItem{Label: "Whole files", Detail: "each file in full, changes marked", Value: wholeFiles{}})
+	default:
+		rows = append(rows, splitview.PickerItem{Label: "Changed blocks only",
+			Detail: fmt.Sprintf("%d lines around each change", l.deps.opts.CompactContext), Value: wholeFiles{compact: true}})
+	}
+	return rows
+}
+
+// setCompact switches the review on screen to the changed blocks only, or
+// to whole files, and keeps the choice for the reviews Diff View… builds.
+func (l *localDiff) setCompact(compact bool) tea.Cmd {
+	l.mu.Lock()
+	l.compact = compact
+	l.mu.Unlock()
+	return func() tea.Msg { return ui.SetCompactMsg{On: compact} }
+}
+
+// showTree rebuilds the review as a browser of every file in the
+// repository, with the annotations in store. Like a plain folder, it lists
+// a folder only once it is opened, so it starts at once in a large tree.
+func (l *localDiff) showTree(store *annotation.Store) tea.Cmd {
+	return tea.Batch(func() tea.Msg { return splitview.FlashMsg{Text: "Diff: file tree…"} }, func() tea.Msg {
+		root := cmp.Or(l.src.gitRoot, l.src.workDir)
+		folder := diff.NewFolderReader(root, l.deps.opts.Include, l.deps.opts.Exclude)
+		src := sourceSetup{vcsSetup: vcsSetup{renderer: folder, vcsType: l.src.vcsType, gitRoot: l.src.gitRoot, workDir: root}, folder: folder}
+		deps := l.deps
+		deps.opts.Refs.Base, deps.opts.Refs.Against, deps.opts.Staged = "", "", false
+		model, err := deps.newModel(src, store, l.description+"\n\nview: file tree")
+		if err != nil {
+			return splitview.FlashMsg{Text: "Diff: " + err.Error()}
+		}
+		l.mu.Lock()
+		l.label = "file tree"
+		l.mu.Unlock()
+		return splitview.ReplaceInnerMsg{Model: model}
+	})
 }
 
 // pickBranch lists the branches to compare against, the current one left
@@ -159,6 +237,9 @@ func (l *localDiff) show(c localChoice, store *annotation.Store) tea.Cmd {
 		}
 		deps := l.deps
 		deps.opts.Refs.Base, deps.opts.Refs.Against, deps.opts.Staged = ref, "", c.staged
+		l.mu.Lock()
+		deps.opts.Compact = l.compact
+		l.mu.Unlock()
 		model, err := deps.newModel(l.src, store, l.description+"\n\ndiff: "+c.label)
 		if err != nil {
 			return splitview.FlashMsg{Text: "Diff: " + err.Error()}
