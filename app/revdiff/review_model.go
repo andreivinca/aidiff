@@ -10,6 +10,7 @@ import (
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
+	"github.com/umputun/revdiff/app/editor"
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
@@ -191,6 +192,11 @@ func remoteEditor(src sourceSetup) func(file string, line int) *exec.Cmd {
 	}
 	p := t3palette.Place{SSHHost: src.t3.Session.SSHHost(), SSHControlPath: src.t3.Session.SSHControlPath(), Dir: src.t3.Target.Cwd}
 	return func(file string, line int) *exec.Cmd {
+		// an editor here that opens the host's files itself (fresh) runs here,
+		// the user's own; any other runs on the host
+		if cmd, ok := (editor.Editor{}).RemoteCommand(p.SSHHost, p.Dir, file, line); ok {
+			return cmd
+		}
 		argv := remoteEditorArgv(p, file, line)
 		return exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // ssh with the session's host and quoted paths
 	}

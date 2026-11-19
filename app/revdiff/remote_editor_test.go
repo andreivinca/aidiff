@@ -65,6 +65,14 @@ func TestRemoteEditor(t *testing.T) {
 	r.Session = sshSession{host: "box", ctl: "/tmp/ctl"}
 	edit := remoteEditor(sourceSetup{t3: r})
 	require.NotNil(t, edit)
+
+	t.Setenv("EDITOR", "nvim")
+	t.Setenv("VISUAL", "")
 	cmd := edit("a.go", 3)
-	assert.Equal(t, remoteEditorArgv(t3palette.Place{SSHHost: "box", SSHControlPath: "/tmp/ctl", Dir: "/srv"}, "a.go", 3), cmd.Args)
+	assert.Equal(t, remoteEditorArgv(t3palette.Place{SSHHost: "box", SSHControlPath: "/tmp/ctl", Dir: "/srv"}, "a.go", 3), cmd.Args,
+		"an editor that edits only its own machine's files runs on the host")
+
+	t.Setenv("EDITOR", "fresh")
+	assert.Equal(t, []string{"fresh", "ssh://box/srv/a.go:3"}, edit("a.go", 3).Args,
+		"fresh runs here and opens the host's file over SSH")
 }
