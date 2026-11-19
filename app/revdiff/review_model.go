@@ -132,7 +132,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		TreeWidthRatio:   opts.TreeWidth,
 		Only:             opts.Only,
 		WorkDir:          src.workDir,
-		SourceEditor:     sourceEditorPolicy(opts, src.workDir),
+		SourceEditor:     editorPolicy(opts, src),
 		ActiveThemeName:  d.themes.catalog.ActiveName(opts.Theme),
 		AnnotationMarker: opts.AnnotationMarker,
 		OutputPath:       opts.Output,
@@ -176,4 +176,19 @@ func openDiffView() tea.Cmd {
 	return func() tea.Msg {
 		return splitview.RunCommandMsg{Suffix: "Diff View…", Missing: "Diff View… is not available for this review"}
 	}
+}
+
+// editorPolicy is where e / f12 open the editor: the review's folder, or a
+// T3 review's folder when its server runs on this machine. A remote T3
+// review's files are on its host, so it has none.
+func editorPolicy(opts options, src sourceSetup) ui.SourceEditorPolicy {
+	if src.t3 != nil {
+		if !src.t3.Session.Local() || src.t3.Target.Cwd == "" {
+			return ui.SourceEditorPolicy{}
+		}
+		// the thread's changes are in its working tree: like a worktree review,
+		// a file with line annotations is not opened for editing
+		return ui.SourceEditorPolicy{Available: true, Root: src.t3.Target.Cwd, DisallowAnnotatedFileEditing: true}
+	}
+	return sourceEditorPolicy(opts, src.workDir)
 }

@@ -973,7 +973,7 @@ func (m Model) handleDiffAction(action keymap.Action) (tea.Model, tea.Cmd) {
 		cmd := m.startSearch()
 		return m, cmd
 	case keymap.ActionOpenFileInEditor:
-		cmd := m.openSourceEditor()
+		cmd := m.openProjectEditor() // aidiff: editor_project.go
 		return m, cmd
 	default: // actions handled by handleKey (quit, toggle_pane, filter, etc.) — not repeated here
 	}
@@ -1098,7 +1098,7 @@ func (m Model) handleTreeAction(action keymap.Action) (tea.Model, tea.Cmd) {
 	// the tree selection is unchanged.
 	switch action {
 	case keymap.ActionOpenFileInEditor: // aidiff: the file shown, from the tree too
-		cmd := m.openSourceEditor()
+		cmd := m.openProjectEditor()
 		return m, cmd
 	case keymap.ActionScrollDiffDown:
 		m.scrollDiffViewportLine(wheelStep)
