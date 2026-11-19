@@ -121,3 +121,33 @@ func TestOpenProjectEditor_KeyWithNoFile(t *testing.T) {
 		assert.Equal(t, root, fe.project, "e opens the project with focus %v", focus)
 	}
 }
+
+func TestOpenProjectEditor_Remote(t *testing.T) {
+	lines := []diff.DiffLine{
+		{OldNum: 1, NewNum: 1, Content: "one", ChangeType: diff.ChangeContext},
+		{NewNum: 2, Content: "two", ChangeType: diff.ChangeAdd},
+	}
+	m, fe := projectEditorModel(t, t.TempDir(), lines)
+	m.cfg.sourceEditorPolicy = SourceEditorPolicy{} // the files are on another host
+	type call struct {
+		file string
+		line int
+	}
+	var got []call
+	m.remoteEditor = func(file string, line int) *exec.Cmd {
+		got = append(got, call{file, line})
+		return exec.Command("/bin/true")
+	}
+	m.file.name, m.file.lines = "a.go", lines
+	m.nav.diffCursor = 1
+	require.NotNil(t, m.openProjectEditor())
+	m.file.name = ""
+	require.NotNil(t, m.openProjectEditor())
+	assert.Equal(t, []call{{"a.go", 2}, {"", 0}}, got, "the file at the cursor's line, then the folder alone")
+	assert.Empty(t, fe.project, "nothing opens here")
+
+	m.file.name = "a.go"
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 2, Type: "+", Comment: "keep"})
+	assert.Nil(t, m.openProjectEditor())
+	assert.Equal(t, "Editor unavailable: file has line annotations", m.editorState.hint)
+}

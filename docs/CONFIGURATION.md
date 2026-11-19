@@ -63,7 +63,7 @@ aidiff handles these keys itself, before revdiff's keymap, so the keybindings fi
 | alt+← / alt+→ | focus the panel to the left / right, stopping at either end; the review's file tree and diff count as two panels. Past the leftmost panel alt+← shows the side panel (T3 projects, or the local history), then the connections panel |
 | ctrl+q | quit (asks first when panes are open) |
 
-`e` and F12 open the editor (`$EDITOR`) in the project's root folder, with the file on screen (at the cursor's line when the editor takes one), or with no file when none is on screen. They work with the file tree or the diff focused, in local reviews and in T3 reviews whose server runs on this machine. A file with line annotations in a working-tree review is not opened, as in revdiff.
+`e` and F12 open the editor (`$EDITOR`) in the project's root folder, with the file on screen (at the cursor's line when the editor takes one), or with no file when none is on screen. They work with the file tree or the diff focused, in local reviews and in T3 reviews: with a server on this machine the editor runs here; with one reached over SSH it runs on that host, over the session's SSH connection (as terminal panes do), in the thread's folder, and is the host's `$EDITOR` (then `$VISUAL`, then `vi`) as its login shell sets it. A T3 server reached without SSH has no editor. After the editor closes, a T3 review reloads the file. A file with line annotations in a working-tree review is not opened, as in revdiff.
 
 The review's own keys can be remapped in `~/.config/revdiff/keybindings` (`map <key> <action>`, `unmap <key>`). Run `aidiff --dump-keys` to see the current bindings.
 
@@ -72,7 +72,7 @@ The review's own keys can be remapped in `~/.config/revdiff/keybindings` (`map <
 | Variable | Used for |
 |---|---|
 | `SHELL` | Default terminal-pane command |
-| `EDITOR`, then `VISUAL` | The editor `e` / F12 open (revdiff's `open_file_in_editor`); `vi` when neither is set. Set it in the shell profile, e.g. `export EDITOR=fresh` |
+| `EDITOR`, then `VISUAL` | The editor `e` / F12 open (revdiff's `open_file_in_editor`); `vi` when neither is set. Set it in the shell profile, e.g. `export EDITOR=fresh`. For a T3 review over SSH, the host's own variable counts |
 | `T3CODE_HOME` | Local T3 runtime file location |
 | `WAYLAND_DISPLAY`, `DISPLAY` | Choosing a clipboard tool (`wl-clipboard` or `xclip`) |
 | `REVDIFF_T3_TOKEN`, `REVDIFF_T3_SOURCE`, `REVDIFF_TERMINAL*`, `REVDIFF_NO_CHAT`, `REVDIFF_NO_WATCH` | See the tables above |

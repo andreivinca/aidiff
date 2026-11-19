@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
 	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -133,6 +136,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		Only:             opts.Only,
 		WorkDir:          src.workDir,
 		SourceEditor:     editorPolicy(opts, src),
+		RemoteEditor:     remoteEditor(src),
 		ActiveThemeName:  d.themes.catalog.ActiveName(opts.Theme),
 		AnnotationMarker: opts.AnnotationMarker,
 		OutputPath:       opts.Output,
@@ -175,6 +179,20 @@ func compactContextAtStart(opts options, src sourceSetup) int {
 func openDiffView() tea.Cmd {
 	return func() tea.Msg {
 		return splitview.RunCommandMsg{Suffix: "Diff View…", Missing: "Diff View… is not available for this review"}
+	}
+}
+
+// remoteEditor opens e / f12's editor on a T3 review's host, over the
+// session's SSH connection, in the thread's folder; nil for a review whose
+// files are here, or on a host reached without SSH.
+func remoteEditor(src sourceSetup) func(file string, line int) *exec.Cmd {
+	if src.t3 == nil || src.t3.Session.Local() || src.t3.Session.SSHHost() == "" {
+		return nil
+	}
+	p := t3palette.Place{SSHHost: src.t3.Session.SSHHost(), SSHControlPath: src.t3.Session.SSHControlPath(), Dir: src.t3.Target.Cwd}
+	return func(file string, line int) *exec.Cmd {
+		argv := remoteEditorArgv(p, file, line)
+		return exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // ssh with the session's host and quoted paths
 	}
 }
 

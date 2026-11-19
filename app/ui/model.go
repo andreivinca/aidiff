@@ -624,6 +624,8 @@ type Model struct {
 	toolbar     toolbarState      // the toolbar under the diff header and its menus (toolbar.go)
 	openFile    OpenFileMsg       // a file to select once the file list loads (openfile.go)
 
+	remoteEditor func(file string, line int) *exec.Cmd // e / f12 on the files' host (ModelConfig.RemoteEditor)
+
 	loadBranch   func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
 	keepFileTree bool                   // never the single-file view (ModelConfig.KeepFileTree)
 
@@ -866,6 +868,11 @@ type ModelConfig struct {
 	// switching to the single-file view, so the layout stays put while a live
 	// review grows from one file to several.
 	KeepFileTree bool
+	// RemoteEditor, when set, is the command that opens the editor on the
+	// host the files live on, a T3 review's over SSH, for e / f12: file is
+	// the path on screen ("" for none), line the cursor's (0 for none).
+	// Nil opens the editor here, as SourceEditor says (editor_project.go).
+	RemoteEditor func(file string, line int) *exec.Cmd
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -962,6 +969,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		loadBranch:    cfg.LoadBranch,
 		keepFileTree:  cfg.KeepFileTree,
 		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare, showFiles: cfg.ShowFiles, loadComparisons: cfg.Comparisons},
+		remoteEditor:  cfg.RemoteEditor,
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
