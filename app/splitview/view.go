@@ -102,7 +102,7 @@ func (m Model) columnView(left []string) string {
 		rows[y] = b.String()
 	}
 	if m.footerRows() > 0 {
-		rows = append(rows, m.footerLine())
+		rows = append(rows, m.withFocusMark(m.footerLine())) // footer_focus.go
 	}
 	return strings.Join(rows, "\n")
 }

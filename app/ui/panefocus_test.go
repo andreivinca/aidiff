@@ -62,3 +62,17 @@ func TestModel_FocusPaneEdge(t *testing.T) {
 	m.file.name = ""
 	assert.Equal(t, paneTree, m.FocusPaneEdge(true).(Model).layout.focus, "with no file loaded the diff takes no focus")
 }
+
+func TestFocusedColumns(t *testing.T) {
+	m := testModel([]string{"a.go", "b.go"}, nil)
+	m.layout.width, m.layout.treeWidth = 100, 30
+	m.layout.focus = paneTree
+	from, to := m.FocusedColumns()
+	assert.Equal(t, [2]int{0, 32}, [2]int{from, to}, "the tree with its two borders")
+	m.layout.focus = paneDiff
+	from, to = m.FocusedColumns()
+	assert.Equal(t, [2]int{32, 100}, [2]int{from, to}, "the diff, the rest")
+	m.layout.treeHidden = true
+	from, to = m.FocusedColumns()
+	assert.Equal(t, [2]int{0, 100}, [2]int{from, to}, "with the tree hidden the diff takes them all")
+}

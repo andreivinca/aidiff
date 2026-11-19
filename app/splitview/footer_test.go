@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -61,7 +62,7 @@ func TestFooter_StatusLineSpansTheWindow(t *testing.T) {
 	assert.Equal(t, 29, hs.term(0).h, "panes end above the status line")
 	lines := strings.Split(hs.m.View(), "\n")
 	assert.Len(t, lines, 30)
-	assert.Equal(t, "STATUS "+strings.Repeat("=", 93), lines[29], "the status line runs under everything")
+	assert.Equal(t, "STATUS "+strings.Repeat("=", 93), ansi.Strip(lines[29]), "the status line runs under everything")
 	assert.NotContains(t, hs.m.View(), "own status", "the review's own status row is left out")
 	assert.True(t, strings.HasPrefix(lines[28], "F"+strings.Repeat("s", 19)+"│body"), "the sidebar ends above it too: %q", lines[28])
 
@@ -69,10 +70,10 @@ func TestFooter_StatusLineSpansTheWindow(t *testing.T) {
 	hs.send(tea.KeyMsg{Type: tea.KeyRight, Alt: true}) // sidebar → review
 	hs.send(tea.KeyMsg{Type: tea.KeyRight, Alt: true}) // review → the pane
 	lines = strings.Split(hs.m.View(), "\n")
-	assert.True(t, strings.HasSuffix(lines[29], " enter:send"), "the focused pane's hints sit on the right: %q", lines[29])
+	assert.True(t, strings.HasSuffix(ansi.Strip(lines[29]), " enter:send"), "the focused pane's hints sit on the right: %q", lines[29])
 	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
 	lines = strings.Split(hs.m.View(), "\n")
-	assert.False(t, strings.HasSuffix(lines[29], " enter:send"), "and leave with its focus")
+	assert.False(t, strings.HasSuffix(ansi.Strip(lines[29]), " enter:send"), "and leave with its focus")
 
 	hs.send(tea.MouseMsg{X: 50, Y: 29, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	assert.Empty(t, hs.m.terms[0].(hintTerm).mice, "a click on the status line goes nowhere")

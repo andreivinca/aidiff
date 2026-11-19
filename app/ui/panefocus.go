@@ -1,6 +1,10 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/umputun/revdiff/app/ui/style"
+)
 
 // aidiff's split moves focus across its panels with one pair of keys. The
 // review's own panes, the tree (or markdown TOC) on the left and the diff on
@@ -55,4 +59,25 @@ func (m Model) switchPane() (Model, bool) {
 func (m Model) paneFocusBusy() bool {
 	return !m.ready || m.annot.annotating || m.search.active || m.reload.pending ||
 		m.inConfirmDiscard || m.overlay.Active() || m.toolbar.open
+}
+
+// FocusedColumns are the columns of the review's focused pane, the tree (or
+// TOC) or the diff, within the review's own width: the split highlights
+// them on the status bar. With the tree hidden the diff takes them all.
+func (m Model) FocusedColumns() (from, to int) {
+	if m.treePaneHidden() {
+		return 0, m.layout.width
+	}
+	split := min(m.layout.treeWidth+2, m.layout.width) // the tree's content and its two borders
+	if m.layout.focus == paneTree {
+		return 0, split
+	}
+	return split, m.layout.width
+}
+
+// FocusMarkColors are the colors the split marks the focused panel with on
+// the status bar: the theme's added lines, their background and their text,
+// as select-graphic-rendition sequences ("" without colors).
+func (m Model) FocusMarkColors() (bg, fg string) {
+	return string(m.resolver.Color(style.ColorKeyAddLineBg)), string(m.resolver.Color(style.ColorKeyAddLineFg))
 }
