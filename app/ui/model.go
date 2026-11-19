@@ -622,6 +622,7 @@ type Model struct {
 	divider     dividerState      // tree/diff divider dragged with the mouse (treedrag.go)
 	identity    machineIdentity   // the host and source named in the status bar (identity.go)
 	toolbar     toolbarState      // the toolbar under the diff header and its menus (toolbar.go)
+	openFile    OpenFileMsg       // a file to select once the file list loads (openfile.go)
 
 	loadBranch   func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
 	keepFileTree bool                   // never the single-file view (ModelConfig.KeepFileTree)
@@ -1104,6 +1105,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleBranchLoaded(msg)
 	case SetCompactMsg:
 		return m.handleSetCompact(msg)
+	case OpenFileMsg:
+		return m.handleOpenFile(msg)
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).

@@ -26,6 +26,17 @@ type Config struct {
 	// palette opens, its filter changes, or the wrapped model handles a
 	// message while it is open, so the list follows the program's state.
 	Commands func() []Command
+	// Files, when set, searches files by name while the palette's query
+	// does not start with '>' (the palette opens with it typed). It receives
+	// the wrapped model and the query and returns the work that answers with
+	// a FilesMsg for that query; nil when there is nothing to search.
+	Files func(inner tea.Model, query string) tea.Cmd
+	// Carry, when set, is asked whenever the wrapped model on screen is
+	// replaced by another one of the same workspace (ReplaceInnerMsg, a
+	// SwitchWorkspaceMsg for the workspace on screen) for the work that
+	// carries over to the new model what the old one showed; its messages
+	// go to the new model.
+	Carry func(old, next tea.Model) tea.Cmd
 	// Keys are the global keys; empty fields take the defaults.
 	Keys Keys
 	// Quit words the quit dialog.

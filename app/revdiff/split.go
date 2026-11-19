@@ -31,6 +31,8 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local, diffs),
+		Files:        paletteFiles,
+		Carry:        carryFile,
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
 		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey},
 		Sidebar:      t3p.Sidebar(),

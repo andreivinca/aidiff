@@ -32,7 +32,7 @@ func TestDefault_allExpectedBindings(t *testing.T) {
 		{"J", ActionScrollDiffDown}, {"K", ActionScrollDiffUp},
 		{"n", ActionNextItem}, {"N", ActionPrevItem}, {"p", ActionPrevItem},
 		{"P", ActionJumpFile},
-		{"]", ActionNextHunk}, {"[", ActionPrevHunk}, {"e", ActionOpenFileInEditor},
+		{"]", ActionNextHunk}, {"[", ActionPrevHunk}, {"e", ActionOpenFileInEditor}, {"f12", ActionOpenFileInEditor},
 		{"tab", ActionTogglePane}, {"h", ActionFocusTree}, {"l", ActionFocusDiff},
 		{"/", ActionSearch},
 		{"a", ActionConfirm}, {"enter", ActionConfirm},

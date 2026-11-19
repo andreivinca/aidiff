@@ -33,7 +33,7 @@ func (m Model) boxInner(maxW int) int {
 func (m Model) paletteView() string {
 	p := m.palette
 	maxW := paletteWidth
-	if p.mode != modeCommands {
+	if p.mode != modeCommands || m.fileMode() {
 		maxW = pickerWidth
 	}
 	inner := m.boxInner(maxW)
@@ -43,20 +43,23 @@ func (m Model) paletteView() string {
 	if p.title != "" {
 		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(fitLine(" "+p.title, inner)))
 	}
-	lines = append(lines, p.inputLine(inner, dim))
+	lines = append(lines, m.inputLine(inner, dim))
 	if p.mode == modePrompt {
 		lines = append(lines, dim.Render(fitLine(" enter send · esc cancel", inner)))
 		return m.styles.box.Render(strings.Join(lines, "\n"))
 	}
 	lines = append(lines, dim.Render(strings.Repeat("─", inner)))
 	if len(p.rows) == 0 {
-		empty := "  no matching commands"
-		if p.mode == modePick {
-			empty = "  no matches"
-		}
-		lines = append(lines, dim.Render(fitLine(empty, inner)))
+		lines = append(lines, dim.Render(fitLine(m.emptyText(), inner)))
+	}
+	note := ""
+	if m.fileMode() && len(p.rows) > 0 {
+		note = p.filesNote
 	}
 	budget := min(paletteMaxRows, max(paletteMinRows, m.height-paletteChrome))
+	if note != "" {
+		budget = max(1, budget-1)
+	}
 	for i, used := p.firstShown(budget), 0; i < len(p.rows) && used < budget; i++ {
 		if p.startsGroup(i) {
 			if used+2 > budget {
@@ -67,6 +70,9 @@ func (m Model) paletteView() string {
 		}
 		lines = append(lines, rowLine(p.rows[i], inner, i == p.sel, dim))
 		used++
+	}
+	if note != "" {
+		lines = append(lines, dim.Render(fitLine("  "+note, inner)))
 	}
 	return m.styles.box.Render(strings.Join(lines, "\n"))
 }
@@ -101,11 +107,19 @@ func groupLine(title string, inner int, dim lipgloss.Style) string {
 }
 
 // inputLine is the query line. A long prompt shows its tail so the cursor
-// stays visible; an empty prompt shows the placeholder.
-func (p palette) inputLine(inner int, dim lipgloss.Style) string {
-	const prefix = " > "
-	if p.query == "" && p.placeholder != "" {
-		return fitLine(prefix+"█"+dim.Render(p.placeholder), inner)
+// stays visible; an empty prompt shows the placeholder. When the palette
+// also searches files, the command list's '>' is part of its query, so the
+// line shows the query alone.
+func (m Model) inputLine(inner int, dim lipgloss.Style) string {
+	p := m.palette
+	prefix := " > "
+	placeholder := p.placeholder
+	if m.cfg.Files != nil && p.mode == modeCommands {
+		prefix = " "
+		placeholder = "file name · > for commands"
+	}
+	if p.query == "" && placeholder != "" {
+		return fitLine(prefix+"█"+dim.Render(placeholder), inner)
 	}
 	q := p.query
 	if room := inner - ansi.StringWidth(prefix) - 1; ansi.StringWidth(q) > room && room > 1 {

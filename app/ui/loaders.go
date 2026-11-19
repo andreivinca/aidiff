@@ -483,6 +483,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	if m.file.name != "" && m.selectedDirectory() == "" {
 		m.tree.SelectByPath(m.file.name)
 	}
+	m.applyOpenFile() // openfile.go
 	m.file.singleFile = m.tree.TotalFiles() == 1 && !m.browsingFolders() && !m.keepFileTree
 	if len(entries) == 0 {
 		m.file.name = ""

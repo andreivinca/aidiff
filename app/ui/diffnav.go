@@ -1097,6 +1097,9 @@ func (m Model) handleTreeAction(action keymap.Action) (tea.Model, tea.Cmd) {
 	// tree-navigation tail (EnsureVisible, loadSelectedIfChanged) does not run —
 	// the tree selection is unchanged.
 	switch action {
+	case keymap.ActionOpenFileInEditor: // aidiff: the file shown, from the tree too
+		cmd := m.openSourceEditor()
+		return m, cmd
 	case keymap.ActionScrollDiffDown:
 		m.scrollDiffViewportLine(wheelStep)
 		return m, nil

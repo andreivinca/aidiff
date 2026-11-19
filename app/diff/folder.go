@@ -27,6 +27,8 @@ type FolderReader struct {
 	watchMu sync.Mutex     // serializes watcher callbacks; never held together with mu
 	watch   func([]string) // receives the directories a listing read; nil when detached
 	watched uint64         // number of the listing whose directories watch last received
+
+	index folderIndex // the whole folder's file list, for SearchFiles (folder_search.go)
 }
 
 // NewFolderReader creates a reader for the folder at root, listing only paths

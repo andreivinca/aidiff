@@ -150,3 +150,37 @@ func cmpOr(s, fallback string) string {
 	}
 	return s
 }
+
+// searchEntriesMax is the most matches projects.searchEntries returns.
+const searchEntriesMax = 200
+
+// SearchFiles finds the files of the whole folder matching query, opened
+// folders or not, best first, with projects.searchEntries: at most limit,
+// and never more than the server's 200. An empty query finds none.
+func (r *FolderReader) SearchFiles(ctx context.Context, query string, limit int) (diff.FoundPaths, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return diff.FoundPaths{}, nil
+	}
+	if limit <= 0 || limit > searchEntriesMax {
+		limit = searchEntriesMax
+	}
+	if len(query) > 256 {
+		query = query[:256]
+	}
+	var res struct {
+		Entries   []projectEntry `json:"entries"`
+		Truncated bool           `json:"truncated"`
+	}
+	params := map[string]any{"cwd": r.cwd, "query": query, "limit": limit, "kind": "file"}
+	if err := r.conn.call(ctx, "projects.searchEntries", params, &res); err != nil {
+		return diff.FoundPaths{}, fmt.Errorf("search files: %w", err)
+	}
+	found := diff.FoundPaths{Truncated: res.Truncated}
+	for _, e := range res.Entries {
+		if e.Kind != "directory" {
+			found.Paths = append(found.Paths, e.Path)
+		}
+	}
+	return found, nil
+}

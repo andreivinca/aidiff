@@ -142,6 +142,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.showPicker(msg)
 	case ShowPromptMsg:
 		return m.showPrompt(msg)
+	case FilesMsg:
+		return m.showFiles(msg), nil
 	case FlashMsg:
 		m.flash = msg.Text
 		return m, nil
@@ -255,6 +257,10 @@ func (m Model) replaceInner(msg ReplaceInnerMsg) (tea.Model, tea.Cmd) {
 	if msg.Retire != nil {
 		msg.Retire(m.inner)
 	}
+	var carry tea.Cmd
+	if m.cfg.Carry != nil {
+		carry = m.cfg.Carry(m.inner, msg.Model)
+	}
 	m.inner = msg.Model
 	m.wsID = nextWorkspaceID() // what the old model still had under way is dropped
 	m.dropLeftCache()
@@ -263,5 +269,5 @@ func (m Model) replaceInner(msg ReplaceInnerMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""
 	initCmd := m.tag(m.inner.Init())
 	model, sizeCmd := m.relayout()
-	return model, tea.Batch(initCmd, sizeCmd)
+	return model, tea.Batch(initCmd, sizeCmd, m.tag(carry))
 }

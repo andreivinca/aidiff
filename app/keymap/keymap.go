@@ -305,6 +305,7 @@ func defaultBindings() map[string]Action {
 		"]":      ActionNextHunk,
 		"[":      ActionPrevHunk,
 		"e":      ActionOpenFileInEditor,
+		"f12":    ActionOpenFileInEditor, // aidiff: as in IDEs
 		"tab":    ActionTogglePane,
 		"h":      ActionFocusTree,
 		"l":      ActionFocusDiff,

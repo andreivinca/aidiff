@@ -961,3 +961,25 @@ func TestModel_EditorFinished_MouseRestoreFollowsToggledState(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenSourceEditor_FromTheTree(t *testing.T) {
+	workDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workDir, "a.go"), []byte("one\n"), 0o600))
+	lines := []diff.DiffLine{{NewNum: 1, Content: "one", ChangeType: diff.ChangeContext}}
+	m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
+	enableSourceEditor(&m, workDir, false)
+	m.tree = testNewFileTree([]string{"a.go"})
+	m.layout.focus = paneTree
+	m.file.name = "a.go"
+	m.file.lines = lines
+	var opened string
+	m.editor = &mocks.ExternalEditorMock{SourceCommandFunc: func(path string, _ int) (*exec.Cmd, error) {
+		opened = path
+		return exec.Command("/bin/true"), nil
+	}}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyF12})
+
+	require.NotNil(t, cmd, "f12 opens the editor with the tree focused too")
+	assert.Equal(t, filepath.Join(workDir, "a.go"), opened)
+}

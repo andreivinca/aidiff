@@ -47,6 +47,8 @@ Our code inside revdiff packages lives in files of its own; the revdiff files on
 - `app/ui/treedrag.go` and `app/ui/sidepane/scroll.go`: dragging the tree/diff divider, wheel-scrolling the tree
 - `app/ui/panefocus.go` (`MovePaneFocus`, `FocusPaneEdge`, both through revdiff's own `togglePane`): the review's tree and diff as stops of the split's focus keys
 - `app/diff/folder.go`: `FolderReader`, the lazy folder source
+- `app/ui/openfile.go` (`OpenFileMsg`, `FindFiles`, `CurrentFile`; hooked into `Update` and `handleFilesLoaded`): the palette's file search and the file kept across a view switch
+- `app/diff/rank.go` (`RankPaths`) and `app/diff/folder_search.go` (`FolderReader.SearchFiles`): ranking files by name, and searching a whole local folder
 - `app/diff/gitmeta.go`: `DetectVCS` accepts a `.git` only when it is real repository metadata
 - `app/diff/watchdirs.go`: which directories to watch in a git repo
 

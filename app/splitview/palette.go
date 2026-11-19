@@ -33,6 +33,11 @@ type palette struct {
 	onText      func(string) tea.Cmd // pick: the free-text row; prompt: enter
 	textLabel   string
 	placeholder string
+
+	// file mode (palette_files.go)
+	files     []row  // the files found for the query, as the latest FilesMsg listed them
+	filesNote string // said under them
+	searching bool   // a search for the query is under way
 }
 
 // row is one line of the palette in any mode.
@@ -43,9 +48,13 @@ type row struct {
 	run    func(Model) (tea.Model, tea.Cmd)
 }
 
-// openPalette shows the command list.
+// openPalette shows the command list, its query starting with
+// commandPrefix when deleting it would search files.
 func (m Model) openPalette() Model {
 	m.palette = palette{open: true}
+	if m.cfg.Files != nil {
+		m.palette.query = commandPrefix
+	}
 	return m.refilterPalette()
 }
 
@@ -98,9 +107,12 @@ func (m Model) paletteRows() []row {
 		return p.pickRows()
 	case modeCommands:
 	}
+	if m.fileMode() {
+		return p.files
+	}
 	var out []row
 	for _, r := range m.commands() {
-		if fuzzyMatch(p.query, r.label) {
+		if fuzzyMatch(p.commandQuery(), r.label) {
 			out = append(out, r)
 		}
 	}
@@ -225,13 +237,11 @@ func (m Model) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := []rune(m.palette.query); len(r) > 0 {
 			m.palette.query = string(r[:len(r)-1])
 		}
-		m.palette.sel = 0
-		m = m.refilterPalette()
+		return m.queryChanged()
 	default:
 		if text, ok := m.palette.typed(msg); ok {
 			m.palette.query += text
-			m.palette.sel = 0
-			m = m.refilterPalette()
+			return m.queryChanged()
 		}
 	}
 	return m, nil

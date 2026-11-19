@@ -92,7 +92,10 @@ Behavior:
 
 ## 7. Command palette
 
-ctrl+p opens it from anywhere.
+ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleting the `>` searches files by name instead; typing `>` again goes back to the commands.
+
+- **Files:** a review of changes lists its changed files (all of them for an empty query); the **Project files** view searches every file of the folder, folders not opened included: `git ls-files` (tracked and untracked, ignored ones left out) for a local repository, every file of a plain folder, `projects.searchEntries` on a T3 server. A file name starting with the query ranks first, then one holding it, then a path holding it, then a path holding its characters in order. Each row is the file name with its folder beside it; Enter shows the file, opening the folders above it in the tree. At most 200 are listed.
+- **Switching views** (the View menu's Changes / Project files, a comparison, a Diff View… row) keeps the file on screen selected in the new view when that view lists it; a file that is not among the changes leaves the first changed file selected.
 
 | Entry | When shown |
 |---|---|
@@ -106,7 +109,7 @@ ctrl+p opens it from anywhere.
 | Quit | always |
 | T3: `<thread title>`, up to 8 recent (`▸` marks the current one), T3: All threads…, under a **Threads** title | connected |
 
-- **Filtering** is a fuzzy subsequence match, so "opt" finds "Open Terminal".
+- **Filtering** the commands is a fuzzy subsequence match on what follows `>`, so ">opt" finds "Open Terminal".
 - **Keys:** ↑/↓ (or ctrl+k / ctrl+n / ctrl+j / tab) move, Enter runs, Esc or ctrl+p closes.
 - Some entries continue inside the palette with a filterable list or a one-line prompt.
 
@@ -138,7 +141,7 @@ These are handled by aidiff before any pane sees them, and they can't be remappe
 
 | Key | Action |
 |---|---|
-| ctrl+p | command palette |
+| ctrl+p | command palette (`>` commands; delete it to search files by name) |
 | ctrl+b | show / hide the side panel: the T3 projects panel while a T3 server is selected, the history panel while `local` is |
 | ctrl+1 … ctrl+9, alt+1 … alt+9 | switch to T3 project 1–9 (while connected) |
 | alt+← / alt+→ | focus the panel to the left / right, stopping at either end; the review's file tree and diff count as two panels. Past the leftmost panel alt+← shows the side panel (T3 projects, or the local history), then the connections panel |

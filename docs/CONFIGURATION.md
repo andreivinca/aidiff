@@ -56,7 +56,7 @@ aidiff handles these keys itself, before revdiff's keymap, so the keybindings fi
 
 | Key | Action |
 |---|---|
-| ctrl+p | command palette |
+| ctrl+p | command palette (`>` commands; delete it to search files by name) |
 | ctrl+b | show / hide the side panel: the T3 projects panel while a T3 server is selected, the history panel while `local` is |
 | ctrl+1 … ctrl+9, alt+1 … alt+9 | switch to T3 project 1–9 (while connected) |
 | alt+← / alt+→ | focus the panel to the left / right, stopping at either end; the review's file tree and diff count as two panels. Past the leftmost panel alt+← shows the side panel (T3 projects, or the local history), then the connections panel |

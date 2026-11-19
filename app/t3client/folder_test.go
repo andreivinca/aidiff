@@ -1,6 +1,8 @@
 package t3client
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -35,6 +37,10 @@ func startFolderFake(t *testing.T, got *capture) *FolderReader {
 				return
 			}
 			send(t, ws, success(req["id"], map[string]any{"entries": entries, "truncated": false}))
+		case "projects.searchEntries":
+			send(t, ws, success(req["id"], map[string]any{"entries": []any{
+				map[string]any{"path": "src/lib/needle.go", "kind": "file"}, map[string]any{"path": "src/needles", "kind": "directory"},
+			}, "truncated": true}))
 		case "projects.readFile":
 			switch p["relativePath"] {
 			case "a.bin":
@@ -117,4 +123,28 @@ func TestFolderReader_ShowsAFileWhole(t *testing.T) {
 	require.Len(t, lines, 2)
 	assert.Equal(t, "one", lines[0].Content)
 	assert.True(t, lines[1].IsPlaceholder, "a file cut short says so")
+}
+
+func TestFolderReader_SearchFiles(t *testing.T) {
+	var got capture
+	r := startFolderFake(t, &got)
+
+	found, err := r.SearchFiles(context.Background(), " needle ", 500)
+	require.NoError(t, err)
+	assert.Equal(t, diff.FoundPaths{Paths: []string{"src/lib/needle.go"}, Truncated: true}, found, "files only, of folders never opened too")
+	p := payloadOf(t, got.last())
+	assert.Equal(t, "projects.searchEntries", got.last()["tag"])
+	assert.Equal(t, "needle", p["query"])
+	assert.InDelta(t, 200, p["limit"], 0, "never more than the server's limit")
+	assert.Equal(t, "file", p["kind"])
+
+	_, err = r.SearchFiles(context.Background(), strings.Repeat("x", 300), 10)
+	require.NoError(t, err)
+	assert.Len(t, payloadOf(t, got.last())["query"], 256, "the query is cut to what the server takes")
+
+	n := got.count()
+	found, err = r.SearchFiles(context.Background(), "  ", 10)
+	require.NoError(t, err)
+	assert.Empty(t, found.Paths)
+	assert.Equal(t, n, got.count(), "an empty query asks nothing")
 }
