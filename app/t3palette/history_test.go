@@ -3,6 +3,7 @@ package t3palette
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/revdiff/app/annotation"
+	"github.com/umputun/revdiff/app/splitview"
 )
 
 // localFake records what the palette asks of this machine's folders.
@@ -155,4 +157,37 @@ func TestHistory_NoFolderRun(t *testing.T) {
 	assert.Equal(t, localKey(dir), msg.Key)
 	h.swap(msg, fakeModel{store: annotation.NewStore()})
 	assert.Equal(t, dir, h.p.LocalDir())
+}
+
+func TestHistory_NewFolderOpensWithATerminal(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "alpha"), filepath.Join(root, "beta")
+	for _, d := range []string{a, b} {
+		require.NoError(t, os.MkdirAll(d, 0o750))
+	}
+	for _, noTerminal := range []bool{false, true} {
+		f := &localFake{}
+		h := newHarness(t, Config{NoChat: true, NoTerminal: noTerminal, Local: f.config(a, b, a)}, nil)
+		sb := h.p.Sidebar()
+		cmd, _ := sb.Select(2)
+		msgs := run(cmd)
+		at := slices.IndexFunc(msgs, func(m tea.Msg) bool { _, ok := m.(splitview.SwitchWorkspaceMsg); return ok })
+		require.GreaterOrEqual(t, at, 0)
+		term := slices.IndexFunc(msgs, func(m tea.Msg) bool { _, ok := m.(splitview.OpenTerminalMsg); return ok })
+		if noTerminal {
+			assert.Negative(t, term, "--no-terminal: no terminal with the folder")
+			continue
+		}
+		assert.Greater(t, term, at, "the terminal opens after the switch, in the folder's workspace")
+
+		var inner tea.Model = fakeModel{store: annotation.NewStore()}
+		inner = h.swap(find[splitview.SwitchWorkspaceMsg](t, msgs), inner)
+		h.settle()
+		cmd, _ = sb.Select(1)
+		back := run(cmd)
+		assert.False(t, slices.ContainsFunc(back, func(m tea.Msg) bool { _, ok := m.(splitview.OpenTerminalMsg); return ok }),
+			"a folder coming back keeps the panes it had")
+		_ = h.swap(find[splitview.SwitchWorkspaceMsg](t, back), inner)
+		h.settle()
+	}
 }

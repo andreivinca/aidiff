@@ -14,6 +14,11 @@ type OpenPaneMsg struct {
 	Start StartFunc
 }
 
+// OpenTerminalMsg opens a terminal pane as Open Terminal does, with
+// Config.Start, in the workspace on screen when the message arrives. Until
+// the window size is known the request waits for it.
+type OpenTerminalMsg struct{}
+
 // Command is a palette entry the embedding program adds through
 // Config.Commands.
 type Command struct {

@@ -30,6 +30,7 @@ type Config struct {
 	// background.
 	SaveHistory func(r *Review, annotations string, files []string)
 	NoChat      bool // never open a chat pane along with a thread
+	NoTerminal  bool // never open a terminal pane along with a local folder
 	NoWatch     bool // no live refresh of the thread on screen
 	// DiffLabel names what a review compares by default (the run's
 	// --t3-source), for a review T3: Diff View… did not change.

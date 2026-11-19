@@ -146,3 +146,14 @@ func TestSplit_CarryOnReplace(t *testing.T) {
 	}
 	assert.Contains(t, got, tea.Msg(carried{"q", "x"}), "the carried work reaches the new model")
 }
+
+func TestSplit_OpenTerminalMsg(t *testing.T) {
+	hs := newHarnessOpts(t, 0, 0, false)
+	hs.m.winW = 0
+	hs.send(OpenTerminalMsg{})
+	assert.Empty(t, hs.started, "no window size yet: the request waits")
+	hs.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	assert.Len(t, hs.started, 1, "it opens with Config.Start once the size is known")
+	hs.send(OpenTerminalMsg{})
+	assert.Len(t, hs.started, 2)
+}

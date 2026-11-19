@@ -172,9 +172,15 @@ func (t *Palette) openLocal(dir string) tea.Cmd {
 			return splitview.FlashMsg{Text: "open " + name + ": " + err.Error()}
 		}
 		ws := &LocalWorkspace{Dir: dir, Watch: r.Watch}
-		return splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
+		show := splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
 			t.switchedLocal(key, ws, sw)
 		}}
+		if t.cfg.NoTerminal {
+			return show
+		}
+		// in order: the terminal opens in the folder's new workspace, there,
+		// as a thread's chat pane comes along with it
+		return tea.Sequence(func() tea.Msg { return show }, func() tea.Msg { return splitview.OpenTerminalMsg{} })()
 	})
 }
 

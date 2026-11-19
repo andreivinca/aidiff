@@ -29,6 +29,7 @@ func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *a
 			saveHistory(h)
 		},
 		NoChat:     opts.NoChat,
+		NoTerminal: opts.NoTerminal,
 		NoWatch:    opts.NoWatch,
 		DiffLabel:  opts.T3Source,
 		Chat:       chatConfig(opts),

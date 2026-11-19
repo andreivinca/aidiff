@@ -518,6 +518,7 @@ func runPTYReview(t *testing.T, env map[string]string, marker, keys string) ptyR
 	cmd.Dir = repo
 	fullEnv := map[string]string{
 		"REVDIFF_TUI_TEST_HELPER":  "1",
+		"REVDIFF_NO_TERMINAL":      "1", // aidiff: the review alone, keys to it, as revdiff runs
 		"REVDIFF_TUI_TEST_CONFIG":  filepath.Join(t.TempDir(), "missing-config"),
 		"REVDIFF_TUI_TEST_HISTORY": filepath.Join(t.TempDir(), "history"),
 		"REVDIFF_TEST_BINARY":      os.Args[0],

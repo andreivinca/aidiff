@@ -22,10 +22,11 @@ aidiff still uses revdiff's config directory.
 ### Terminal, chat, live refresh
 | Flag | Env | In config file | Default | Description |
 |---|---|---|---|---|
-| `--terminal` | `REVDIFF_TERMINAL` | yes | false | open a terminal pane at startup |
+| `--terminal` | `REVDIFF_TERMINAL` | yes | false | open a terminal pane at startup, with a T3 thread too |
 | `--terminal-width` | `REVDIFF_TERMINAL_WIDTH` | yes | 45 | width of the right-hand panes, in percent (10–90) |
 | `--terminal-command` | `REVDIFF_TERMINAL_COMMAND` | yes | `$SHELL` | shell command line run in a terminal pane, by `/bin/sh` here or by the login shell on the T3 session's SSH host |
 | `--no-chat` | `REVDIFF_NO_CHAT` | yes | false | don't open the chat pane automatically when a T3 thread is selected |
+| `--no-terminal` | `REVDIFF_NO_TERMINAL` | yes | false | don't open a terminal pane automatically with a local folder (the run's own, or one opened from the history) |
 | `--no-watch` | `REVDIFF_NO_WATCH` | yes | false | turn off live refresh |
 
 ### T3 Code

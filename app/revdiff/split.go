@@ -27,7 +27,7 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
-		OpenOnStart:  opts.Terminal,
+		OpenOnStart:  startsWithTerminal(opts, t3p.OnScreen() != nil),
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local, diffs),
@@ -39,6 +39,13 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		OuterSidebar: t3p.Connections(),
 		Workspace:    t3p.Workspace(),
 	})
+}
+
+// startsWithTerminal reports whether the split opens a terminal pane at
+// once: with --terminal, and for a local folder's review unless
+// --no-terminal, as a T3 thread opens with its chat pane.
+func startsWithTerminal(opts options, threadOnScreen bool) bool {
+	return opts.Terminal || (!opts.NoTerminal && !threadOnScreen)
 }
 
 // paletteCommands are the palette's own entries: Diff View… while a local

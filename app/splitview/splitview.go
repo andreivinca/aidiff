@@ -132,6 +132,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resize(msg)
 	case OpenPaneMsg:
 		return m.requestPane(msg.Start)
+	case OpenTerminalMsg:
+		return m.requestPane(m.cfg.Start)
 	case termUpdateMsg:
 		return m.handleTermUpdate(msg)
 	case quitRequestMsg:

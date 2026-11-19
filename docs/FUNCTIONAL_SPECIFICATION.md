@@ -82,7 +82,7 @@ Behavior:
 
 ## 6. Terminal pane
 
-- Opened with ctrl+p → **Open Terminal**, or at startup with `--terminal`. Several can be open at once. A pane closes when its shell exits.
+- Opened with ctrl+p → **Open Terminal**. A local folder opens with one, as a T3 thread opens with its chat: the run's own review at startup, and a folder of the history panel the first time it is opened in a workspace (going back to it keeps the panes it had); `--no-terminal` turns this off. `--terminal` opens one at startup with a T3 thread too. Several can be open at once. A pane closes when its shell exits.
 - It runs `--terminal-command` (default `$SHELL`). The command is a shell command line, run by `/bin/sh`, so shell quoting works.
 - **Directory:** the reviewed directory. In T3 mode it is the thread's directory, or the project's root. A T3 server reached by URL on another machine has folders that are not this machine's, so the pane starts in aidiff's own directory.
 - **Remote:** when the T3 review comes over SSH, the pane opens `ssh -t <host>` on the T3 session's own SSH connection, without setting up the host's port forwards a second time, and runs `--terminal-command` there (default: a login shell) in the thread's directory. ssh can prompt inside the pane.

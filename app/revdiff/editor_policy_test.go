@@ -29,3 +29,10 @@ func TestEditorPolicy(t *testing.T) {
 	local := sourceSetup{vcsSetup: vcsSetup{workDir: "/repo"}}
 	assert.Equal(t, sourceEditorPolicy(options{}, "/repo"), editorPolicy(options{}, local), "a local review keeps upstream's")
 }
+
+func TestStartsWithTerminal(t *testing.T) {
+	assert.True(t, startsWithTerminal(options{}, false), "a local folder opens with a terminal")
+	assert.False(t, startsWithTerminal(options{}, true), "a thread opens with its chat instead")
+	assert.False(t, startsWithTerminal(options{NoTerminal: true}, false), "--no-terminal")
+	assert.True(t, startsWithTerminal(options{Terminal: true}, true), "--terminal always")
+}

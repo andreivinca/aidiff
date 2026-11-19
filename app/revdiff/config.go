@@ -48,6 +48,7 @@ type options struct {
 	NoWatch               bool     `long:"no-watch" ini-name:"no-watch" env:"REVDIFF_NO_WATCH" description:"do not refresh when files change"`
 	Terminal              bool     `long:"terminal" ini-name:"terminal" env:"REVDIFF_TERMINAL" description:"open a terminal pane on the right"`
 	NoChat                bool     `long:"no-chat" ini-name:"no-chat" env:"REVDIFF_NO_CHAT" description:"do not open the T3 Code chat pane with a thread"`
+	NoTerminal            bool     `long:"no-terminal" ini-name:"no-terminal" env:"REVDIFF_NO_TERMINAL" description:"do not open a terminal pane with a local folder"`
 	TerminalWidth         int      `long:"terminal-width" ini-name:"terminal-width" env:"REVDIFF_TERMINAL_WIDTH" default:"45" description:"terminal pane width in percent"`
 	TerminalCommand       string   `long:"terminal-command" ini-name:"terminal-command" env:"REVDIFF_TERMINAL_COMMAND" description:"command to run in the terminal pane (default: $SHELL)"`
 	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"catppuccin-macchiato" description:"chroma style for syntax highlighting"`
