@@ -26,8 +26,26 @@ func (t *thread) entry(it t3client.TurnItem) chat.Entry {
 		return chat.Questions{ID: it.RequestID, Questions: questions(it.Questions), Pending: t.awaits(it)}
 	case "error":
 		return chat.Failure{Text: it.FailureText()}
+	case "secret_request":
+		return secretRequest(it)
 	}
 	return step(it)
+}
+
+// secretRequest is a secret_request item as the pane shows it: pending
+// while T3 still waits for the secret.
+func secretRequest(it t3client.TurnItem) chat.SecretRequest {
+	label := it.Label
+	if label == "" && it.Title != nil {
+		label = *it.Title
+	}
+	return chat.SecretRequest{ID: it.ID, Label: label, Reason: it.Reason, URL: it.URL, Placeholder: it.Placeholder,
+		Status: it.SecretStatus, Pending: secretPending(it)}
+}
+
+// secretPending reports whether T3 still waits for the secret of it.
+func secretPending(it t3client.TurnItem) bool {
+	return it.Type == "secret_request" && !it.Done() && (it.SecretStatus == "" || it.SecretStatus == "pending")
 }
 
 func todoList(it t3client.TurnItem) chat.TodoList {

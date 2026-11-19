@@ -23,6 +23,7 @@ type call struct {
 	msg      Outgoing
 	decision Decision
 	answers  map[string]Answer
+	secret   string // what ProvideSecret got
 }
 
 // fakeBackend shows a pane a conversation, lets a test show it more, and
@@ -96,6 +97,14 @@ func (f *fakeBackend) Answer(_ context.Context, promptID string, answers map[str
 
 func (f *fakeBackend) Dismiss(_ context.Context, promptID string) error {
 	return f.record(call{kind: "dismiss", id: promptID})
+}
+
+func (f *fakeBackend) ProvideSecret(_ context.Context, requestID, secret string) error {
+	return f.record(call{kind: "secret", id: requestID, secret: secret})
+}
+
+func (f *fakeBackend) DeclineSecret(_ context.Context, requestID string) error {
+	return f.record(call{kind: "decline secret", id: requestID})
 }
 
 func (f *fakeBackend) Commands() []Command {

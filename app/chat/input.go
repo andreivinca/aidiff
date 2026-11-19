@@ -35,6 +35,9 @@ func (p *Pane) SendText(s string) {
 	}
 	p.note = ""
 	p.gen++
+	if p.secretTextLocked(s) { // aidiff: a secret the agent asks for (secret.go)
+		return
+	}
 	if s == "\x1b[Z" && p.moveQuestionLocked(-1) {
 		return
 	}
@@ -204,6 +207,9 @@ func (p *Pane) SendModifiedKey(k uv.KeyPressEvent) bool {
 	if k.Mod == 0 || p.stop.turn != "" || p.activity.open {
 		return false
 	}
+	if p.secretLocked() != nil {
+		return true // no line breaks or word edits in a secret
+	}
 	if k.Mod&(uv.ModCtrl|uv.ModShift) == uv.ModCtrl|uv.ModShift && unicode.ToLower(k.Code) == 'c' {
 		p.copyKeyLocked()
 		return true
@@ -240,6 +246,7 @@ func (p *Pane) SendKey(k uv.KeyPressEvent) {
 		p.stopKeyLocked(k)
 	case p.activity.open:
 		p.activityKeyLocked(k)
+	case p.secretKeyLocked(k):
 	default:
 		p.composerKeyLocked(k)
 	}
@@ -322,6 +329,9 @@ func (p *Pane) Paste(s string) {
 	p.gen++
 	p.activity.open = false
 	p.stop = stopConfirmation{}
+	if p.secretPasteLocked(s) {
+		return
+	}
 	if path := strings.TrimSpace(s); !strings.Contains(path, "\n") && p.files.IsImage(path) {
 		p.attachFileLocked(path, s)
 		return

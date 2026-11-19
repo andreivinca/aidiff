@@ -85,6 +85,8 @@ func (p *Pane) entryRowsLocked(e Entry, w int) []string {
 		return todoRows(e, w, st)
 	case Approval:
 		return approvalRows(e, w, st)
+	case SecretRequest:
+		return secretRows(e, w, st) // secret.go
 	case Questions:
 		var answered map[string]Answer
 		if e.ID == p.answersFor {

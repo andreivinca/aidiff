@@ -132,3 +132,27 @@ func (b *Backend) Dismiss(ctx context.Context, promptID string) error {
 func (b *Backend) CheckImage(name string, size int64) error {
 	return t3client.ValidateImageSize(name, size) //nolint:wrapcheck // T3's own words say why
 }
+
+// secretServer is a server that answers the agent's secret requests
+// (t3client.Conn.AnswerSecret).
+type secretServer interface {
+	AnswerSecret(ctx context.Context, threadID, itemID, secret string, decline bool) error
+}
+
+// ProvideSecret hands secret to T3 for the secret request requestID.
+func (b *Backend) ProvideSecret(ctx context.Context, requestID, secret string) error {
+	s, ok := b.srv.(secretServer)
+	if !ok {
+		return errors.New("this server takes no secrets")
+	}
+	return s.AnswerSecret(ctx, b.threadID, requestID, secret, false) //nolint:wrapcheck // the pane says what failed
+}
+
+// DeclineSecret turns the secret request requestID down.
+func (b *Backend) DeclineSecret(ctx context.Context, requestID string) error {
+	s, ok := b.srv.(secretServer)
+	if !ok {
+		return errors.New("this server takes no secrets")
+	}
+	return s.AnswerSecret(ctx, b.threadID, requestID, "", true) //nolint:wrapcheck // the pane says what failed
+}

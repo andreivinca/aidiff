@@ -60,6 +60,15 @@ func (f *fakeServer) Dispatch(_ context.Context, cmd t3client.Command) error {
 	return f.fail
 }
 
+// AnswerSecret records the answer as a command of its own, with the
+// secrets.answerRequest payload, on the commands channel.
+func (f *fakeServer) AnswerSecret(_ context.Context, threadID, itemID, secret string, decline bool) error {
+	f.cmds <- t3client.Command{"type": "secrets.answerRequest", "threadId": threadID, "turnItemId": itemID, "secret": secret, "decline": decline}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail
+}
+
 func (f *fakeServer) FetchCatalog(context.Context) (t3client.Catalog, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

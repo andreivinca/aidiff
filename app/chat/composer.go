@@ -160,6 +160,8 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 		return Hint{"↑↓", "select"}, []Hint{{"enter", "details"}, {"tab", filter}, {"esc", "back"}}
 	case p.busy:
 		primary = Hint{"", "sending…"}
+	case p.secretLocked() != nil: // secret.go
+		return Hint{"enter", "send to T3 Code"}, []Hint{{"esc", "decline"}, {"ctrl+u", "clear"}}
 	case p.reading > 0:
 		primary = Hint{"", "pasting…"}
 	case popup:
@@ -214,6 +216,9 @@ func inputWidth(w int) int {
 
 // inputRowsLocked wraps the draft and keeps the cursor's row in view.
 func (p *Pane) inputRowsLocked(w, limit int, showCursor bool) []string {
+	if row, ok := p.secretRowLocked(w, showCursor); ok {
+		return []string{row}
+	}
 	c := p.composer
 	if p.input.empty() {
 		cursor := ""

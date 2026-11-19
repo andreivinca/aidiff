@@ -15,6 +15,9 @@ type Conversation struct {
 	Delivered []string
 	Activity  []Activity // the agent's background work, most recent first
 	Settings  Settings
+	// Secret is the secret the agent waits for, nil when it waits for none;
+	// the composer takes it instead of a message (secret.go).
+	Secret *SecretRequest
 }
 
 // AgentState is what the agent is doing, in a few words. A backend may
@@ -168,6 +171,9 @@ func (Failure) entry() {
 }
 
 func (Step) entry() {
+}
+
+func (SecretRequest) entry() {
 }
 
 // Queued is a message waiting for its turn.

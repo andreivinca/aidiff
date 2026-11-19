@@ -21,11 +21,35 @@ func (b *Backend) conversationLocked() chat.Conversation {
 		Delivered: t.delivered(),
 		Activity:  t.activity(),
 		Settings:  b.settingsLocked(),
+		Secret:    t.pendingSecret(),
 	}
+}
+
+// pendingSecret is the newest secret request T3 still waits for, among every
+// item of the thread, nil when there is none.
+func (t *thread) pendingSecret() *chat.SecretRequest {
+	var latest *t3client.TurnItem
+	for id := range t.allItems {
+		it := t.allItems[id]
+		if !secretPending(it) || (it.RunID != nil && t.runs[*it.RunID].Status == "rolled_back") {
+			continue
+		}
+		if latest == nil || it.Ordinal > latest.Ordinal {
+			latest = &it
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	r := secretRequest(*latest)
+	return &r
 }
 
 // state derives what the agent does from its runs and open requests.
 func (t *thread) state() chat.AgentState {
+	if t.pendingSecret() != nil {
+		return chat.AgentWaiting // the agent's tool call blocks until the user answers
+	}
 	for _, r := range t.requests {
 		if r.Pending() {
 			return chat.AgentWaiting

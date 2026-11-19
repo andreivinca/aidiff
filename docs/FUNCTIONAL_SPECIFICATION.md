@@ -130,6 +130,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
   - queued messages
   - slash commands for approvals, model, effort and mode
+  - the agent's secret requests (a sudo password, a token): typed masked in the composer and handed to T3 Code, never into the chat
   - image attachments
   - an activity view
 - **Stop an agent:** Esc or `/stop` asks first, with **Keep working** selected. Typing letters cancels the question and never stops the agent.

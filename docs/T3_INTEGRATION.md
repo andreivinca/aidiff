@@ -80,6 +80,7 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 | `orchestration.dispatchCommand` | Every thread command (below), each with a UUIDv4 `commandId` |
 | `server.getConfig` | Provider catalog: models, capabilities, slash commands, default model |
 | `assets.persistChatAttachments` | Image uploads |
+| `secrets.answerRequest` | Answers the agent's secret request (a `secret_request` turn item, from `request_secret`): `{threadId, turnItemId, answer: {type: save, secret} \| {type: decline}}`. T3 stores the secret for the agent; it never enters the thread. |
 | `filesystem.browse`, `projects.mutate` | Browse server folders and create projects |
 
 Commands sent through `dispatchCommand`:
@@ -145,13 +146,15 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
  > _                                         enter queue · / commands
 ```
 
+**Secret requests.** When the agent asks for a secret with `request_secret` (a sudo password, a token), T3 adds a `secret_request` item that waits for the user. The transcript shows `🔑 the agent asks for the <label>` with its reason, and the composer turns into a masked field, `🔑 <label>: ••••`, until the request ends: Enter hands the secret to `secrets.answerRequest`, Esc declines, ctrl+u clears what was typed, Backspace deletes a character, and pasting adds to it. What is typed is never shown, kept in the input history or sent as a message, and is forgotten once sent. An empty Enter only says what to do. Once the request is answered, declined or times out (`cancelled`), its line says so and the composer takes messages again.
+
 **Queued messages** above the composer are drawn in the muted grey of their `Queued` row, on the panel's background in vertical stripes a cell wide (the panel's shade and one barely lighter), with a blank row between two of them, so they read apart from the sent messages in the transcript.
 
 **Sticky message.** Once one of your messages scrolls above the top of the transcript, it stays pinned there, over the rows below it, while you read the turn that answers it; the next message of yours takes its place once it scrolls up too. It shows its text lines without the panel's padding, with a blank row under it. A message of more than four lines is compact while its end is out of view: its first three lines and a `…` row. Scrolling back up to it brings its end in under the `…`, one line per row as its lines really come into view, until the gap closes and the whole message shows; then it is back in its place. A pane too short to keep three transcript rows below it shows none.
 
 ### State and status
 - **Thread state** (backend):
-  - `waiting for you` when there is a pending approval or question, or the latest run is waiting
+  - `waiting for you` when there is a pending approval, question or secret request, or the latest run is waiting
   - `running` when the latest run is active
   - `idle` otherwise
 - **Status line** (pane): `Working` while a run is active, or while subagents or processes are still alive, followed by counts. Connection problems (`connecting…`, `disconnected…`, `not connected`) take precedence.

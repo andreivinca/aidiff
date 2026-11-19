@@ -122,6 +122,13 @@ type TurnItem struct {
 	Questions []Question      `json:"questions"`
 	Steps     []TodoStep      `json:"steps"`
 	Failure   json.RawMessage `json:"failure"` // error
+
+	// secret_request: what the agent asks the user for (see AnswerSecret)
+	Label        string `json:"label"`
+	URL          string `json:"url"`
+	Placeholder  string `json:"placeholder"`
+	Delivery     string `json:"delivery"`     // file: saved for shell use
+	SecretStatus string `json:"secretStatus"` // pending, saved, declined or cancelled
 }
 
 // Done reports whether the item reached a final state.

@@ -65,6 +65,7 @@ type Pane struct {
 	pending        []queuedMessage // messages sent from here the backend has not taken over
 	activity       activityView
 	stop           stopConfirmation
+	secret         secretInput // what is typed of a secret the agent asks for (secret.go)
 	input          editor
 	inputTop       int               // the draft's first row shown in the input box; it moves only to keep the cursor in view
 	sug            int               // the selected row of the slash-command popup, kept within it where shown
