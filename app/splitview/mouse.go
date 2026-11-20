@@ -7,7 +7,7 @@ import tea "github.com/charmbracelet/bubbletea"
 const dragMain = -1
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.palette.open || m.quitDialog {
+	if m.modal() {
 		return m, nil // modal: swallow
 	}
 	return m.routeMouse(msg)

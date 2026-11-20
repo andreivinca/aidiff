@@ -35,6 +35,8 @@ type helpOverlay struct {
 	// and paging must step by exactly this, or every page boundary skips the
 	// row the hint displaced.
 	viewport int
+	query    string // the search row's text (help_search.go)
+	typing   bool   // keys go to the search row
 }
 
 // sectionBlock is one laid-out help section: a header line followed by
@@ -46,6 +48,7 @@ type sectionBlock struct {
 func (h *helpOverlay) open(spec HelpSpec) {
 	h.spec = spec
 	h.offset = 0
+	h.query, h.typing = "", false
 }
 
 func (h *helpOverlay) render(ctx RenderCtx, _ *Manager) string {
@@ -53,6 +56,9 @@ func (h *helpOverlay) render(ctx RenderCtx, _ *Manager) string {
 
 	innerWidth := max(ctx.Width-helpWidthMargin-helpPopupBorderPad, 1)
 	content := h.layout(h.buildBlocks(ctx.Resolver), innerWidth)
+	if len(content) == 0 {
+		content = []string{"  " + string(ctx.Resolver.Color(style.ColorKeyMutedFg)) + "no key matches" + string(style.ResetFg)}
+	}
 
 	// the hint costs a body row, so it is only affordable when there are at
 	// least two: on a terminal down to the box's 5-row floor the bindings
@@ -74,10 +80,14 @@ func (h *helpOverlay) render(ctx RenderCtx, _ *Manager) string {
 
 	// pad to the width of the whole body, not of the visible slice, so the box
 	// keeps one size while scrolling instead of resizing under the cursor.
-	bodyWidth := min(h.widest(content), innerWidth)
+	// the full spec's width, so the box keeps its size while the query narrows it
+	bodyWidth := min(max(h.widest(content), h.fullWidth(ctx.Resolver, innerWidth)), innerWidth)
 
 	end := min(h.offset+viewportHeight, len(content))
-	visible := make([]string, 0, viewportHeight+1)
+	visible := make([]string, 0, viewportHeight+helpSearchRows+1)
+	if searchFits(ctx.Height) {
+		visible = append(visible, h.searchLine(bodyWidth, ctx.Resolver), h.padLine("", bodyWidth))
+	}
 	for _, row := range content[h.offset:end] {
 		visible = append(visible, h.padLine(row, bodyWidth))
 	}
@@ -96,7 +106,7 @@ func (h *helpOverlay) buildBlocks(resolver Resolver) []sectionBlock {
 	reset, headerColor, keyColor := h.colors(resolver)
 
 	blocks := make([]sectionBlock, 0, len(h.spec.Sections))
-	for _, sec := range h.spec.Sections {
+	for _, sec := range h.sections() {
 		var block sectionBlock
 		block.lines = append(block.lines, headerColor+sec.Title+reset)
 
@@ -189,7 +199,23 @@ func (h *helpOverlay) twoColumnRows(blocks []sectionBlock) []string {
 
 // usableHeight returns how many body rows fit inside the popup box.
 func (h *helpOverlay) usableHeight(termHeight int) int {
-	return max(termHeight-helpHeightMargin-helpPopupChromeLines, 1)
+	rows := termHeight - helpHeightMargin - helpPopupChromeLines
+	if searchFits(termHeight) {
+		rows -= helpSearchRows
+	}
+	return max(rows, 1)
+}
+
+// fullWidth is the width of the unfiltered bindings, laid out for innerWidth.
+func (h *helpOverlay) fullWidth(resolver Resolver, innerWidth int) int {
+	if h.query == "" {
+		return 0 // the content is the full spec already
+	}
+	q := h.query
+	h.query = ""
+	w := h.widest(h.layout(h.buildBlocks(resolver), innerWidth))
+	h.query = q
+	return w
 }
 
 // pageSize returns the scroll step for a full page: the last rendered viewport
@@ -238,6 +264,17 @@ func (h *helpOverlay) padLine(line string, width int) string {
 // handleKey dispatches overlay keys: navigation updates offset, dismissal keys
 // close the overlay. offset is clamped on the next render.
 func (h *helpOverlay) handleKey(msg tea.KeyMsg, action keymap.Action) Outcome {
+	if h.typing {
+		return h.handleSearchKey(msg)
+	}
+	if msg.Type == tea.KeyRunes && !msg.Alt && string(msg.Runes) == "/" {
+		h.typing = true
+		return Outcome{Kind: OutcomeNone}
+	}
+	if h.query != "" && (action == keymap.ActionDismiss || msg.Type == tea.KeyEsc) {
+		h.query, h.offset = "", 0 // esc clears the search first, then closes
+		return Outcome{Kind: OutcomeNone}
+	}
 	if action == keymap.ActionHelp || action == keymap.ActionDismiss || msg.Type == tea.KeyEsc {
 		return Outcome{Kind: OutcomeClosed}
 	}

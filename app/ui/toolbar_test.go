@@ -178,7 +178,6 @@ func TestToolbar_MouseOpensPicksAndCloses(t *testing.T) {
 	assert.True(t, m.modes.wrap)
 	assert.True(t, m.toolbar.open)
 
-
 	before := m.nav.diffCursor
 	m, _ = click(t, m, 110, 20) // outside: closes, and goes no further
 	assert.False(t, m.toolbar.open)

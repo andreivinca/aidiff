@@ -1,8 +1,11 @@
 package main
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/revert"
+	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/ui"
 )
 
@@ -16,4 +19,11 @@ func (s sourceSetup) reverter(opts options) ui.Reverter {
 		return nil
 	}
 	return revert.Git{Root: s.gitRoot, Ref: opts.ref()}
+}
+
+// confirmPopup asks in the split's confirmation popup.
+func confirmPopup(title, detail, button string, yes tea.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		return splitview.ConfirmMsg{Title: title, Detail: detail, Confirm: button, Yes: yes}
+	}
 }

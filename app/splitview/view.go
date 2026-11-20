@@ -32,6 +32,8 @@ func (m Model) View() string {
 	switch {
 	case m.quitDialog:
 		view = overlayCenter(view, m.quitDialogView(), m.winW, m.height)
+	case m.confirm != nil:
+		view = overlayCenter(view, m.confirmView(), m.winW, m.height)
 	case m.flash != "":
 		view = replaceLastLine(view, " "+m.flash+" ", m.winW)
 	}

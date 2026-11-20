@@ -10,7 +10,8 @@ import (
 )
 
 // aidiff reverts changes from the review: x the change block under the
-// cursor, X the whole file on screen, each after a y confirmation. The work
+// cursor, X the whole file on screen, each after a confirmation: a popup
+// (ModelConfig.Confirm), else a y on the status bar. The work
 // is the Reverter's (app/revert); the review only says what to revert and
 // reloads quietly afterwards, keeping its annotations.
 
@@ -23,9 +24,15 @@ type Reverter interface {
 	RevertFile(file diff.FileEntry) error
 }
 
+// Confirm asks the user to confirm in a popup: title is the question, detail
+// what confirming does, button the confirm button's label; yes runs on
+// confirm. It returns the command that opens the popup.
+type Confirm func(title, detail, button string, yes tea.Cmd) tea.Cmd
+
 // revertState is a revert waiting for its confirmation.
 type revertState struct {
 	reverter Reverter // nil: this review cannot revert
+	confirm  Confirm  // the popup asking; nil asks on the status bar
 	pending  bool
 	whole    bool // the whole file, else lines[start:end+1]
 	file     diff.FileEntry
@@ -54,44 +61,44 @@ func (m Model) handleRevert(whole bool) (tea.Model, tea.Cmd) {
 	}
 	file := diff.FileEntry{Path: m.file.name, Status: m.tree.FileStatus(m.file.name), OldPath: m.tree.OldPath(m.file.name)}
 	name := path.Base(file.Path)
-	m.revert.pending, m.revert.whole, m.revert.file = true, whole, file
+	r := revertState{reverter: m.revert.reverter, confirm: m.revert.confirm, whole: whole, file: file}
+	var title, detail, button string
 	if whole {
-		action := "Revert " + name
+		title, detail, button = "Revert "+name+"?", "Puts "+file.Path+" back as the review's base has it. Its changes are lost.", "Revert"
 		switch file.Status {
 		case diff.FileAdded, diff.FileUntracked:
-			action = "Delete " + name + " (new file)"
+			title, detail, button = "Delete "+name+"?", file.Path+" is a new file: reverting it deletes it.", "Delete"
 		case diff.FileRenamed:
-			action = "Revert " + name + " (undo the rename)"
+			detail = "Undoes the rename: " + file.OldPath + " comes back and " + file.Path + " is deleted. Its changes are lost."
 		default:
 		}
-		m.revert.hint = action + "? y to confirm, any other key to cancel"
-		return m, nil
+	} else {
+		start, end, ok := m.hunkBounds(m.nav.diffCursor)
+		if !ok {
+			m.revert.hint = "Put the cursor on a change to revert it (X reverts the whole file)"
+			return m, nil
+		}
+		r.lines, r.start, r.end = m.file.lines, start, end
+		n := end - start + 1
+		title, button = "Revert this change?", "Revert"
+		detail = fmt.Sprintf("Undoes the %d changed line%s under the cursor in %s.", n, plural(n), file.Path)
 	}
-	start, end, ok := m.hunkBounds(m.nav.diffCursor)
-	if !ok {
-		m.revert.pending = false
-		m.revert.hint = "Put the cursor on a change to revert it (X reverts the whole file)"
-		return m, nil
+	if r.confirm != nil {
+		return m, r.confirm(title, detail, button, r.run())
 	}
-	m.revert.lines, m.revert.start, m.revert.end = m.file.lines, start, end
-	m.revert.hint = fmt.Sprintf("Revert this change in %s (%d line%s)? y to confirm, any other key to cancel",
-		name, end-start+1, plural(end-start+1))
+	r.pending = true
+	r.hint = title + " y to confirm, any other key to cancel"
+	m.revert = r
 	return m, nil
 }
 
-// handlePendingRevert runs the revert on y and drops it on any other key.
-func (m Model) handlePendingRevert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	r := m.revert
-	m.revert = revertState{reverter: r.reverter}
-	if msg.String() != "y" {
-		m.revert.hint = "Revert cancelled"
-		return m, nil
-	}
+// run is the command doing the revert r describes.
+func (r revertState) run() tea.Cmd {
 	what := "the change in " + path.Base(r.file.Path)
 	if r.whole {
 		what = path.Base(r.file.Path)
 	}
-	return m, func() tea.Msg {
+	return func() tea.Msg {
 		var err error
 		if r.whole {
 			err = r.reverter.RevertFile(r.file)
@@ -100,6 +107,17 @@ func (m Model) handlePendingRevert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return revertedMsg{what: what, err: err}
 	}
+}
+
+// handlePendingRevert runs the revert on y and drops it on any other key.
+func (m Model) handlePendingRevert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	r := m.revert
+	m.revert = revertState{reverter: r.reverter, confirm: r.confirm}
+	if msg.String() != "y" {
+		m.revert.hint = "Revert cancelled"
+		return m, nil
+	}
+	return m, r.run()
 }
 
 // handleReverted reports the revert and reloads the review to show it.

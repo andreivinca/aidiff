@@ -306,8 +306,8 @@ func TestHelpOverlay_ScrollKeys(t *testing.T) {
 		want   int
 	}{
 		{"down", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}, keymap.ActionDown, 1},
-		{"page down", tea.KeyMsg{Type: tea.KeyPgDown}, keymap.ActionPageDown, 11},
-		{"half page down", tea.KeyMsg{Type: tea.KeyCtrlD}, keymap.ActionHalfPageDown, 5},
+		{"page down", tea.KeyMsg{Type: tea.KeyPgDown}, keymap.ActionPageDown, 9},
+		{"half page down", tea.KeyMsg{Type: tea.KeyCtrlD}, keymap.ActionHalfPageDown, 4},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -319,14 +319,14 @@ func TestHelpOverlay_ScrollKeys(t *testing.T) {
 
 	mgr.help.offset = 0
 	mgr.HandleKey(tea.KeyMsg{Type: tea.KeyEnd}, keymap.ActionEnd)
-	assert.Contains(t, mgr.help.render(ctx, mgr), "Section7", "End must reach the last section")
+	assert.Contains(t, mgr.help.render(ctx, mgr), "k78", "End must reach the last binding")
 
 	mgr.HandleKey(tea.KeyMsg{Type: tea.KeyHome}, keymap.ActionHome)
 	assert.Equal(t, 0, mgr.help.offset)
 	assert.Contains(t, mgr.help.render(ctx, mgr), "Section0", "Home must return to the top")
 
 	mgr.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}}, "")
-	assert.Contains(t, mgr.help.render(ctx, mgr), "Section7", "G must reach the last section")
+	assert.Contains(t, mgr.help.render(ctx, mgr), "k78", "G must reach the last binding")
 
 	mgr.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}, "")
 	assert.Equal(t, 0, mgr.help.offset)
@@ -357,7 +357,7 @@ func TestHelpOverlay_ScrollWheel(t *testing.T) {
 	assert.Equal(t, 0, mgr.help.offset)
 
 	mgr.HandleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress, Shift: true})
-	assert.Equal(t, 5, mgr.help.offset, "shift+wheel moves by half a page")
+	assert.Equal(t, 4, mgr.help.offset, "shift+wheel moves by half a page")
 
 	mgr.help.offset = 4
 	mgr.HandleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionRelease})

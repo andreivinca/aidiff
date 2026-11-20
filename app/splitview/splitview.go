@@ -34,10 +34,11 @@ type Model struct {
 	focus int // focusOuter, focusSidebar, focusDiff, or an index into terms
 
 	palette       palette
-	quitDialog    bool   // the quit dialog is open
-	quitSel       int    // selected quit-dialog button: quitButton or cancelButton
-	quitConfirmed bool   // nothing stands in the way of quitting; QuitGuard lets tea.QuitMsg through
-	flash         string // one-line message shown until the next key
+	quitDialog    bool          // the quit dialog is open
+	quitSel       int           // selected quit-dialog button: quitButton or cancelButton
+	quitConfirmed bool          // nothing stands in the way of quitting; QuitGuard lets tea.QuitMsg through
+	confirm       *confirmState // the open confirmation popup (ConfirmMsg), nil when none
+	flash         string        // one-line message shown until the next key
 
 	winW          int       // the window's width
 	width, height int       // width: the columns right of the sidebar, for the wrapped model and the panes
@@ -144,6 +145,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.showPicker(msg)
 	case ShowPromptMsg:
 		return m.showPrompt(msg)
+	case ConfirmMsg:
+		return m.showConfirm(msg)
 	case FilesMsg:
 		return m.showFiles(msg), nil
 	case FlashMsg:
@@ -192,6 +195,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""
 	if m.quitDialog {
 		return m.handleQuitDialogKey(msg)
+	}
+	if m.confirm != nil {
+		return m.handleConfirmKey(msg)
 	}
 	if m.palette.open {
 		return m.handlePaletteKey(msg)

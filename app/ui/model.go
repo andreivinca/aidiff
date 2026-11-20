@@ -875,6 +875,8 @@ type ModelConfig struct {
 	// file on screen), in a local git review of the working tree; nil
 	// leaves them unavailable (revert.go).
 	Reverter Reverter
+	// Confirm opens the popup x and X ask in; nil asks on the status bar.
+	Confirm Confirm
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -1036,7 +1038,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		},
 		reviewed:             reviewedState{cache: make(map[string]string), pending: make(map[string]uint64)},
 		reload:               reloadState{applicable: cfg.ReloadApplicable},
-		revert:               revertState{reverter: cfg.Reverter},
+		revert:               revertState{reverter: cfg.Reverter, confirm: cfg.Confirm},
 		compact:              compactState{applicable: cfg.CompactApplicable},
 		annot:                annotationState{rowCache: make(map[annotCacheKey][]string)},
 		renderCache:          &diffRenderCache{},

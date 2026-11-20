@@ -116,10 +116,10 @@ func legacyKey(k uv.KeyPressEvent) (tea.KeyMsg, bool) {
 // handleModifiedKey routes a decoded modified key: to the focused pane when
 // it takes modified keys, otherwise through the split as its legacy key.
 func (m Model) handleModifiedKey(k uv.KeyPressEvent, raw tea.Msg) (tea.Model, tea.Cmd) {
-	if n, ok := numberKey(k); ok && m.sidebarAvailable() && !m.palette.open && !m.quitDialog {
+	if n, ok := numberKey(k); ok && m.sidebarAvailable() && !m.modal() {
 		return m.selectNumber(n)
 	}
-	if m.focus >= 0 && !m.palette.open && !m.quitDialog {
+	if m.focus >= 0 && !m.modal() {
 		if r, ok := m.terms[m.focus].(modifiedKeyReceiver); ok && r.SendModifiedKey(k) {
 			return m, nil
 		}

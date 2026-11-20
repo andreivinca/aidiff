@@ -60,7 +60,7 @@ func TestRevert_ChangeAfterConfirm(t *testing.T) {
 	r := &fakeReverter{}
 	m, cmd := pressKey(t, revertModel(r, 2), "x")
 	assert.Nil(t, cmd)
-	assert.Contains(t, m.transientHint(), "Revert this change in a.go (2 lines)?")
+	assert.Contains(t, m.transientHint(), "Revert this change? y to confirm")
 	assert.Nil(t, r.change, "nothing before y")
 
 	m, cmd = pressKey(t, m, "y")
@@ -115,4 +115,32 @@ func TestRevert_FailureIsShown(t *testing.T) {
 	out, cmd := m.handleReverted(revertedMsg{what: "a.go", err: errors.New("boom")})
 	assert.Nil(t, cmd, "nothing to reload")
 	assert.Equal(t, "Revert failed: boom", out.(Model).transientHint())
+}
+
+func TestRevert_AsksInThePopup(t *testing.T) {
+	r := &fakeReverter{}
+	m := revertModel(r, 2)
+	var title, detail, button string
+	var yes tea.Cmd
+	m.revert.confirm = func(t, d, b string, y tea.Cmd) tea.Cmd {
+		title, detail, button, yes = t, d, b, y
+		return func() tea.Msg { return nil }
+	}
+	m, cmd := pressKey(t, m, "x")
+	require.NotNil(t, cmd, "the popup opens")
+	assert.False(t, m.revert.pending, "nothing waits on the status bar")
+	assert.Empty(t, m.transientHint())
+	assert.Equal(t, "Revert this change?", title)
+	assert.Equal(t, "Undoes the 2 changed lines under the cursor in a.go.", detail)
+	assert.Equal(t, "Revert", button)
+	assert.Nil(t, r.change, "nothing before the popup is confirmed")
+
+	msg := yes()
+	assert.Equal(t, []int{1, 2}, r.change)
+	assert.Equal(t, revertedMsg{what: "the change in a.go"}, msg)
+
+	m.tree = testNewFileTree([]string{"a.go"})
+	_, _ = pressKey(t, m, "X")
+	assert.Equal(t, "Revert a.go?", title)
+	assert.Equal(t, "Revert", button)
 }

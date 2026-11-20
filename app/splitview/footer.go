@@ -42,7 +42,7 @@ func (m Model) bodyH() int {
 // footerHints are the focused pane's shortcuts for the status line, none
 // while the review, a sidebar or a popup has focus.
 func (m Model) footerHints() [][2]string {
-	if m.focus < 0 || m.focus >= len(m.terms) || m.palette.open || m.quitDialog {
+	if m.focus < 0 || m.focus >= len(m.terms) || m.modal() {
 		return nil
 	}
 	if h, ok := m.terms[m.focus].(statusHinter); ok {

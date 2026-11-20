@@ -260,9 +260,12 @@ func tagMsg(id int, msg tea.Msg) tea.Msg {
 	if t.PkgPath() == teaPackage {
 		return msg
 	}
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case RunCommandMsg, RunMsg:
 		return msg // addressed to the split, not back to the model
+	case ConfirmMsg:
+		msg.Yes = tagCmd(id, msg.Yes) // the popup is the split's, its answer the model's
+		return msg
 	}
 	return innerMsg{ws: id, msg: msg}
 }
