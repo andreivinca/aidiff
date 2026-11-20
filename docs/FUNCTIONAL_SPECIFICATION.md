@@ -104,6 +104,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
 | T3: New thread…, T3: Projects… | connected |
 | Diff View… | the run's own review of a git repository is on screen |
 | T3: Diff View… | a T3 review is on screen |
+| Copy annotations | always |
 | T3: Send annotations to agent | a thread is open |
 | T3: Reconnect, T3: Connect to another server… | connected |
 | Quit | always |
@@ -126,6 +127,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
 - **Connections panel:** always hidden; alt+← reaches it past the side panel (straight from the review when there is no side panel), and it hides again once focus leaves it (alt+→, Esc, a click elsewhere). It lists this machine (`local` and its host name), then every T3 server aidiff holds a connection to, then **Connect to a server…**. `▸` marks the selected connection, which the side panel and the palette work with; with no server selected that is `local`. Enter on a server selects it and shows its projects. Enter on `local` selects this machine and shows the history panel; there are no projects for `local`. T3 Code running on this machine is reached through **Connect to a server…** (its `local` entry) and is then listed as a server of its own, `local T3 Code`. Servers stay connected while another connection is active, so going back to one needs no new login.
 - **Workspaces:** each project has its own review, chat pane, terminals, pane sizes and focus. The first visit opens its most recently updated thread (or its root when it has none) with a chat. Leaving a project keeps its workspace running in the background: going back brings it as it was, with the thread, cursor, annotations, chat input and pane sizes the user left, and the diff refreshes. Each folder of the history panel is a workspace too, kept the same way, the run's own folder included. A run that reviews no folder (stdin, a compare pair) is not kept: it closes, with the terminals opened with it, the first time another workspace is opened (its annotations go to history). The quit dialog counts the panes of every workspace.
 - **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
+- **Copy annotations:** puts every annotation, in the output format, on the clipboard, to paste into an agent in a terminal pane or anywhere else. It uses wl-copy (Wayland) or xclip (X11), and under WSL without either, Windows' `clip.exe`.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
   - queued messages

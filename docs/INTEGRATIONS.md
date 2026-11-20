@@ -10,6 +10,7 @@ This document covers how annotations leave aidiff and how other tools drive it. 
 | `-o` and/or `--post-flush-command` while the review stays open | `O` | revdiff |
 | History file (safety net, also written on SIGHUP/SIGTERM) | on exit | revdiff |
 | **Straight to the T3 thread as a message** | ctrl+p → **T3: Send annotations to agent** | **aidiff** |
+| **The clipboard, to paste anywhere** (e.g. an agent in a terminal pane) | ctrl+p → **Copy annotations** | **aidiff** |
 | **Any command, in a terminal pane** | e.g. `cat /tmp/review.md` after an `O` flush to `-o /tmp/review.md` | **aidiff** |
 
 The T3 path sends revdiff's markdown output, prefixed with `Review annotations from aidiff:`, as a normal user message. If the agent is running, the message is queued and becomes the next turn.

@@ -49,11 +49,11 @@ func startsWithTerminal(opts options, threadOnScreen bool) bool {
 }
 
 // paletteCommands are the palette's own entries: Diff View… while a local
-// review is on screen (the run's own, or a folder's from the history), then
-// the T3 commands.
+// review is on screen (the run's own, or a folder's from the history), Copy
+// annotations, then the T3 commands.
 func paletteCommands(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func() []splitview.Command {
 	return func() []splitview.Command {
-		cmds := t3p.Commands()
+		cmds := append([]splitview.Command{copyAnnotationsCommand(systemClipboard)}, t3p.Commands()...)
 		if t3p.OnScreen() != nil {
 			return cmds
 		}

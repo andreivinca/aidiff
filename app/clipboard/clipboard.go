@@ -1,6 +1,6 @@
 // Package clipboard reads and writes the system clipboard, which a terminal
 // cannot paste from when it holds an image. Linux only: wl-clipboard on
-// Wayland, xclip on X11.
+// Wayland, xclip on X11, and for writing under WSL, Windows' clip.exe.
 package clipboard
 
 import (
@@ -88,7 +88,7 @@ func (s system) write(ctx context.Context, text string) error {
 		return t.writer
 	})
 	if !ok {
-		return ErrNoTool
+		return s.writeWindows(ctx, text)
 	}
 	_, err := s.run(ctx, command{name: t.writer, args: t.writeText, stdin: strings.NewReader(text)})
 	return err
