@@ -19,6 +19,7 @@ type options struct {
 
 	Staged                bool     `long:"staged" ini-name:"staged" env:"REVDIFF_STAGED" description:"show staged changes"`
 	Untracked             bool     `long:"untracked" ini-name:"untracked" env:"REVDIFF_UNTRACKED" description:"show untracked files in the tree"`
+	NoUntracked           bool     `long:"no-untracked" ini-name:"no-untracked" env:"REVDIFF_NO_UNTRACKED" description:"hide untracked files in the tree"`
 	TreeWidth             int      `long:"tree-width" ini-name:"tree-width" env:"REVDIFF_TREE_WIDTH" default:"2" description:"file tree panel width in units (1-10, default 2 of 10)"`
 	TabWidth              int      `long:"tab-width" ini-name:"tab-width" env:"REVDIFF_TAB_WIDTH" default:"4" description:"number of spaces per tab character"`
 	NoColors              bool     `long:"no-colors" ini-name:"no-colors" env:"REVDIFF_NO_COLORS" description:"disable all colors including syntax highlighting"`
