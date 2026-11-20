@@ -26,10 +26,13 @@ type annotListOverlay struct {
 	offset     int
 	height     int // last known terminal height, updated on render
 	popupWidth int // last known popup width, updated on render; used by handleLeftClick
+	canCopy    bool
+	canDelete  bool
 }
 
 func (a *annotListOverlay) open(spec AnnotListSpec) {
 	a.items = spec.Items
+	a.canCopy, a.canDelete = spec.CanCopy, spec.CanDelete
 	a.cursor = 0
 	a.offset = 0
 }
@@ -52,7 +55,7 @@ func (a *annotListOverlay) render(ctx RenderCtx, mgr *Manager) string {
 		lines = append(lines, line)
 	}
 
-	content := strings.Join(lines, "\n")
+	content := strings.Join(lines, "\n") + a.toolsFooter(contentWidth, ctx.Resolver)
 	title := fmt.Sprintf(" annotations (%d) ", len(a.items))
 
 	box := a.boxStyle(popupWidth, ctx.Resolver).Render(content)
@@ -85,7 +88,7 @@ func (a *annotListOverlay) boxStyle(width int, resolver Resolver) lipgloss.Style
 }
 
 func (a *annotListOverlay) maxVisible(height int) int {
-	return max(min(len(a.items), height-6), 1)
+	return max(min(len(a.items), height-6-a.toolsHeight()), 1)
 }
 
 func (a *annotListOverlay) formatItem(item AnnotationItem, width int, selected bool, resolver Resolver) string {
@@ -143,6 +146,9 @@ func (a *annotListOverlay) formatItem(item AnnotationItem, width int, selected b
 func (a *annotListOverlay) handleKey(msg tea.KeyMsg, action keymap.Action) Outcome {
 	if action == keymap.ActionAnnotList {
 		return Outcome{Kind: OutcomeClosed}
+	}
+	if out, ok := a.toolKey(msg); ok {
+		return out
 	}
 
 	switch {
@@ -242,6 +248,9 @@ func (a *annotListOverlay) handleLeftClick(localX, localY int) Outcome {
 	}
 	relRow := localY - contentTop
 	maxVis := a.maxVisible(a.height)
+	if out, ok := a.toolClick(localX-horizChromeCols, relRow-maxVis); ok {
+		return out
+	}
 	if relRow < 0 || relRow >= maxVis {
 		return Outcome{Kind: OutcomeNone}
 	}

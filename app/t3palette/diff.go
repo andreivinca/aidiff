@@ -3,14 +3,12 @@ package t3palette
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
-	"github.com/umputun/revdiff/app/ui"
 )
 
 // diffChoice is what T3: Diff View… chose. It applies to the reviews of the
@@ -26,11 +24,6 @@ type diffChoice struct {
 type (
 	againstBranchRow struct{} // leads to the branch picker
 	fileTreeRow      struct{} // every file of the folder instead of its changes
-	// wholeFilesRow switches the review on screen between whole files and
-	// the changed blocks only, as C does
-	wholeFilesRow struct {
-		compact bool // what picking it switches to
-	}
 )
 
 // compacter is a review that can show the changed blocks only.
@@ -40,29 +33,17 @@ type compacter interface {
 	CompactContext() int
 }
 
-// viewRow is the diff picker's rows choosing between the changed blocks
-// only and whole files, the one in effect checked; none for a review that
-// cannot. It keeps how inner shows its files for the reviews built from
-// here, since C and alt+= / alt+- may have changed it.
-func (t *Palette) viewRow(inner tea.Model) []splitview.PickerItem {
+// keepView records how inner shows its files (whole, or the changed blocks
+// and their context) for the reviews built from here, since C, alt+= /
+// alt+- and the context dropdown may have changed it.
+func (t *Palette) keepView(inner tea.Model) {
 	c, ok := inner.(compacter)
 	if !ok || !c.CompactApplicable() {
-		return nil
+		return
 	}
 	t.mu.Lock()
 	t.view = View{WholeFiles: !c.Compact(), Context: c.CompactContext()}
 	t.mu.Unlock()
-	mark := func(on bool, label string) string {
-		if on {
-			return "✓ " + label
-		}
-		return "  " + label
-	}
-	return []splitview.PickerItem{
-		{Label: mark(c.Compact(), "Changed blocks only"), Detail: fmt.Sprintf("%d lines around each change", c.CompactContext()),
-			Value: wholeFilesRow{compact: true}},
-		{Label: mark(!c.Compact(), "Whole files"), Detail: "each file in full, changes marked", Value: wholeFilesRow{}},
-	}
 }
 
 // newReview is the review of target over s, comparing what was chosen for
@@ -95,7 +76,7 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 		return flash("T3: open a thread first")
 	}
 	store := storeOf(inner)
-	view := t.viewRow(inner)
+	t.keepView(inner)
 	return asking("listing branches", func(ctx context.Context) tea.Msg {
 		refs, err := r.Session.Server().ListRefs(ctx, r.Target.Cwd)
 		if errors.Is(err, t3client.ErrNotRepository) {
@@ -104,16 +85,16 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 		if err != nil {
 			return t3Error("list branches", err)
 		}
-		return t.diffPicker(r, refs, store, view...)
+		return t.diffPicker(r, refs, store)
 	})
 }
 
 // diffPicker is the list of what to compare, given the repository's refs,
-// then the view rows.
-func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store, view ...splitview.PickerItem) tea.Msg {
+// then the file tree. Whole files or the changed blocks are the context
+// dropdown's, on the toolbar.
+func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store) tea.Msg {
 	items := compareItems(refs)
 	items = append(items, splitview.PickerItem{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTreeRow{}})
-	items = append(items, view...)
 	return splitview.ShowPickerMsg{
 		Title:  "T3 Code: diff of " + r.Target.Label(),
 		Items:  items,
@@ -125,18 +106,13 @@ func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.S
 // store.
 func (t *Palette) onPick(r *Review, refs []t3client.Ref, store *annotation.Store) func(it splitview.PickerItem) tea.Cmd {
 	return func(it splitview.PickerItem) tea.Cmd {
-		switch v := it.Value.(type) {
+		switch it.Value.(type) {
 		case againstBranchRow:
 			return func() tea.Msg {
 				return t.branchPicker(r, refs, store)
 			}
 		case fileTreeRow:
 			return t.showFiles(r, store)
-		case wholeFilesRow:
-			t.mu.Lock()
-			t.view.WholeFiles = !v.compact
-			t.mu.Unlock()
-			return func() tea.Msg { return ui.SetCompactMsg{On: v.compact} }
 		}
 		d, _ := it.Value.(diffChoice)
 		return t.showDiff(r, d, store)

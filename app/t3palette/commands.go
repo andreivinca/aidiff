@@ -20,14 +20,15 @@ const threadsGroup = "Threads"
 // inlineThreads is how many recent threads the palette lists directly.
 const inlineThreads = 8
 
-// Commands lists the T3 entries for the palette's current state: a new
+// Commands lists the T3 entries for the palette's current state: on this
+// machine's connection, Add Project… and connecting to a server; else a new
 // thread first, then the live server's recent threads, then what the thread
 // on screen offers.
 func (t *Palette) Commands() []splitview.Command {
 	t.refreshShell()
 	v := t.state()
 	if v.live == nil {
-		return []splitview.Command{{Name: "T3: Connect to server…", Run: t.connectPicker}}
+		return []splitview.Command{t.addProjectCmd(), {Name: "T3: Connect to server…", Run: t.connectPicker}}
 	}
 	server := v.live.Label()
 	scope := server
@@ -36,7 +37,7 @@ func (t *Palette) Commands() []splitview.Command {
 	}
 	cmds := []splitview.Command{
 		{Name: "T3: New thread…", Detail: scope, Run: t.newThread},
-		{Name: "T3: Projects…", Detail: server, Run: t.projectsCmd},
+		{Name: "T3: Add Project…", Detail: server, Run: t.addT3Project},
 	}
 	cmds = append(cmds, t.threadCommands(v, scope)...)
 	if v.onScreen != nil {
@@ -46,7 +47,6 @@ func (t *Palette) Commands() []splitview.Command {
 		cmds = append(cmds, splitview.Command{Name: "T3: Send annotations to agent", Detail: threadTitle(*th), Run: t.sendAnnotations})
 	}
 	return append(cmds,
-		splitview.Command{Name: "T3: Reconnect", Detail: server, Run: t.reconnect},
 		splitview.Command{Name: "T3: Connect to another server…", Run: t.connectPicker})
 }
 

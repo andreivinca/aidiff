@@ -47,7 +47,7 @@ This document covers the security properties of aidiff's own features: T3 connec
 | Image path paste | Pasting a single line that is an image path reads and uploads that local file when the message is sent. | A note `[Image #n] attached` is shown, and the image can be removed before sending. |
 | Clipboard | Selected chat text is copied to the local desktop clipboard, also when the session is remote. | — |
 | Protocol coupling | T3's RPC is internal and pinned to version 2. A server change could break the client. | A mismatch fails at connect time (HTTP 426) with a clear message. |
-| No reconnect | A dropped connection stays down until **T3: Reconnect**. | The status is shown in the chat header. |
+| Automatic reconnect | A dropped live connection is redialed the way it was made (1 s, 2 s, 5 s, 10 s, then every 30 s) until it answers or the user connects elsewhere. | Each try is reported on the bottom row; a background (not live) connection is not redialed. |
 
 ## 4. Reporting
 

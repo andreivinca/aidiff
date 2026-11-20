@@ -67,6 +67,13 @@ func (f *localFake) config(start string, dirs ...string) LocalConfig {
 	return cfg
 }
 
+// wasRemembered reports whether dir was recorded as opened.
+func (f *localFake) wasRemembered(dir string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.remembered, dir)
+}
+
 // watches is how many live refreshes of dir run.
 func (f *localFake) watches(dir string) int {
 	f.mu.Lock()
@@ -106,7 +113,8 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	assert.Equal(t, Place{Dir: b}, h.p.TerminalPlace(), "beta's terminals open in beta, not where the run started")
 	assert.Equal(t, localKey(b), h.p.Workspace())
 	assert.Equal(t, []string{b}, f.opened)
-	assert.Contains(t, f.remembered, b, "the folder opened is recorded as opened now")
+	assert.Eventually(t, func() bool { return f.wasRemembered(b) }, time.Second, time.Millisecond,
+		"the folder opened is recorded as opened now, in the background")
 	assert.Equal(t, []string{a}, f.saved, "alpha's notes are filed under alpha")
 	assert.Empty(t, h.history(), "not as a T3 review's")
 	assert.Equal(t, 1, f.watches(b), "beta is refreshed live")

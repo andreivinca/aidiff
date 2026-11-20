@@ -58,6 +58,7 @@ const historyHeader = 3
 var historyHelp = []string{
 	"",
 	" enter        open folder",
+	" a            add project",
 	" ctrl/alt+b   show / hide",
 	" ctrl/alt+1…9 switch folder",
 	" alt+← alt+→  move focus",
@@ -372,7 +373,7 @@ func homeRelative(dir string) string {
 }
 
 // HandleKey moves the selection and opens the selected folder; a digit
-// opens its folder, esc hides the sidebar.
+// opens its folder, a adds a project (addproject.go), esc hides the sidebar.
 func (b *historySidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	dirs := b.t.historyDirs()
 	switch msg.String() {
@@ -386,6 +387,8 @@ func (b *historySidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		b.sel = max(0, len(dirs)-1)
 	case "enter", " ":
 		return b.open(dirs, b.sel)
+	case "a":
+		return b.t.browseFolders(b.t.browseStart()), true
 	case "esc":
 		return nil, true
 	default:

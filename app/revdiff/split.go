@@ -23,14 +23,15 @@ const projectsKey = "ctrl+b"
 // too.
 func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
+	finder := &paletteFinder{project: reviewProject(t3p, local, diffs)}
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
 		OpenOnStart:  startsWithTerminal(opts, t3p.OnScreen() != nil),
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local, diffs),
-		Files:        paletteFiles,
-		Carry:        carryFile,
+		Files:        finder.files,
+		Carry:        finder.carry,
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
 		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey},
 		Sidebar:      t3p.Sidebar(),

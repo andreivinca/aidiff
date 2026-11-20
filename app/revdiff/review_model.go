@@ -123,7 +123,8 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		ShowUntracked:        opts.showUntrackedAtStart(),
 		Reverter:             src.reverter(opts),
 		Confirm:              confirmPopup,
-		WordDiff:             opts.WordDiff,
+		CopyAnnotations:      copyAnnotations(systemClipboard),
+		WordDiff:             opts.wordDiff(),
 		FilterUnreviewed:     opts.FilterUnreviewed,
 		VimMotion:            opts.VimMotion,
 		ReviewInfo: reviewInfoFromOptions(opts, reviewInfoInputs{

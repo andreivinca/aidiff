@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/splitview"
-	"github.com/umputun/revdiff/app/ui"
 )
 
 // localDiffTimeout bounds the git queries of one Diff View… step.
@@ -27,10 +25,11 @@ type localDiff struct {
 	git         localGit
 
 	mu      sync.Mutex
-	label   string       // what the review on screen compares
-	compact bool         // changed blocks only, kept when Diff View… rebuilds the review
-	context int          // lines around each change, kept the same way (alt+= / alt+-)
-	last    *localChoice // the comparison shown last, nil for the run's own
+	label   string             // what the review on screen compares
+	compact bool               // changed blocks only, kept when Diff View… rebuilds the review
+	context int                // lines around each change, kept the same way (alt+= / alt+-)
+	last    *localChoice       // the comparison shown last, nil for the run's own
+	project *diff.FolderReader // every file of the repository, for the palette's search (palette_files.go)
 }
 
 // localChoice is what a review compares: a ref (the working tree against it,
@@ -46,12 +45,6 @@ type againstBranch struct{}
 
 // fileTree is the Diff View… row that browses every file of the repository.
 type fileTree struct{}
-
-// wholeFiles is the Diff View… row that switches between whole files and
-// the changed blocks only.
-type wholeFiles struct {
-	compact bool // what picking it switches to
-}
 
 // compacter is a review that can show the changed blocks only.
 type compacter interface {
@@ -130,62 +123,29 @@ func (l *localDiff) compareItems(ctx context.Context) []splitview.PickerItem {
 // onPick does what a Diff View… row says, with the annotations in store.
 func (l *localDiff) onPick(store *annotation.Store) func(it splitview.PickerItem) tea.Cmd {
 	return func(it splitview.PickerItem) tea.Cmd {
-		switch v := it.Value.(type) {
+		switch it.Value.(type) {
 		case againstBranch:
 			return l.pickBranch(store)
 		case fileTree:
 			return l.showTree(store)
-		case wholeFiles:
-			return l.setCompact(v.compact)
 		}
 		c, _ := it.Value.(localChoice)
 		return l.show(c, store)
 	}
 }
 
-// viewRows are the Diff View… rows after the comparisons: the file tree,
-// then whole files or the changed blocks only, whichever the review on
-// screen does not show.
+// viewRows are the Diff View… rows after the comparisons: the file tree.
+// Whole files or the changed blocks are the context dropdown's, on the
+// toolbar; how inner shows its files is kept for the reviews Diff View…
+// builds, since C, alt+= / alt+- and that dropdown may have changed it.
 func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
-	rows := []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
-	c, ok := inner.(compacter)
-	if ok && c.CompactApplicable() {
+	if c, ok := inner.(compacter); ok && c.CompactApplicable() {
 		l.mu.Lock()
-		l.compact = c.Compact() // C may have switched it since
+		l.compact = c.Compact()
 		l.context = c.CompactContext()
 		l.mu.Unlock()
 	}
-	l.mu.Lock()
-	context := l.context
-	l.mu.Unlock()
-	if !ok || !c.CompactApplicable() {
-		return rows
-	}
-	return append(rows, compactRows(c.Compact(), context)...)
-}
-
-// compactRows are the Compare rows choosing between the changed blocks only
-// and whole files, the one in effect checked.
-func compactRows(compact bool, context int) []splitview.PickerItem {
-	mark := func(on bool, label string) string {
-		if on {
-			return "✓ " + label
-		}
-		return "  " + label
-	}
-	return []splitview.PickerItem{
-		{Label: mark(compact, "Changed blocks only"), Detail: fmt.Sprintf("%d lines around each change", context), Value: wholeFiles{compact: true}},
-		{Label: mark(!compact, "Whole files"), Detail: "each file in full, changes marked", Value: wholeFiles{}},
-	}
-}
-
-// setCompact switches the review on screen to the changed blocks only, or
-// to whole files, and keeps the choice for the reviews Diff View… builds.
-func (l *localDiff) setCompact(compact bool) tea.Cmd {
-	l.mu.Lock()
-	l.compact = compact
-	l.mu.Unlock()
-	return func() tea.Msg { return ui.SetCompactMsg{On: compact} }
+	return []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
 }
 
 // showTree rebuilds the review as a browser of every file in the

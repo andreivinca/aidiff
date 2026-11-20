@@ -33,6 +33,12 @@ func (m Model) CurrentFile() string {
 	return m.file.name
 }
 
+// ListsChanges reports whether the review lists the changed files, not
+// every file of a folder: the palette then also searches the whole project.
+func (m Model) ListsChanges() bool {
+	return !m.browsingFolders()
+}
+
 // FindFiles returns the work that finds the files matching query, at most
 // limit of them, best first. A review of changes ranks the files its tree
 // lists, now, so the work only hands them over; a folder browser asks its

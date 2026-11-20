@@ -46,6 +46,8 @@ const (
 	OutcomeThemeConfirmed                      // user confirmed a theme (name in Outcome.ThemeChoice)
 	OutcomeThemeCanceled                       // user canceled theme selection
 	OutcomeFileChosen                          // user picked a file (path in Outcome.FileChoice)
+	OutcomeAnnotCopyAll                        // the annotation list's copy-all tool (annotlist_tools.go)
+	OutcomeAnnotDeleteAll                      // the annotation list's delete-all tool (annotlist_tools.go)
 )
 
 // Outcome is the return value from HandleKey. Callers switch on Kind and read
@@ -90,6 +92,9 @@ type HelpEntry struct {
 // AnnotListSpec describes the annotation list popup content.
 type AnnotListSpec struct {
 	Items []AnnotationItem
+	// CanCopy and CanDelete offer the copy-all and delete-all tools under
+	// the list, while it has an annotation (annotlist_tools.go).
+	CanCopy, CanDelete bool
 }
 
 // AnnotationItem is one entry in the annotation list popup.

@@ -245,6 +245,8 @@ func (m Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.cancelThemeSelect()
 	case overlay.OutcomeFileChosen:
 		return m.jumpToFile(out.FileChoice.Path)
+	case overlay.OutcomeAnnotCopyAll, overlay.OutcomeAnnotDeleteAll:
+		return m.handleAnnotListTool(out.Kind)
 	case overlay.OutcomeClosed, overlay.OutcomeNone:
 	}
 	return m, nil

@@ -42,6 +42,9 @@ type Config struct {
 	StartStore *annotation.Store
 	// Local reaches this machine's folders, for the history panel.
 	Local LocalConfig
+	// Saved keeps the servers connected to, for the connections panel
+	// (saved.go).
+	Saved SavedConfig
 }
 
 // Program receives what the palette sends outside a command: the refreshes
@@ -86,6 +89,7 @@ type Palette struct {
 	parkedLocal map[string]*LocalWorkspace   // the local folders of the workspaces not on screen, by key
 	history     []string                     // the history panel's folders, most recently opened first as of the start
 	connected   map[Session]bool             // the newest connection to each server the user connected to; they stay open
+	saved       []SavedServer                // the servers connected to in this run or saved before (saved.go)
 	stores      map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
 }
 
@@ -122,6 +126,11 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 		t.rememberLocked(start, cfg.StartStore)
 	}
 	t.initLocalLocked()
+	t.initSavedLocked()
+	if start != nil {
+		t.saveLocked(start.Session)
+		t.watchDrop(start.Session)
+	}
 	return t
 }
 
@@ -233,6 +242,8 @@ func (t *Palette) connectLocked(s Session) {
 		}
 	}
 	t.connected[s] = true
+	t.saveLocked(s)
+	t.watchDrop(s)
 }
 
 // prepare records r as on its way to the screen, which keeps its session

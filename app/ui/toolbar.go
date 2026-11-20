@@ -200,10 +200,12 @@ func (m Model) viewMenu() []tbItem {
 // contextSizes are the context menu's sizes, lines around each change.
 var contextSizes = []int{1, 2, 3, 5, 10, 20, 50}
 
-// contextMenu is the context dropdown: how many lines around each change,
-// picking one leaves whole files for the changed blocks.
+// contextMenu is the context dropdown: whole files, or how many lines
+// around each change, picking one leaves whole files for the changed blocks.
 func (m Model) contextMenu() []tbItem {
-	items := make([]tbItem, 0, len(contextSizes)+3)
+	items := make([]tbItem, 0, len(contextSizes)+5)
+	items = append(items, tbItem{label: "Whole files", checked: !m.modes.compact,
+		run: func(m Model) (tea.Model, tea.Cmd) { return m.handleSetCompact(SetCompactMsg{}) }}, tbItem{sep: true})
 	for _, n := range contextSizes {
 		label := fmt.Sprintf("%d lines", n)
 		if n == 1 {

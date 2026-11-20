@@ -93,31 +93,20 @@ func (t *Palette) connect(spec string) tea.Cmd {
 	})
 }
 
-// reconnect replaces the live session with a fresh one to the same server,
-// made the way the first was. When the review on screen came over the old
-// session it is rebuilt over the new one, with its annotations and its
-// thread looked up again; the live refresh and the chat panes follow it.
-func (t *Palette) reconnect(inner tea.Model) tea.Cmd {
-	v := t.state()
-	if v.live == nil {
-		return t.connectPicker(inner)
+// takeOver puts s, a new session to old's server (autoreconnect.go), in
+// old's place and rebuilds the review on screen over it, with the
+// annotations of inner, when that review came over old; the live refresh and
+// the chat panes follow it. It runs on the UI goroutine, so the review on
+// screen is the one the user sees.
+func (t *Palette) takeOver(old, s Session, sh t3client.Shell, inner tea.Model) tea.Cmd {
+	shown, store := t.OnScreen(), storeOf(inner)
+	if !t.adopt(s, sh, old) {
+		return flash("T3: the connection changed meanwhile; reconnect canceled")
 	}
-	old, shown, store := v.live, v.onScreen, storeOf(inner)
-	return tea.Batch(flash("T3: reconnecting to "+old.Label()+"…"), func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
-		defer cancel()
-		s, sh, err := reach(ctx, old.Redial)
-		if err != nil {
-			return t3Failed(err)
-		}
-		if !t.adopt(s, sh, old) {
-			return splitview.FlashMsg{Text: "T3: the connection changed meanwhile; reconnect canceled"}
-		}
-		if shown == nil || shown.Session != old || shown != t.OnScreen() {
-			return withNotices(s, splitview.FlashMsg{Text: "T3: reconnected to " + s.Label()})
-		}
-		return withNotices(s, t.reopen(s, sh, shown.Target, store))
-	})
+	if shown == nil || shown.Session != old {
+		return func() tea.Msg { return withNotices(s, splitview.FlashMsg{Text: "T3: reconnected to " + s.Label()}) }
+	}
+	return func() tea.Msg { return withNotices(s, t.reopen(s, sh, shown.Target, store)) }
 }
 
 // reopen rebuilds the review of target over s with the annotations in

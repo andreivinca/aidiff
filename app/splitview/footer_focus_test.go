@@ -73,25 +73,25 @@ func TestSplit_FocusMarkFollowsTheFocusedPanel(t *testing.T) {
 	marked := hs.m.withFocusMark(bar)
 	assert.Equal(t, strings.Repeat("x", 100), ansi.Strip(marked), "only colors change")
 	term := hs.m.leftW + hs.m.termRects()[0].x
-	assert.Equal(t, orange, bgAt(marked, term-1))
-	assert.Equal(t, green, bgAt(marked, term), "the focused terminal's columns are green")
-	assert.Equal(t, green, bgAt(marked, 99))
+	assert.Equal(t, green, bgAt(marked, term-1), "the bar is green")
+	assert.Equal(t, orange, bgAt(marked, term), "the focused terminal's columns keep the bar's own color")
+	assert.Equal(t, orange, bgAt(marked, 99))
 
 	hs.m.focus = focusDiff
 	marked = hs.m.withFocusMark(bar)
-	assert.Equal(t, green, bgAt(marked, 0), "the wrapped model's focused pane")
-	assert.Equal(t, green, bgAt(marked, 9))
-	assert.Equal(t, orange, bgAt(marked, 10), "its other pane is not")
+	assert.Equal(t, orange, bgAt(marked, 0), "the wrapped model's focused pane")
+	assert.Equal(t, orange, bgAt(marked, 9))
+	assert.Equal(t, green, bgAt(marked, 10), "its other pane is not")
 
 	hs.m.inner = panedInner{innerModel: innerModel{got: &got}, cols: 10}
 	marked = hs.m.withFocusMark(bar)
-	assert.Equal(t, orange, bgAt(marked, 9))
-	assert.Equal(t, green, bgAt(marked, hs.m.leftW-1), "the right pane, up to the column's edge")
-	assert.Equal(t, orange, bgAt(marked, hs.m.leftW), "not past it")
+	assert.Equal(t, green, bgAt(marked, 9))
+	assert.Equal(t, orange, bgAt(marked, hs.m.leftW-1), "the right pane, up to the column's edge")
+	assert.Equal(t, green, bgAt(marked, hs.m.leftW), "not past it")
 
 	hs.send(tea.WindowSizeMsg{Width: 140, Height: 20})
 	marked = hs.m.withFocusMark(strings.Replace(bar, strings.Repeat("x", 100), strings.Repeat("x", 140), 1))
-	assert.Equal(t, green, bgAt(marked, hs.m.leftW-1), "a resize moves the mark with the panel")
+	assert.Equal(t, orange, bgAt(marked, hs.m.leftW-1), "a resize moves the mark with the panel")
 
 	plain := strings.Repeat("y", 140)
 	assert.Contains(t, hs.m.withFocusMark(plain), "\x1b[7m", "no background to shade: reverse video")
@@ -134,7 +134,7 @@ func TestSplit_FocusMarkTakesTheWrappedModelsColors(t *testing.T) {
 	hs.send(tea.WindowSizeMsg{Width: 100, Height: 20})
 	bar := "\x1b[38;2;10;10;10;48;2;200;100;50m" + strings.Repeat("x", 100) + "\x1b[0m"
 	marked := hs.m.withFocusMark(bar)
-	assert.Equal(t, "2;30;60;20", bgAt(marked, 0), "the model's own green")
-	assert.Contains(t, ansi.Cut(marked, 0, 1), "38;2;220;220;220", "and its text color, readable on it")
-	assert.Equal(t, "2;200;100;50", bgAt(marked, 10))
+	assert.Equal(t, "2;200;100;50", bgAt(marked, 0), "the focused pane keeps the bar's color")
+	assert.Equal(t, "2;30;60;20", bgAt(marked, 10), "the rest takes the model's own green")
+	assert.Contains(t, ansi.Cut(marked, 10, 11), "38;2;220;220;220", "and its text color, readable on it")
 }

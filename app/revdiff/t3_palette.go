@@ -1,9 +1,13 @@
 package main
 
 import (
+	"log"
+	"path/filepath"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/annotation"
+	"github.com/umputun/revdiff/app/localhist"
 	"github.com/umputun/revdiff/app/t3palette"
 )
 
@@ -36,7 +40,33 @@ func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *a
 		StartStore: store,
 		LocalName:  deps.hostname,
 		Local:      local,
+		Saved:      savedConnections(),
 	}, src.t3)
+}
+
+// savedConnections keeps the T3 servers connected to in connections.json,
+// beside the folders' history.json, for the connections panel.
+func savedConnections() t3palette.SavedConfig {
+	store := localhist.Connections{Path: filepath.Join(filepath.Dir(defaultConfigPath()), "connections.json")}
+	return t3palette.SavedConfig{
+		List: func() []t3palette.SavedServer {
+			list, err := store.List()
+			if err != nil {
+				log.Printf("[WARN] %v", err)
+			}
+			out := make([]t3palette.SavedServer, 0, len(list))
+			for _, c := range list {
+				out = append(out, t3palette.SavedServer{Spec: c.Spec, Machine: c.Machine})
+			}
+			return out
+		},
+		Remember: func(spec, machine string) {
+			if err := store.Add(spec, machine); err != nil {
+				log.Printf("[WARN] %v", err)
+			}
+		},
+		Forget: store.Remove,
+	}
 }
 
 // history is how the annotations of a review are filed: by r's T3 server and

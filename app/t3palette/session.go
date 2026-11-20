@@ -39,6 +39,9 @@ type Session interface {
 	// Redial connects again to the same server, the way this session was
 	// made. Its error says it was a reconnect, as Connect's says connect.
 	Redial(ctx context.Context) (Session, error)
+	// Done is closed when the connection ends, nil when the session cannot
+	// tell; a live session's end starts the reconnect (autoreconnect.go).
+	Done() <-chan struct{}
 	// Close ends the connection and whatever was started to reach it.
 	Close() error
 }
@@ -74,6 +77,14 @@ type clientSession struct {
 // Server is the session's connection.
 func (s *clientSession) Server() Server {
 	return s.Conn()
+}
+
+// Done is closed when the session's connection ends.
+func (s *clientSession) Done() <-chan struct{} {
+	if c := s.Conn(); c != nil {
+		return c.Done()
+	}
+	return nil
 }
 
 // Redial connects again with the options the session was made with.

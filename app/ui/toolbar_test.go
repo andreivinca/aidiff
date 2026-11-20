@@ -154,17 +154,25 @@ func TestToolbar_ContextMenuPicksASize(t *testing.T) {
 	m = press(t, m, "f10", "right")
 	require.True(t, m.toolbar.open)
 	require.Equal(t, 1, m.toolbar.button)
-	r, cmd := m.Update(key("down"))
-	m = r.(Model)
-	r, cmd = m.Update(key("down")) // 3 lines
-	m = r.(Model)
-	r, cmd = m.Update(key("enter"))
+	assert.Contains(t, strings.Join(screenRows(m), "\n"), "✓ Whole files", "whole files on screen: checked, on top")
+	m = press(t, m, "down", "down", "down") // past the divider: 1, 2, 3 lines
+	r, cmd := m.Update(key("enter"))
 	m = r.(Model)
 	assert.False(t, m.toolbar.open)
 	assert.True(t, m.modes.compact, "a size leaves whole files for the changed blocks")
 	assert.Equal(t, 3, m.modes.compactContext)
 	assert.NotNil(t, cmd, "the file is fetched again")
 	assert.Contains(t, screenRows(m)[toolbarRow], "↕ 3 lines ▾")
+
+	m = press(t, m, "f10", "right")
+	require.True(t, m.toolbar.open)
+	assert.NotContains(t, strings.Join(screenRows(m), "\n"), "✓ Whole files")
+	m = press(t, m, "up", "up", "up", "up", "up", "up", "up", "up") // to the top: Whole files
+	r, cmd = m.Update(key("enter"))
+	m = r.(Model)
+	assert.False(t, m.modes.compact, "Whole files goes back to whole files")
+	assert.NotNil(t, cmd, "the file is fetched again")
+	assert.Contains(t, screenRows(m)[toolbarRow], "↕ Whole files ▾")
 }
 
 func TestToolbar_MouseOpensPicksAndCloses(t *testing.T) {

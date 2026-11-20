@@ -28,6 +28,7 @@ aidiff still uses revdiff's config directory.
 | `--no-chat` | `REVDIFF_NO_CHAT` | yes | false | don't open the chat pane automatically when a T3 thread is selected |
 | `--no-terminal` | `REVDIFF_NO_TERMINAL` | yes | false | don't open a terminal pane automatically with a local folder (the run's own, or one opened from the history) |
 | `--no-watch` | `REVDIFF_NO_WATCH` | yes | false | turn off live refresh |
+| `--no-word-diff` | `REVDIFF_NO_WORD_DIFF` | yes | false | do not highlight intra-line word-level changes (on by default in aidiff; revdiff's `--word-diff` is accepted and changes nothing) |
 
 ### T3 Code
 | Flag | Env | In config file | Default | Description |

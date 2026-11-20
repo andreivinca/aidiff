@@ -52,7 +52,7 @@ revdiff, the upstream project, already solved the first part: a fast terminal di
 | Live refresh on file changes | VCS write operations |
 | Diff/annotation engine — used as-is from revdiff | Changing how revdiff reviews work |
 | Embedded terminal panes (local, and remote over SSH for T3 sessions) | Terminal scrollback viewer *(gap)* |
-| T3 Code: connect, browse threads and projects, chat, approve/stop, send annotations | Automatic reconnect to T3 *(gap)* |
+| T3 Code: connect, browse threads and projects, chat, approve/stop, send annotations | Automatic reconnect to T3 |
 | Agent plugins inherited from revdiff | aidiff-branded plugins *(gap)* |
 
 ## 6. Business requirements

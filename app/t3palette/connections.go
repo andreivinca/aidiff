@@ -22,6 +22,7 @@ const connectionsHeader = 2
 var connectionsHelp = []string{
 	"",
 	" enter   use connection",
+	" x       forget server",
 	" alt+→   back",
 }
 
@@ -40,7 +41,8 @@ type connectionsSidebar struct {
 type connRow struct {
 	label   string
 	detail  string
-	session Session // the server's connection; nil for this machine and the connect row
+	session Session // the server's connection; nil for this machine, a saved server not connected and the connect row
+	spec    string  // a saved server not connected: what dials it
 	local   bool    // this machine
 	connect bool    // the row that connects to another server
 	live    bool    // the selected connection, which the projects sidebar and the commands work with
@@ -103,6 +105,11 @@ func (t *Palette) connRows() []connRow {
 		}
 		rows = append(rows, connRow{label: name, detail: s.MachineName(), session: s, live: l == liveLabel})
 	}
+	connected := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		connected[l] = true
+	}
+	rows = append(rows, t.savedRowsLocked(connected)...)
 	return append(rows, connRow{label: "Connect to a server…", connect: true})
 }
 
@@ -142,6 +149,9 @@ func (b *connectionsSidebar) row(r connRow, width int, selected, focused bool) s
 	if r.live {
 		style = style.Bold(true)
 	}
+	if r.spec != "" {
+		style = style.Faint(true) // saved, not connected
+	}
 	label := ansi.Truncate(" "+mark+r.label, width, "…")
 	rest := width - ansi.StringWidth(label)
 	detail := ""
@@ -168,6 +178,10 @@ func (b *connectionsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		b.sel = len(rows) - 1
 	case "enter", " ":
 		return b.use(rows, b.sel)
+	case "x":
+		if r := rows[b.sel]; r.session != nil || r.spec != "" {
+			return b.t.forgetPrompt(r), false
+		}
 	case "esc":
 		return nil, true
 	}
@@ -199,6 +213,8 @@ func (b *connectionsSidebar) use(rows []connRow, i int) (tea.Cmd, bool) {
 	switch {
 	case r.connect:
 		return b.t.connectPicker(nil), true
+	case r.spec != "":
+		return b.t.connect(r.spec), true
 	case r.session != nil:
 		if !b.t.useLive(r.session) {
 			return flash("T3: " + r.label + ": the connection was closed meanwhile"), true

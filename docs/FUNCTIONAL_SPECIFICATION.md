@@ -79,7 +79,7 @@ Behavior:
 - Every separator can be dragged with the mouse. It shows `↔` on its middle row and turns blue while dragging.
 - A click focuses the pane under the pointer, and alt+← / alt+→ move focus left / right without wrapping: file tree ↔ diff ↔ pane 1 ↔ pane 2. The review's tree (or markdown TOC) and diff are stops of their own; coming from a pane lands on the diff, coming from the left on the tree. While the review is typing (annotation, search) or shows a popup, the keys skip its panes. alt+← on the review shows the side panel (the projects panel of the selected T3 server, or the history panel for `local`) and focuses it; alt+← again shows the connections panel.
 - When a pane's program exits, the pane closes. When the last pane closes, the review gets the full width back.
-- The status bar runs along the bottom of the whole window, under the panels and panes. The part of it under the focused panel (a side panel, the review's tree or diff, a terminal or chat pane) turns the green of the theme's added lines, with their text color, so the focused panel stands out (a fixed green when the review gives none); the mark follows focus, window resizes and divider drags (reverse video when the bar has no color). While a chat pane has focus, the right of the bar shows `← activity` (while the input is empty) and `ctrl+p commands`; the chat draws no hint row of its own. It shows the machine name, then the project (the repository or folder name, or the T3 project's title), plus `T3` when the review is a T3 thread.
+- The status bar runs along the bottom of the whole window, under the panels and panes. The bar is the green of the theme's added lines, with their text color (a fixed green when the review gives none), except the part under the focused panel (a side panel, the review's tree or diff, a terminal or chat pane), which keeps the theme's status bar color (orange by default), so the focused panel stands out; the mark follows focus, window resizes and divider drags (reverse video when the bar has no color). While a chat pane has focus, the right of the bar shows `← activity` (while the input is empty) and `ctrl+p commands`; the chat draws no hint row of its own. It shows the machine name, then the project (the repository or folder name, or the T3 project's title), plus `T3` when the review is a T3 thread.
 
 ## 6. Terminal pane
 
@@ -95,19 +95,21 @@ Behavior:
 
 ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleting the `>` searches files by name instead; typing `>` again goes back to the commands.
 
-- **Files:** a review of changes lists its changed files (all of them for an empty query); the **Project files** view searches every file of the folder, folders not opened included: `git ls-files` (tracked and untracked, ignored ones left out) for a local repository, every file of a plain folder, `projects.searchEntries` on a T3 server. A file name starting with the query ranks first, then one holding it, then a path holding it, then a path holding its characters in order. Each row is the file name with its folder beside it; Enter shows the file, opening the folders above it in the tree. At most 200 are listed.
+- **Files:** a review of changes lists its changed files first (all of them for an empty query); under a rule titled **In the project** come the other files of its project that match (a local repository's, or a T3 review's folder), and `no changed file matches` stands above the rule when none of the changes does. Picking a project file switches the review to its file tree and shows the file there. The **Project files** view searches every file of the folder, folders not opened included: `git ls-files` (tracked and untracked, ignored ones left out) for a local repository, every file of a plain folder, `projects.searchEntries` on a T3 server. A file name starting with the query ranks first, then one holding it, then a path holding it, then a path holding its characters in order. Each row is the file name with its folder beside it; Enter shows the file, opening the folders above it in the tree. At most 200 are listed.
+- **Whole files or changed blocks** are chosen in the toolbar's context dropdown (`↕ Whole files ▾` / `↕ N lines ▾`): **Whole files** on top, then the context sizes, picking one shows the changed blocks with that many lines around each change; Diff View… lists only what to compare and the file tree.
 - **Switching views** (the View menu's Changes / Project files, a Diff View… row) keeps the file on screen selected in the new view when that view lists it; a file that is not among the changes leaves the first changed file selected.
 
 | Entry | When shown |
 |---|---|
 | Open Terminal | always |
+| Add Project… | `local` is the selected connection: browse this machine's folders (starting at the parent of the folder on screen, else the home folder; a typed path, absolute, `~/…` or relative, goes there) and open one in its own workspace, added to the end of the history panel. `a` in the history panel does the same |
 | T3: Connect to server… | not connected |
-| T3: New thread…, T3: Projects… | connected |
+| T3: New thread…, T3: Add Project… (browse the server's folders and make one a project; `a` in the projects panel does the same) | connected |
 | Diff View… | the run's own review of a git repository is on screen |
 | T3: Diff View… | a T3 review is on screen |
 | Copy annotations | always |
 | T3: Send annotations to agent | a thread is open |
-| T3: Reconnect, T3: Connect to another server… | connected |
+| T3: Connect to another server… | connected |
 | Quit | always |
 | T3: `<thread title>`, up to 8 recent (`▸` marks the current one), T3: All threads…, under a **Threads** title | connected |
 
@@ -130,6 +132,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
 - **Workspaces:** each project has its own review, chat pane, terminals, pane sizes and focus. The first visit opens its most recently updated thread (or its root when it has none) with a chat. Leaving a project keeps its workspace running in the background: going back brings it as it was, with the thread, cursor, annotations, chat input and pane sizes the user left, and the diff refreshes. Each folder of the history panel is a workspace too, kept the same way, the run's own folder included. A run that reviews no folder (stdin, a compare pair) is not kept: it closes, with the terminals opened with it, the first time another workspace is opened (its annotations go to history). The quit dialog counts the panes of every workspace.
 - **Send feedback:** **T3: Send annotations to agent** sends every annotation as one message.
 - **Copy annotations:** puts every annotation, in the output format, on the clipboard, to paste into an agent in a terminal pane or anywhere else. It uses wl-copy (Wayland) or xclip (X11), and under WSL without either, Windows' `clip.exe`.
+- **Annotation list tools:** the `@` popup ends with a row of tools, for local and T3 reviews alike: `c` **copy all** does what Copy annotations does, `D` **delete all** removes every annotation of the review after a confirmation popup (the annotated-only filter goes off with them). A click on a tool does the same.
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
   - queued messages

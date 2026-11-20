@@ -8,13 +8,15 @@ import (
 )
 
 // The status line under the whole window shows which panel has focus: the
-// columns under it turn green, so the mark follows focus and every resize.
-// The green is the wrapped model's own when it has one (focusColorer), such
-// as the review theme's added lines; else the fixed one below.
+// line is green, and the columns under the focused panel keep the line's own
+// color (the theme's status bar, orange by default), so the mark follows
+// focus and every resize. The green is the wrapped model's own when it has
+// one (focusColorer), such as the review theme's added lines; else the fixed
+// one below.
 
-// The green of the focused panel's columns: truecolor, and the nearest
-// 256-color palette entry for a line drawn with the palette. It is light
-// enough for the line's dark text.
+// The green of the columns outside the focused panel: truecolor, and the
+// nearest 256-color palette entry for a line drawn with the palette. It is
+// light enough for the line's dark text.
 const (
 	focusGreen        = "48;2;0;215;0" // #00d700
 	focusGreenPalette = "48;5;40"      // the same green
@@ -66,22 +68,27 @@ func (m Model) focusedSpan() (from, to int, ok bool) {
 	return from, to, from < to
 }
 
-// withFocusMark draws line, the status line, with the focused panel's
-// columns on green. A line with no background color gets those columns in
-// reverse video instead.
+// withFocusMark draws line, the status line, green except for the focused
+// panel's columns, which keep the line's own colors. A line with no
+// background color gets those columns in reverse video instead.
 func (m Model) withFocusMark(line string) string {
 	from, to, ok := m.focusedSpan()
 	if !ok {
 		return line
 	}
 	mid := ansi.Cut(line, from, to) // each piece carries the escapes of the whole line
-	mark := "\x1b[7m"
 	bg, fg := m.focusColors(line)
-	if bg != "" {
-		mid = sgrSeq.ReplaceAllStringFunc(mid, func(seq string) string { return withColors(seq, bg, fg) })
-		mark = "\x1b[" + strings.Trim(bg+";"+fg, ";") + "m"
+	if bg == "" {
+		return ansi.Cut(line, 0, from) + ansi.ResetStyle + "\x1b[7m" + mid + ansi.ResetStyle + ansi.Cut(line, to, m.winW)
 	}
-	return ansi.Cut(line, 0, from) + ansi.ResetStyle + mark + mid + ansi.ResetStyle + ansi.Cut(line, to, m.winW)
+	mark := "\x1b[" + strings.Trim(bg+";"+fg, ";") + "m"
+	green := func(piece string) string {
+		if piece == "" {
+			return ""
+		}
+		return ansi.ResetStyle + mark + sgrSeq.ReplaceAllStringFunc(piece, func(seq string) string { return withColors(seq, bg, fg) }) + ansi.ResetStyle
+	}
+	return green(ansi.Cut(line, 0, from)) + mid + green(ansi.Cut(line, to, m.winW))
 }
 
 // sgrSeq matches a select-graphic-rendition escape sequence.

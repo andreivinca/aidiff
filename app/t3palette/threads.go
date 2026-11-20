@@ -2,7 +2,6 @@ package t3palette
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"strings"
 
@@ -19,10 +18,9 @@ const runtimeMode = "full-access"
 
 // Picker rows that are not a thread, a project or a folder.
 type (
-	newThreadRow  struct{}              // starts a thread
-	newProjectRow struct{}              // adds a project
-	dirRow        struct{ path string } // a folder of the server's machine
-	useFolder     struct{ path string } // the folder being browsed, as a new project
+	newThreadRow struct{}              // starts a thread
+	dirRow       struct{ path string } // a folder of the server's machine
+	useFolder    struct{ path string } // the folder being browsed, as a new project
 )
 
 // threadPicker lists the live server's threads, freshly fetched.
@@ -65,45 +63,19 @@ func (t *Palette) threadList(s Session, sh t3client.Shell, p *t3client.Project) 
 	}
 }
 
-// projectsCmd lists the live server's projects, freshly fetched.
-func (t *Palette) projectsCmd(tea.Model) tea.Cmd {
+// addT3Project browses the live server's folders for a new project,
+// starting beside the projects it has; the projects panel lists the
+// projects themselves.
+func (t *Palette) addT3Project(tea.Model) tea.Cmd {
 	return t.onLive(func(s Session) tea.Cmd {
 		return ask(func(ctx context.Context) tea.Msg {
 			sh, err := t.fetchShell(ctx, s)
 			if err != nil {
 				return t3Error("list projects", err)
 			}
-			return t.projectList(s, sh)
+			return t.browse(s, startFolder(sh))()
 		})
 	})
-}
-
-// projectList is the project picker for s's listing sh: a new project
-// first, then the projects with their thread counts. Picking one leads to
-// its threads.
-func (t *Palette) projectList(s Session, sh t3client.Shell) tea.Msg {
-	items := make([]splitview.PickerItem, 0, len(sh.Projects)+1)
-	items = append(items, splitview.PickerItem{Label: "New project…", Detail: "a folder on " + s.Label(), Value: newProjectRow{}})
-	for _, it := range projectItems(sh) {
-		p, _ := it.Value.(t3client.Project)
-		n := len(projectThreads(sh, &p))
-		it.Detail = fmt.Sprintf("%s · %d thread%s", p.WorkspaceRoot, n, plural(n))
-		items = append(items, it)
-	}
-	return splitview.ShowPickerMsg{
-		Title: "T3 Code: " + s.Label() + " · project",
-		Items: items,
-		OnPick: func(it splitview.PickerItem) tea.Cmd {
-			if _, add := it.Value.(newProjectRow); add {
-				return t.browse(s, startFolder(sh))
-			}
-			p, _ := it.Value.(t3client.Project)
-			t.selectProject(s, p)
-			return func() tea.Msg {
-				return t.threadList(s, sh, &p)
-			}
-		},
-	}
 }
 
 // selectProject makes p, a project of s, the one new threads start in,

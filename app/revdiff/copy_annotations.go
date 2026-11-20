@@ -29,7 +29,15 @@ func copyAnnotationsCommand(cb clipboardWriter) splitview.Command {
 		if n == 0 {
 			return flashCmd("no annotations to copy")
 		}
-		text := store.FormatOutput()
+		return copyAnnotations(cb)(store.FormatOutput(), n)
+	}}
+}
+
+// copyAnnotations puts text, n annotations, on cb and says so on the bottom
+// row: the palette's Copy annotations, and the @ list's copy-all tool
+// (ui.ModelConfig.CopyAnnotations).
+func copyAnnotations(cb clipboardWriter) func(text string, n int) tea.Cmd {
+	return func(text string, n int) tea.Cmd {
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), copyTimeout)
 			defer cancel()
@@ -38,7 +46,7 @@ func copyAnnotationsCommand(cb clipboardWriter) splitview.Command {
 			}
 			return splitview.FlashMsg{Text: fmt.Sprintf("%d annotation(s) copied", n)}
 		}
-	}}
+	}
 }
 
 // flashCmd shows text on the bottom row.

@@ -24,7 +24,7 @@ Renaming the config directory and the env vars would break existing setups, so i
 |---|---|
 | Terminal pane | Scrollback (5000 lines) is kept, but there is no way to scroll it. Wheel events go to the program. |
 | Terminal pane | On macOS, closing a pane signals only the process group, so background jobs in other groups may survive. |
-| T3 | No automatic reconnect or backoff. A dropped connection needs **T3: Reconnect**. |
+| T3 | Only the live connection reconnects by itself. A connection kept in the background that drops stays down until it is selected and used again. A link that dies silently (no TCP reset, as after a long sleep) is noticed only when the connection next fails. |
 | T3 | Tied to orchestration protocol 2. Any T3 server protocol change needs a client update. |
 | T3 | New threads always start in `full-access` runtime mode. |
 | T3 | Remote `http://` servers are accepted, which sends the token in cleartext. |

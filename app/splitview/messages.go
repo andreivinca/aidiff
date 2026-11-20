@@ -37,6 +37,9 @@ type PickerItem struct {
 	Label  string // what the user filters on and picks
 	Detail string // dim text on the right, also matched by the filter
 	Value  any    // handed back to OnPick untouched
+	// Group puts the row under a titled rule, after the ungrouped rows; the
+	// items of a group are listed together, in order.
+	Group string
 }
 
 // ShowPickerMsg opens a filterable list in the palette. Enter hands the

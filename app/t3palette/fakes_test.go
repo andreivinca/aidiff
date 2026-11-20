@@ -27,8 +27,9 @@ type fakeSession struct {
 	server  *fakeServer
 	redial  func() (Session, error) // nil: redialing fails
 
-	mu     sync.Mutex
-	closed int
+	mu      sync.Mutex
+	closed  int
+	dropped chan struct{} // closed by drop: the connection ended on its own
 }
 
 func newFakeSession(label string, sh t3client.Shell) *fakeSession {
@@ -65,6 +66,24 @@ func (s *fakeSession) Server() Server {
 
 func (s *fakeSession) Conn() *t3client.Conn {
 	return nil
+}
+
+func (s *fakeSession) Done() <-chan struct{} {
+	return s.doneChan()
+}
+
+func (s *fakeSession) doneChan() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dropped == nil {
+		s.dropped = make(chan struct{})
+	}
+	return s.dropped
+}
+
+// drop ends the connection as a dropped link would, not as Close does.
+func (s *fakeSession) drop() {
+	close(s.doneChan())
 }
 
 func (s *fakeSession) Redial(context.Context) (Session, error) {
@@ -222,6 +241,22 @@ func newHarness(t *testing.T, cfg Config, start *Review) *harness {
 	h.p.Start(h.program, nil)
 	t.Cleanup(h.p.Close)
 	return h
+}
+
+// sent is what the palette sent the program so far.
+func (h *harness) sent() []tea.Msg {
+	h.program.mu.Lock()
+	defer h.program.mu.Unlock()
+	return append([]tea.Msg(nil), h.program.msgs...)
+}
+
+// reconnect redials old's server and puts the new session in its place, as
+// the reconnect after a drop does, with inner the review on screen.
+func (h *harness) reconnect(t *testing.T, old Session, inner tea.Model) []tea.Msg {
+	t.Helper()
+	s, sh, err := reach(t.Context(), old.Redial)
+	require.NoError(t, err)
+	return run(h.p.takeOver(old, s, sh, inner))
 }
 
 // settle waits for the palette's background work: closes, stops, saves.

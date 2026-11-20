@@ -69,26 +69,21 @@ func commandNames(cmds []splitview.Command) []string {
 
 func TestPalette_CommandsFollowState(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
-	assert.Equal(t, []string{"T3: Connect to server…"}, commandNames(h.p.Commands()))
+	assert.Equal(t, []string{"Add Project…", "T3: Connect to server…"}, commandNames(h.p.Commands()))
 
 	box := newFakeSession("ssh://boxdev", testShell())
 	msgs := h.connect(t, "ssh://boxdev", box)
 	find[splitview.ShowSidebarMsg](t, msgs) // connecting shows the projects sidebar
-	picker, ok := h.p.projectList(box, testShell()).(splitview.ShowPickerMsg)
-	require.True(t, ok)
-	assert.Equal(t, "New project…", picker.Items[0].Label, "the project list leads with a new project")
-	assert.Equal(t, "Sabra2", picker.Items[1].Label)
-	assert.Contains(t, picker.Items[1].Detail, "2 threads")
-	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: Fix login", "T3: Older work",
-		"T3: Reconnect", "T3: Connect to another server…"},
+	assert.Equal(t, []string{"T3: New thread…", "T3: Add Project…", "T3: Fix login", "T3: Older work",
+		"T3: Connect to another server…"},
 		commandNames(h.p.Commands()), "connected: the server's threads, newest first; the local review stays on screen")
 	assert.Equal(t, "ssh://boxdev", h.p.Commands()[0].Detail)
 	assert.Nil(t, h.p.OnScreen())
 
 	h.swap(h.openThread(t, box, loginID), annotatedModel())
 	cmds := h.p.Commands()
-	assert.Equal(t, []string{"T3: New thread…", "T3: Projects…", "T3: ▸ Fix login", "T3: Older work",
-		"T3: Diff View…", "T3: Send annotations to agent", "T3: Reconnect", "T3: Connect to another server…"},
+	assert.Equal(t, []string{"T3: New thread…", "T3: Add Project…", "T3: ▸ Fix login", "T3: Older work",
+		"T3: Diff View…", "T3: Send annotations to agent", "T3: Connect to another server…"},
 		commandNames(cmds), "the thread on screen is marked, can change its diff and take the annotations")
 	assert.Equal(t, "Sabra2", cmds[0].Detail, "new threads start in the reviewed project")
 	assert.Equal(t, "Sabra2 · idle · main", cmds[2].Detail)
@@ -168,7 +163,7 @@ func TestPalette_ReconnectRebuildsTheReviewOverTheNewSession(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, loginID))
 	inner := annotatedModel()
 
-	msgs := run(h.p.reconnect(inner))
+	msgs := h.reconnect(t, a, inner)
 	rebuilt := find[splitview.SwitchWorkspaceMsg](t, msgs)
 	model, ok := rebuilt.Model.(fakeModel)
 	require.True(t, ok)
@@ -186,19 +181,6 @@ func TestPalette_ReconnectRebuildsTheReviewOverTheNewSession(t *testing.T) {
 	assert.Empty(t, h.history(), "the annotations moved to the new review, not to history")
 }
 
-func TestPalette_ReconnectFailureKeepsTheSession(t *testing.T) {
-	a := newFakeSession("ssh://a", testShell())
-	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, loginID))
-	start := h.p.OnScreen()
-
-	msgs := run(h.p.reconnect(annotatedModel()))
-	assert.Contains(t, flashes(msgs), "T3: reconnect: server unreachable")
-	h.settle()
-	assert.Same(t, start, h.p.OnScreen())
-	assert.Same(t, a, h.p.liveSession())
-	assert.Zero(t, a.closes())
-}
-
 func TestPalette_ReconnectYieldsToAConnectionMadeMeanwhile(t *testing.T) {
 	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
 	a := newFakeSession("ssh://a", testShell())
@@ -210,7 +192,7 @@ func TestPalette_ReconnectYieldsToAConnectionMadeMeanwhile(t *testing.T) {
 		return a2, nil
 	}
 
-	msgs := run(h.p.reconnect(nil))
+	msgs := h.reconnect(t, a, nil)
 	assert.Contains(t, flashes(msgs), "T3: the connection changed meanwhile; reconnect canceled")
 	h.settle()
 	assert.Same(t, b, h.p.liveSession())
@@ -362,7 +344,7 @@ func TestPalette_OpenOnAClosedSessionIsRefused(t *testing.T) {
 	a.redial = func() (Session, error) {
 		return a2, nil
 	}
-	run(h.p.reconnect(nil)) // a2 takes a's place
+	h.reconnect(t, a, nil) // a2 takes a's place
 	h.settle()
 	require.Equal(t, 1, a.closes())
 

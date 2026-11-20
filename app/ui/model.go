@@ -625,6 +625,8 @@ type Model struct {
 	openFile    OpenFileMsg       // a file to select once the file list loads (openfile.go)
 	revert      revertState       // x / X waiting for its confirmation (revert.go)
 
+	copyAnnotations func(text string, n int) tea.Cmd // the @ list's copy-all tool (ModelConfig.CopyAnnotations)
+
 	remoteEditor func(file string, line int) *exec.Cmd // e / f12 on the files' host (ModelConfig.RemoteEditor)
 
 	loadBranch   func() (string, error) // re-reads identity.branch; nil when it is fixed (identity.go)
@@ -877,6 +879,10 @@ type ModelConfig struct {
 	Reverter Reverter
 	// Confirm opens the popup x and X ask in; nil asks on the status bar.
 	Confirm Confirm
+	// CopyAnnotations puts text, the n annotations formatted as on exit, on
+	// the clipboard, for the @ list's copy-all tool; nil leaves the tool out
+	// (annotlist_tools.go).
+	CopyAnnotations func(text string, n int) tea.Cmd
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -1039,6 +1045,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		reviewed:             reviewedState{cache: make(map[string]string), pending: make(map[string]uint64)},
 		reload:               reloadState{applicable: cfg.ReloadApplicable},
 		revert:               revertState{reverter: cfg.Reverter, confirm: cfg.Confirm},
+		copyAnnotations:      cfg.CopyAnnotations,
 		compact:              compactState{applicable: cfg.CompactApplicable},
 		annot:                annotationState{rowCache: make(map[annotCacheKey][]string)},
 		renderCache:          &diffRenderCache{},
@@ -1120,6 +1127,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleOpenFile(msg)
 	case revertedMsg:
 		return m.handleReverted(msg)
+	case deleteAllAnnotationsMsg:
+		return m.deleteAllAnnotations()
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).
@@ -1433,6 +1442,9 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.cancelThemeSelect()
 		case overlay.OutcomeFileChosen:
 			model, cmd := m.jumpToFile(out.FileChoice.Path)
+			return true, model, cmd
+		case overlay.OutcomeAnnotCopyAll, overlay.OutcomeAnnotDeleteAll:
+			model, cmd := m.handleAnnotListTool(out.Kind)
 			return true, model, cmd
 		case overlay.OutcomeClosed, overlay.OutcomeNone:
 		}

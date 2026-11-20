@@ -191,7 +191,7 @@ func pickRow(it PickerItem, onPick func(PickerItem) tea.Cmd) row {
 		}
 		return m, onPick(it)
 	}
-	return row{label: it.Label, detail: it.Detail, run: run}
+	return row{label: it.Label, detail: it.Detail, group: it.Group, run: run}
 }
 
 // textRow is the picker's free-text row: it hands text to onText.

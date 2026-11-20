@@ -33,7 +33,7 @@ func (m Model) buildAnnotListSpec() overlay.AnnotListSpec {
 			Comment:          a.Comment,
 		}
 	}
-	return overlay.AnnotListSpec{Items: items}
+	return overlay.AnnotListSpec{Items: items, CanCopy: m.copyAnnotations != nil, CanDelete: true}
 }
 
 // jumpToAnnotationTarget jumps to an annotation target returned by the overlay

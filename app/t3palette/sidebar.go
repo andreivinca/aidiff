@@ -123,6 +123,7 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 var sidebarHelp = []string{
 	"",
 	" enter        open project",
+	" a            add project",
 	" ctrl+b       show / hide",
 	" ctrl/alt+1…9 switch project",
 	" alt+← alt+→  move focus",
@@ -173,6 +174,8 @@ func (b *projectsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		b.sel = max(0, len(list)-1)
 	case "enter", " ":
 		return b.open(list, b.sel)
+	case "a":
+		return b.t.addT3Project(nil), true
 	case "esc":
 		return nil, true
 	default:

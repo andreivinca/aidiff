@@ -116,25 +116,16 @@ func (f fakeCompacter) Compact() bool           { return f.compact }
 func (f fakeCompacter) CompactApplicable() bool { return f.applicable }
 func (f fakeCompacter) CompactContext() int     { return 7 }
 
-func TestViewRowSwitchesWholeFiles(t *testing.T) {
+func TestKeepViewRecordsWholeFiles(t *testing.T) {
 	p := &Palette{}
-	assert.Nil(t, p.viewRow(nil), "a model that cannot show blocks gets no row")
-	assert.Nil(t, p.viewRow(fakeCompacter{applicable: false}))
+	p.keepView(nil)
+	p.keepView(fakeCompacter{applicable: false})
+	assert.Equal(t, View{}, p.view, "a model that cannot show blocks leaves it")
 
-	rows := p.viewRow(fakeCompacter{compact: true, applicable: true})
-	require.Len(t, rows, 2, "both, the one in effect checked")
-	assert.Equal(t, "✓ Changed blocks only", rows[0].Label)
-	assert.Equal(t, wholeFilesRow{compact: true}, rows[0].Value)
-	assert.Equal(t, "  Whole files", rows[1].Label)
-	assert.Equal(t, wholeFilesRow{}, rows[1].Value)
-
+	p.keepView(fakeCompacter{compact: true, applicable: true})
 	assert.Equal(t, View{Context: 7}, p.view, "the blocks on screen are kept for the next review")
 
-	rows = p.viewRow(fakeCompacter{applicable: true})
-	require.Len(t, rows, 2)
-	assert.Equal(t, "  Changed blocks only", rows[0].Label)
-	assert.Equal(t, "7 lines around each change", rows[0].Detail)
-	assert.Equal(t, "✓ Whole files", rows[1].Label)
+	p.keepView(fakeCompacter{applicable: true})
 	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.view)
 	assert.Equal(t, View{WholeFiles: true, Context: 7}, p.newReview(nil, t3client.Target{}).View, "a new review shows its files the same way")
 }

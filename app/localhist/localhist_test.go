@@ -37,3 +37,26 @@ func TestStore_AddMovesToTopAndCaps(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, list, maxEntries)
 }
+
+func TestConnections_AddListRemove(t *testing.T) {
+	c := Connections{Path: filepath.Join(t.TempDir(), "connections.json")}
+	list, err := c.List()
+	require.NoError(t, err)
+	assert.Empty(t, list, "no file: no servers")
+
+	require.NoError(t, c.Add("ssh://a", "boxa"))
+	require.NoError(t, c.Add("local", "pc"))
+	require.NoError(t, c.Add("ssh://a", "boxa2"))
+	list, err = c.List()
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	assert.Equal(t, "ssh://a", list[0].Spec, "the newest connection on top, once")
+	assert.Equal(t, "boxa2", list[0].Machine)
+	assert.Equal(t, "local", list[1].Spec)
+
+	require.NoError(t, c.Remove("ssh://a"))
+	list, err = c.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "local", list[0].Spec)
+}
