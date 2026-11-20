@@ -33,15 +33,9 @@ type toolbarState struct {
 	// showFiles switches the review to every file of its folder, or back to
 	// its changes; nil hides the View menu's rows for it
 	showFiles func(files bool) tea.Cmd
-	// loadComparisons lists what the changes can be compared as, for the View
-	// menu, answering with a ComparisonsMsg; nil lists none
-	loadComparisons func() tea.Cmd
-	comparisons     []Comparison // the latest list
-	comparisonsErr  string       // why it could not be listed, "" when it was
-	loading         bool         // a list is on its way
-	open            bool         // a button is active: its menu shows, keys go to it
-	button          int          // the active button, an index of toolbarButtons
-	item            int          // the highlighted item of its menu
+	open      bool // a button is active: its menu shows, keys go to it
+	button    int  // the active button, an index of toolbarButtons
+	item      int  // the highlighted item of its menu
 }
 
 // tbButton is one button of the toolbar.
@@ -51,6 +45,9 @@ type tbButton struct {
 	action      keymap.Action                      // the action opening a dropdown; "" for none
 	menu        func(m Model) []tbItem             // a dropdown's items; nil for a plain button
 	run         func(m Model) (tea.Model, tea.Cmd) // a plain button's tool
+	// segment draws the button as its icon alone, one of a toggle's
+	// segments beside each other; on marks the segment in effect
+	segment, on bool
 }
 
 // tbItem is one item of a dropdown menu.
@@ -113,8 +110,8 @@ func (m Model) handleToolbarAndMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // toolbarButtons are the toolbar's buttons as the review allows them.
 func (m Model) toolbarButtons() []tbButton {
-	buttons := []tbButton{{icon: "◧", label: "View", menu: Model.viewMenu, action: keymap.ActionViewMenu,
-		key: m.toolbarKey(keymap.ActionViewMenu)}}
+	buttons := append(m.viewToggle(), tbButton{icon: "◧", label: "View", menu: Model.viewMenu, action: keymap.ActionViewMenu,
+		key: m.toolbarKey(keymap.ActionViewMenu)})
 	if m.compact.applicable {
 		label := fmt.Sprintf("%d lines", m.modes.compactContext)
 		if !m.modes.compact {
@@ -151,41 +148,39 @@ func (m Model) toggleItem(label string, action keymap.Action, on bool) tbItem {
 	}}
 }
 
-// viewMenu is the View dropdown: whole files or blocks, then the toggles.
+// viewToggle is the toggle at the toolbar's start between the review's
+// changes (±) and every file of its folder (☰), none for a review that
+// cannot switch.
+func (m Model) viewToggle() []tbButton {
+	if m.toolbar.showFiles == nil {
+		return nil
+	}
+	files := m.browsingFolders()
+	return []tbButton{
+		{icon: "±", label: "Changes", segment: true, on: !files, run: switchView(false)},
+		{icon: "☰", label: "Project files", segment: true, on: files, run: switchView(true)},
+	}
+}
+
+// switchView shows the review's changes, or every file of its folder.
+func switchView(toFiles bool) func(m Model) (tea.Model, tea.Cmd) {
+	return func(m Model) (tea.Model, tea.Cmd) {
+		if m.toolbar.showFiles == nil || m.browsingFolders() == toFiles {
+			return m, nil
+		}
+		return m, m.toolbar.showFiles(toFiles)
+	}
+}
+
+// viewMenu is the View dropdown: changes or project files, then the toggles.
+// Whole files or changed blocks is the Compare tool's choice.
 func (m Model) viewMenu() []tbItem {
 	var items []tbItem
-	if show := m.toolbar.showFiles; show != nil {
+	if m.toolbar.showFiles != nil {
 		files := m.browsingFolders()
-		switchTo := func(toFiles bool) func(m Model) (tea.Model, tea.Cmd) {
-			return func(m Model) (tea.Model, tea.Cmd) {
-				if m.browsingFolders() == toFiles {
-					return m, nil
-				}
-				return m, show(toFiles)
-			}
-		}
 		items = append(items,
-			tbItem{label: "Changes", checked: !files, run: switchTo(false)},
-			tbItem{label: "Project files", checked: files, run: switchTo(true)},
-			tbItem{sep: true})
-		if comparisons := m.comparisonItems(); !files && len(comparisons) > 0 {
-			items = append(append(items, comparisons...), tbItem{sep: true}) // what the changes compare, then how they show
-		}
-	}
-	if m.compact.applicable {
-		compact := m.modes.compact
-		switchTo := func(on bool) func(m Model) (tea.Model, tea.Cmd) {
-			return func(m Model) (tea.Model, tea.Cmd) {
-				if m.modes.compact == on {
-					return m, nil
-				}
-				return m, m.toggleCompactMode()
-			}
-		}
-		key := m.toolbarKey(keymap.ActionToggleCompact)
-		items = append(items,
-			tbItem{label: "Changed blocks only", key: key, checked: compact, run: switchTo(true)},
-			tbItem{label: "Whole files", key: key, checked: !compact, run: switchTo(false)},
+			tbItem{label: "Changes", checked: !files, run: switchView(false)},
+			tbItem{label: "Project files", checked: files, run: switchView(true)},
 			tbItem{sep: true})
 	}
 	items = append(items,
@@ -200,27 +195,6 @@ func (m Model) viewMenu() []tbItem {
 		items = append(items, m.toggleItem("Untracked files", keymap.ActionToggleUntracked, m.modes.showUntracked))
 	}
 	return append(items, m.toggleItem("File tree", keymap.ActionToggleTree, !m.layout.treeHidden))
-}
-
-// comparisonItems are the comparisons under Changes: what the changes are
-// compared as, the one shown checked.
-func (m Model) comparisonItems() []tbItem {
-	t := m.toolbar
-	switch {
-	case t.loadComparisons == nil:
-		return nil
-	case t.comparisonsErr != "" && !t.loading:
-		return []tbItem{{label: t.comparisonsErr, disabled: true}}
-	case len(t.comparisons) == 0:
-		return []tbItem{{label: "loading…", disabled: true}}
-	}
-	items := make([]tbItem, 0, len(t.comparisons))
-	for _, c := range t.comparisons {
-		choose := c.Choose
-		items = append(items, tbItem{label: c.Label, checked: c.Current,
-			run: func(m Model) (tea.Model, tea.Cmd) { return m, choose }})
-	}
-	return items
 }
 
 // contextSizes are the context menu's sizes, lines around each change.
@@ -268,21 +242,6 @@ func indentW(it tbItem) int {
 	return 0
 }
 
-// Comparison is a comparison under the View menu's Changes: a way the
-// review's changes can be compared, such as the uncommitted ones.
-type Comparison struct {
-	Label   string
-	Current bool    // the review on screen compares this
-	Choose  tea.Cmd // rebuilds the review comparing it
-}
-
-// ComparisonsMsg brings the comparisons ModelConfig.Comparisons listed, or
-// why it could not.
-type ComparisonsMsg struct {
-	Items []Comparison
-	Err   error
-}
-
 // shifted reports 1 for a key that needs shift on a US layout, such as
 // alt++, and 0 otherwise.
 func shifted(key string) int {
@@ -298,6 +257,9 @@ type tbSpan struct {
 	x, w int
 	text string // the button's text, its key included
 	key  string // the key part of text, drawn muted
+	// segment and on are the button's: a toggle segment, drawn in the
+	// accent color when on and muted when not
+	segment, on bool
 }
 
 // toolbarDetail is how much each button says, from most to least.
@@ -328,9 +290,12 @@ func (m Model) layoutAt(buttons []tbButton, width int, d toolbarDetail) ([]tbSpa
 	const gap = 2
 	var spans []tbSpan
 	x := 1 // the header's leading space
-	for _, b := range buttons {
+	for i, b := range buttons {
+		if i > 0 && b.segment && buttons[i-1].segment {
+			x -= gap - 1 // a toggle's segments sit one cell apart
+		}
 		text, key := b.icon, ""
-		if d != tbIconOnly {
+		if d != tbIconOnly && !b.segment {
 			text += " " + b.label
 			if b.menu != nil {
 				text += " ▾"
@@ -344,7 +309,7 @@ func (m Model) layoutAt(buttons []tbButton, width int, d toolbarDetail) ([]tbSpa
 		if x+w > width {
 			return spans, false
 		}
-		spans = append(spans, tbSpan{x: x, w: w, text: text, key: key})
+		spans = append(spans, tbSpan{x: x, w: w, text: text, key: key, segment: b.segment, on: b.on})
 		x += w + gap
 	}
 	return spans, true
@@ -356,6 +321,7 @@ func (m Model) renderToolbar(width int) string {
 	buttons := m.toolbarButtons()
 	normal := string(m.resolver.Color(style.ColorKeyNormalFg))
 	muted := string(m.resolver.Color(style.ColorKeyMutedFg))
+	accent := string(m.resolver.Color(style.ColorKeyAccentFg))
 	var b strings.Builder
 	x := 0
 	for i, s := range m.toolbarLayout(buttons, width) {
@@ -368,7 +334,14 @@ func (m Model) renderToolbar(width int) string {
 		if s.key == "" {
 			label = s.text
 		}
-		b.WriteString(normal + label)
+		switch {
+		case s.segment && s.on:
+			b.WriteString(accent + "\033[1m" + label + "\033[22m")
+		case s.segment:
+			b.WriteString(muted + label)
+		default:
+			b.WriteString(normal + label)
+		}
 		if s.key != "" {
 			b.WriteString(muted + " " + s.key)
 		}
@@ -498,29 +471,7 @@ func (m *Model) openToolbar(button int) tea.Cmd {
 	m.toolbar.open, m.toolbar.button, m.toolbar.item = true, button, -1
 	m.layout.focus = paneDiff
 	m.moveMenuItem(1)
-	return m.loadComparisonsFor(button)
-}
-
-// loadComparisonsFor asks for the comparisons when button is View and the
-// review shows its changes: they are listed afresh each time the menu opens,
-// as branches come and go.
-func (m *Model) loadComparisonsFor(button int) tea.Cmd {
-	buttons := m.toolbarButtons()
-	if m.toolbar.loadComparisons == nil || m.browsingFolders() || button >= len(buttons) || buttons[button].action != keymap.ActionViewMenu {
-		return nil
-	}
-	m.toolbar.loading = true
-	return m.toolbar.loadComparisons()
-}
-
-// handleComparisons keeps the comparisons a ComparisonsMsg brings.
-func (m Model) handleComparisons(msg ComparisonsMsg) (tea.Model, tea.Cmd) {
-	m.toolbar.loading = false
-	m.toolbar.comparisons, m.toolbar.comparisonsErr = msg.Items, ""
-	if msg.Err != nil {
-		m.toolbar.comparisonsErr = msg.Err.Error()
-	}
-	return m, nil
+	return nil
 }
 
 // closeToolbar closes the open menu.
@@ -636,6 +587,12 @@ func (m Model) toggleToolbar() (tea.Model, tea.Cmd) {
 	}
 	if !m.toolbarShown() {
 		return m, nil
+	}
+	for i, b := range m.toolbarButtons() {
+		if b.menu != nil { // the first menu, View, past the view toggle
+			cmd := m.openToolbar(i)
+			return m, cmd
+		}
 	}
 	cmd := m.openToolbar(0)
 	return m, cmd

@@ -143,26 +143,6 @@ func (l *localDiff) onPick(store *annotation.Store) func(it splitview.PickerItem
 	}
 }
 
-// comparisons are the comparison rows for the toolbar's View menu, which
-// of them the review on screen shows, and how one is picked.
-func (l *localDiff) comparisons() comparisonList {
-	ctx, cancel := context.WithTimeout(context.Background(), localDiffTimeout)
-	defer cancel()
-	l.mu.Lock()
-	current := l.label
-	l.mu.Unlock()
-	return comparisonList{
-		items: l.compareItems(ctx),
-		current: func(it splitview.PickerItem) bool {
-			c, ok := it.Value.(localChoice)
-			return ok && c.label == current
-		},
-		pick: func(it splitview.PickerItem, store *annotation.Store) tea.Cmd {
-			return l.onPick(store)(it)
-		},
-	}
-}
-
 // viewRows are the Diff View… rows after the comparisons: the file tree,
 // then whole files or the changed blocks only, whichever the review on
 // screen does not show.
@@ -178,15 +158,25 @@ func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
 	l.mu.Lock()
 	context := l.context
 	l.mu.Unlock()
-	switch {
-	case !ok || !c.CompactApplicable():
-	case c.Compact():
-		rows = append(rows, splitview.PickerItem{Label: "Whole files", Detail: "each file in full, changes marked", Value: wholeFiles{}})
-	default:
-		rows = append(rows, splitview.PickerItem{Label: "Changed blocks only",
-			Detail: fmt.Sprintf("%d lines around each change", context), Value: wholeFiles{compact: true}})
+	if !ok || !c.CompactApplicable() {
+		return rows
 	}
-	return rows
+	return append(rows, compactRows(c.Compact(), context)...)
+}
+
+// compactRows are the Compare rows choosing between the changed blocks only
+// and whole files, the one in effect checked.
+func compactRows(compact bool, context int) []splitview.PickerItem {
+	mark := func(on bool, label string) string {
+		if on {
+			return "✓ " + label
+		}
+		return "  " + label
+	}
+	return []splitview.PickerItem{
+		{Label: mark(compact, "Changed blocks only"), Detail: fmt.Sprintf("%d lines around each change", context), Value: wholeFiles{compact: true}},
+		{Label: mark(!compact, "Whole files"), Detail: "each file in full, changes marked", Value: wholeFiles{}},
+	}
 }
 
 // setCompact switches the review on screen to the changed blocks only, or

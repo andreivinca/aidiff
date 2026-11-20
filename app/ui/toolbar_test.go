@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/revdiff/app/diff"
+	"github.com/umputun/revdiff/app/keymap"
 )
 
 // toolbarModel is a loaded review of two files with the toolbar on, sized
@@ -127,12 +128,11 @@ func TestToolbar_KeyboardMenu(t *testing.T) {
 
 	m = press(t, m, "f10")
 	require.True(t, m.toolbar.open)
-	rows := screenRows(m)
-	assert.Contains(t, rows[toolbarRow+2], "Changed blocks only")
-	assert.Contains(t, rows[toolbarRow+2], "C")
-	assert.Contains(t, strings.Join(rows, "\n"), "✓ Whole files")
+	rows := strings.Join(screenRows(m), "\n")
+	assert.NotContains(t, rows, "Changed blocks only", "the Compare tool's choice, not View's")
+	assert.Contains(t, screenRows(m)[toolbarRow+2], "Line numbers", "the toggles lead")
 
-	m = press(t, m, "down", "down", "enter") // over the divider, to Line numbers
+	m = press(t, m, "enter") // Line numbers
 	assert.True(t, m.modes.lineNumbers)
 	assert.True(t, m.toolbar.open, "a toggle keeps the menu open")
 	assert.Contains(t, strings.Join(screenRows(m), "\n"), "✓ Line numbers")
@@ -174,12 +174,10 @@ func TestToolbar_MouseOpensPicksAndCloses(t *testing.T) {
 	box, ok := m.menuGeometry()
 	require.True(t, ok)
 
-	m, _ = click(t, m, box.x+3, box.y+1+4) // Wrap lines
+	m, _ = click(t, m, box.x+3, box.y+1+1) // Wrap lines
 	assert.True(t, m.modes.wrap)
 	assert.True(t, m.toolbar.open)
 
-	m, _ = click(t, m, box.x+3, box.y+1+2) // the divider does nothing
-	assert.True(t, m.toolbar.open)
 
 	before := m.nav.diffCursor
 	m, _ = click(t, m, 110, 20) // outside: closes, and goes no further
@@ -254,64 +252,47 @@ func TestToolbar_ViewSwitchesBetweenChangesAndFiles(t *testing.T) {
 		asked = append(asked, files)
 		return nil
 	}
-	chosen := ""
-	loads := 0
-	m.toolbar.loadComparisons = func() tea.Cmd {
-		loads++
-		return func() tea.Msg {
-			return ComparisonsMsg{Items: []Comparison{
-				{Label: "Uncommitted changes", Current: true, Choose: func() tea.Msg { chosen = "uncommitted"; return nil }},
-				{Label: "Against a branch…", Choose: func() tea.Msg { chosen = "branch"; return nil }},
-			}}
-		}
-	}
 
 	r, cmd := m.Update(key("f10"))
 	m = r.(Model)
-	require.NotNil(t, cmd, "opening View lists the comparisons")
-	assert.Contains(t, strings.Join(screenRows(m), "\n"), "loading…", "until they come")
-	r, _ = m.Update(cmd())
-	m = r.(Model)
+	assert.Nil(t, cmd, "opening View asks for nothing")
 	menu := strings.Join(screenRows(m), "\n")
 	assert.Contains(t, menu, "✓ Changes")
-	assert.Contains(t, menu, " ✓ Uncommitted changes", "the one shown checked")
-	assert.Contains(t, menu, "   Against a branch…")
 	assert.Contains(t, menu, "Project files")
-	rows := screenRows(m)
-	at := func(label string) int {
-		for i, row := range rows {
-			if strings.Contains(row, label) {
-				return i
-			}
-		}
-		return -1
-	}
-	assert.Less(t, at("Project files"), at("Uncommitted changes"), "the comparisons follow Changes and Project files")
-	assert.Less(t, at("Against a branch"), at("Changed blocks only"), "and come right above how the changes show")
+	assert.NotContains(t, menu, "Uncommitted", "what the changes compare is the Compare button's")
 
-	for range 3 { // Project files, then over the divider to the comparisons
-		r, cmd = m.Update(key("down"))
-		m = r.(Model)
-	}
-	r, cmd = m.Update(key("enter"))
-	m = r.(Model)
-	require.NotNil(t, cmd)
-	cmd()
-	assert.Equal(t, "branch", chosen, "a comparison is picked from the menu")
-	assert.False(t, m.toolbar.open)
-
-	r, _ = m.Update(key("f10"))
-	m = r.(Model)
 	m = press(t, m, "down", "enter") // Project files
 	assert.Equal(t, []bool{true}, asked)
-	assert.Equal(t, 2, loads, "listed afresh each time the menu opens")
-
-	m.toolbar.loadComparisons = nil
-	m = press(t, m, "f10")
-	assert.NotContains(t, strings.Join(screenRows(m), "\n"), "Uncommitted", "nothing to list, no rows")
-	m = press(t, m, "esc")
+	assert.False(t, m.toolbar.open)
 
 	m.toolbar.showFiles = nil
 	m = press(t, m, "f10")
 	assert.NotContains(t, strings.Join(screenRows(m), "\n"), "Project files", "no switch, no rows")
+}
+
+func TestToolbar_ViewToggle(t *testing.T) {
+	m := toolbarModel(t)
+	assert.NotContains(t, screenRows(m)[0], "±", "no switch, no toggle")
+
+	var asked []bool
+	m.toolbar.showFiles = func(files bool) tea.Cmd {
+		asked = append(asked, files)
+		return nil
+	}
+	row := screenRows(m)[0]
+	assert.True(t, strings.HasPrefix(row, " ± ☰  ◧ View"), "the toggle leads the toolbar, its segments one cell apart: %q", row)
+
+	spans := m.toolbarLayout(m.toolbarButtons(), m.layout.width)
+	require.GreaterOrEqual(t, len(spans), 3)
+	assert.True(t, spans[0].on, "the changes are on screen")
+	assert.False(t, spans[1].on)
+
+	m, _ = click(t, m, spans[0].x, toolbarRow)
+	assert.Empty(t, asked, "the segment in effect does nothing")
+	m, _ = click(t, m, spans[1].x, toolbarRow)
+	assert.Equal(t, []bool{true}, asked, "the other switches to the project's files")
+	assert.False(t, m.toolbar.open)
+
+	m = press(t, m, "f10")
+	assert.Equal(t, keymap.ActionViewMenu, m.toolbarButtons()[m.toolbar.button].action, "f10 still opens View, past the toggle")
 }

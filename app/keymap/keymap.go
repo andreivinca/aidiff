@@ -81,6 +81,8 @@ const (
 	ActionToolbarMenu            Action = "toolbar_menu"
 	ActionViewMenu               Action = "view_menu"
 	ActionContextMenu            Action = "context_menu"
+	ActionRevertChange           Action = "revert_change"
+	ActionRevertFile             Action = "revert_file"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -116,6 +118,8 @@ var validActions = map[Action]bool{
 	ActionToolbarMenu:      true,
 	ActionViewMenu:         true,
 	ActionContextMenu:      true,
+	ActionRevertChange:     true,
+	ActionRevertFile:       true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -250,6 +254,10 @@ func defaultDescriptions() []HelpEntry {
 		{ActionPrevAnnotation, "previous annotation (across files)", "Annotations"},
 		{ActionFlushOutput, "flush annotations to output file", "Annotations"},
 
+		// changes
+		{ActionRevertChange, "revert the change under the cursor", "Changes"},
+		{ActionRevertFile, "revert the whole file", "Changes"},
+
 		// view toggles
 		{ActionToggleCollapsed, "toggle collapsed view", "View"},
 		{ActionToggleCompact, "toggle compact diff view", "View"},
@@ -327,6 +335,8 @@ func defaultBindings() map[string]Action {
 		"f10":    ActionToolbarMenu,
 		"alt+m":  ActionToolbarMenu,
 		"alt+v":  ActionViewMenu,
+		"x":      ActionRevertChange,
+		"X":      ActionRevertFile,
 		"alt+c":  ActionContextMenu,
 		"w":      ActionToggleWrap,
 		"t":      ActionToggleTree,

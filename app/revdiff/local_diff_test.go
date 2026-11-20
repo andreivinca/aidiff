@@ -165,18 +165,19 @@ func TestLocalDiff_FileTreeAndWholeFiles(t *testing.T) {
 		return labels, picker.Items, picker
 	}
 	labels, items, picker := rows(review)
-	assert.Equal(t, []string{"File tree", "Changed blocks only"}, labels[len(labels)-2:], "whole files on screen: changed blocks offered")
-	assert.Equal(t, []tea.Msg{ui.SetCompactMsg{On: true}}, runCmd(picker.OnPick(items[len(items)-1])))
+	assert.Equal(t, []string{"File tree", "  Changed blocks only", "✓ Whole files"}, labels[len(labels)-3:],
+		"both, whole files on screen checked")
+	assert.Equal(t, []tea.Msg{ui.SetCompactMsg{On: true}}, runCmd(picker.OnPick(items[len(items)-2])))
 	assert.True(t, l.compact, "kept for the next review Diff View… builds")
 
 	updated, _ := review.Update(ui.SetCompactMsg{On: true})
 	review = updated.(ui.Model)
 	assert.True(t, review.Compact())
 	labels, _, _ = rows(review)
-	assert.Equal(t, "Whole files", labels[len(labels)-1], "changed blocks on screen: whole files offered")
+	assert.Equal(t, []string{"✓ Changed blocks only", "  Whole files"}, labels[len(labels)-2:], "changed blocks on screen: checked")
 
 	var tree ui.Model
-	for _, m := range runCmd(picker.OnPick(items[len(items)-2])) {
+	for _, m := range runCmd(picker.OnPick(items[len(items)-3])) {
 		if r, ok := m.(splitview.ReplaceInnerMsg); ok {
 			tree, _ = r.Model.(ui.Model)
 		}

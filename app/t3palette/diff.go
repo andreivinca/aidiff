@@ -1,7 +1,6 @@
 package t3palette
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -41,8 +40,8 @@ type compacter interface {
 	CompactContext() int
 }
 
-// viewRow is the diff picker's row that switches the review on screen to
-// whole files, or back to the changed blocks; none for a review that
+// viewRow is the diff picker's rows choosing between the changed blocks
+// only and whole files, the one in effect checked; none for a review that
 // cannot. It keeps how inner shows its files for the reviews built from
 // here, since C and alt+= / alt+- may have changed it.
 func (t *Palette) viewRow(inner tea.Model) []splitview.PickerItem {
@@ -53,11 +52,17 @@ func (t *Palette) viewRow(inner tea.Model) []splitview.PickerItem {
 	t.mu.Lock()
 	t.view = View{WholeFiles: !c.Compact(), Context: c.CompactContext()}
 	t.mu.Unlock()
-	if c.Compact() {
-		return []splitview.PickerItem{{Label: "Whole files", Detail: "each file in full, changes marked", Value: wholeFilesRow{}}}
+	mark := func(on bool, label string) string {
+		if on {
+			return "✓ " + label
+		}
+		return "  " + label
 	}
-	return []splitview.PickerItem{{Label: "Changed blocks only",
-		Detail: fmt.Sprintf("%d lines around each change", c.CompactContext()), Value: wholeFilesRow{compact: true}}}
+	return []splitview.PickerItem{
+		{Label: mark(c.Compact(), "Changed blocks only"), Detail: fmt.Sprintf("%d lines around each change", c.CompactContext()),
+			Value: wholeFilesRow{compact: true}},
+		{Label: mark(!c.Compact(), "Whole files"), Detail: "each file in full, changes marked", Value: wholeFilesRow{}},
+	}
 }
 
 // newReview is the review of target over s, comparing what was chosen for
@@ -136,34 +141,6 @@ func (t *Palette) onPick(r *Review, refs []t3client.Ref, store *annotation.Store
 		d, _ := it.Value.(diffChoice)
 		return t.showDiff(r, d, store)
 	}
-}
-
-// Comparisons are the comparison rows for the toolbar's View menu, after
-// asking the server for the branches: the rows, a report of the one the
-// review on screen shows, and how one is picked with the annotations in a
-// store.
-func (t *Palette) Comparisons(ctx context.Context) ([]splitview.PickerItem, func(splitview.PickerItem) bool,
-	func(splitview.PickerItem, *annotation.Store) tea.Cmd, error) {
-	r := t.OnScreen()
-	if r == nil {
-		return nil, nil, nil, errors.New("open a thread first")
-	}
-	refs, err := r.Session.Server().ListRefs(ctx, r.Target.Cwd)
-	if errors.Is(err, t3client.ErrNotRepository) {
-		return nil, nil, nil, errors.New(r.Target.Label() + " is not a git repository")
-	}
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("list branches: %w", err)
-	}
-	current := cmp.Or(r.SourceLabel, t.cfg.DiffLabel)
-	isCurrent := func(it splitview.PickerItem) bool {
-		d, ok := it.Value.(diffChoice)
-		return ok && d.label == current
-	}
-	pick := func(it splitview.PickerItem, store *annotation.Store) tea.Cmd {
-		return t.onPick(r, refs, store)(it)
-	}
-	return compareItems(refs), isCurrent, pick, nil
 }
 
 // compareItems are what a T3 review can compare: the uncommitted changes,

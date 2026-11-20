@@ -48,6 +48,7 @@ func TestDefault_allExpectedBindings(t *testing.T) {
 		{"alt+=", ActionMoreContext}, {"alt++", ActionMoreContext}, {"alt+-", ActionLessContext},
 		{"f10", ActionToolbarMenu}, {"alt+m", ActionToolbarMenu},
 		{"alt+v", ActionViewMenu}, {"alt+c", ActionContextMenu},
+		{"x", ActionRevertChange}, {"X", ActionRevertFile},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.action, km.Resolve(tt.key), "key %q should map to %q", tt.key, tt.action)

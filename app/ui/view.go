@@ -146,6 +146,8 @@ func (m Model) transientHint() string {
 	switch {
 	case m.reload.hint != "":
 		return m.reload.hint
+	case m.revert.hint != "":
+		return m.revert.hint
 	case m.output.hint != "":
 		return m.output.hint
 	case m.compact.hint != "":

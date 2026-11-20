@@ -163,7 +163,7 @@ func run(opts options) (int, error) {
 	local, diffs := newLocalDiff(deps, src, reviewDescription), &localDiffs{}
 	t3p := newT3Palette(deps, description, src, store, newLocalConfig(deps, src, diffs, local)) // owns src's T3 session from here on
 	defer t3p.Close()
-	deps.views.set(switchView(t3p, local, diffs), listComparisons(t3p, local, diffs))
+	deps.views.set(switchView(t3p, local, diffs))
 	if src.tty != nil {
 		programOptions = append(programOptions, tea.WithInput(src.tty))
 	}

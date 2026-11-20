@@ -51,7 +51,7 @@ type lineAnchor struct {
 func (m Model) CanRefresh() bool {
 	loading := !m.filesLoaded || m.file.requestedPath != "" || len(m.reviewed.pending) > 0
 	jumping := m.pendingAnnotJump != nil || m.nav.pendingHunkJump != nil || m.nav.pendingBoundaryJump != nil
-	busy := m.annot.annotating || m.search.active || m.reload.pending || m.inConfirmDiscard ||
+	busy := m.annot.annotating || m.search.active || m.reload.pending || m.revert.pending || m.inConfirmDiscard ||
 		m.keys.chordPending != "" || m.overlay.Active()
 	return m.reload.applicable && !loading && !jumping && !busy
 }

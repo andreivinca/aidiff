@@ -623,6 +623,7 @@ type Model struct {
 	identity    machineIdentity   // the host and source named in the status bar (identity.go)
 	toolbar     toolbarState      // the toolbar under the diff header and its menus (toolbar.go)
 	openFile    OpenFileMsg       // a file to select once the file list loads (openfile.go)
+	revert      revertState       // x / X waiting for its confirmation (revert.go)
 
 	remoteEditor func(file string, line int) *exec.Cmd // e / f12 on the files' host (ModelConfig.RemoteEditor)
 
@@ -861,9 +862,6 @@ type ModelConfig struct {
 	// (files) or as its changes again: the View menu's first rows. nil hides
 	// them.
 	ShowFiles func(files bool) tea.Cmd
-	// Comparisons lists what the changes can be compared as, for the View
-	// menu under Changes, answering with a ComparisonsMsg; nil lists none.
-	Comparisons func() tea.Cmd
 	// KeepFileTree keeps the file tree for a review of one file instead of
 	// switching to the single-file view, so the layout stays put while a live
 	// review grows from one file to several.
@@ -873,6 +871,10 @@ type ModelConfig struct {
 	// the path on screen ("" for none), line the cursor's (0 for none).
 	// Nil opens the editor here, as SourceEditor says (editor_project.go).
 	RemoteEditor func(file string, line int) *exec.Cmd
+	// Reverter undoes changes for x (the change under the cursor) and X (the
+	// file on screen), in a local git review of the working tree; nil
+	// leaves them unavailable (revert.go).
+	Reverter Reverter
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -968,7 +970,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		identity:      newMachineIdentity(cfg.MachineName, cfg.Project, cfg.T3Mode, cfg.Branch),
 		loadBranch:    cfg.LoadBranch,
 		keepFileTree:  cfg.KeepFileTree,
-		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare, showFiles: cfg.ShowFiles, loadComparisons: cfg.Comparisons},
+		toolbar:       toolbarState{on: cfg.Toolbar, compare: cfg.Compare, showFiles: cfg.ShowFiles},
 		remoteEditor:  cfg.RemoteEditor,
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
@@ -1034,6 +1036,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		},
 		reviewed:             reviewedState{cache: make(map[string]string), pending: make(map[string]uint64)},
 		reload:               reloadState{applicable: cfg.ReloadApplicable},
+		revert:               revertState{reverter: cfg.Reverter},
 		compact:              compactState{applicable: cfg.CompactApplicable},
 		annot:                annotationState{rowCache: make(map[annotCacheKey][]string)},
 		renderCache:          &diffRenderCache{},
@@ -1081,8 +1084,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseMsg:
 		return m.handleToolbarAndMouse(msg) // toolbar.go
-	case ComparisonsMsg:
-		return m.handleComparisons(msg) // toolbar.go
 	case tea.WindowSizeMsg:
 		return m.handleResize(m.reserveToolbarRow(msg)) // toolbar.go
 	case filesLoadedMsg:
@@ -1115,6 +1116,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSetCompact(msg)
 	case OpenFileMsg:
 		return m.handleOpenFile(msg)
+	case revertedMsg:
+		return m.handleReverted(msg)
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).
@@ -1150,6 +1153,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.reviewed.hint = ""
 	m.keys.hint = ""
 	m.vim.hint = ""
+	m.revert.hint = ""
 
 	// flush any deferred wheel work (cursor pin + diff render) before the key
 	// action runs — m.nav.diffCursor must be at its final pinned position
@@ -1159,6 +1163,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// pending-reload intercept: y confirms, any other key cancels
 	if m.reload.pending {
 		return m.handlePendingReload(msg)
+	}
+	if m.revert.pending {
+		return m.handlePendingRevert(msg)
 	}
 
 	if m.toolbar.open {
@@ -1250,6 +1257,8 @@ func (m Model) dispatchAction(action keymap.Action) (tea.Model, tea.Cmd) {
 		return m.handleAnnotNav(action == keymap.ActionNextAnnotation)
 	case keymap.ActionReload:
 		return m.handleReload()
+	case keymap.ActionRevertChange, keymap.ActionRevertFile:
+		return m.handleRevert(action == keymap.ActionRevertFile)
 	case keymap.ActionFlushOutput:
 		return m.handleFlushOutput()
 	case keymap.ActionToolbarMenu:
