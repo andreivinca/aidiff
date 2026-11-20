@@ -62,17 +62,21 @@ func TestRemoteEditor(t *testing.T) {
 	assert.Nil(t, remoteEditor(sourceSetup{t3: r}), "a T3 server on this machine edits here")
 	r.Session = sshSession{host: ""}
 	assert.Nil(t, remoteEditor(sourceSetup{t3: r}), "a remote host reached without SSH: no way to its files")
-	r.Session = sshSession{host: "box", ctl: "/tmp/ctl"}
+	ctl := filepath.Join(t.TempDir(), "ssh.ctl") // the tunnel's folder, where fresh's shared ssh goes
+	r.Session = sshSession{host: "box", ctl: ctl}
 	edit := remoteEditor(sourceSetup{t3: r})
 	require.NotNil(t, edit)
 
 	t.Setenv("EDITOR", "nvim")
 	t.Setenv("VISUAL", "")
 	cmd := edit("a.go", 3)
-	assert.Equal(t, remoteEditorArgv(t3palette.Place{SSHHost: "box", SSHControlPath: "/tmp/ctl", Dir: "/srv"}, "a.go", 3), cmd.Args,
+	assert.Equal(t, remoteEditorArgv(t3palette.Place{SSHHost: "box", SSHControlPath: ctl, Dir: "/srv"}, "a.go", 3), cmd.Args,
 		"an editor that edits only its own machine's files runs on the host")
 
 	t.Setenv("EDITOR", "fresh")
-	assert.Equal(t, []string{"fresh", "ssh://box/srv/a.go:3"}, edit("a.go", 3).Args,
+	fresh := edit("a.go", 3)
+	assert.Equal(t, []string{"fresh", "ssh://box/srv/a.go:3"}, fresh.Args,
 		"fresh runs here and opens the host's file over SSH")
+	assert.Contains(t, fresh.Env, "PATH="+filepath.Join(filepath.Dir(ctl), "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"on the tunnel's connection")
 }

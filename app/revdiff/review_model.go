@@ -193,8 +193,8 @@ func remoteEditor(src sourceSetup) func(file string, line int) *exec.Cmd {
 	p := t3palette.Place{SSHHost: src.t3.Session.SSHHost(), SSHControlPath: src.t3.Session.SSHControlPath(), Dir: src.t3.Target.Cwd}
 	return func(file string, line int) *exec.Cmd {
 		// an editor here that opens the host's files itself (fresh) runs here,
-		// the user's own; any other runs on the host
-		if cmd, ok := (editor.Editor{}).RemoteCommand(p.SSHHost, p.Dir, file, line); ok {
+		// the user's own, on the tunnel's connection; any other runs on the host
+		if cmd, ok := (editor.Editor{}).RemoteCommand(p.SSHHost, p.SSHControlPath, p.Dir, file, line); ok {
 			return cmd
 		}
 		argv := remoteEditorArgv(p, file, line)
