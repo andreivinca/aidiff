@@ -35,8 +35,9 @@ type SecretAnswerer interface {
 // secretInput is what has been typed of a secret, for the request it
 // answers. It is never shown, kept in the input history or sent as a message.
 type secretInput struct {
-	id    string
-	runes []rune
+	id       string
+	runes    []rune
+	answered string // the request the user sent or declined last, whose end is no surprise
 }
 
 // clear forgets what was typed.
@@ -63,6 +64,55 @@ func (p *Pane) secretLocked() *SecretRequest {
 		p.secret.id = r.ID
 	}
 	return r
+}
+
+// secretAskedLocked is the secret request the composer takes keys for,
+// dialogs aside, nil when none: pending, and a backend that answers it. mu
+// must be held.
+func (p *Pane) secretAskedLocked() *SecretRequest {
+	r := p.conv.Secret
+	if r == nil || !r.Pending {
+		return nil
+	}
+	if _, ok := p.backend.(SecretAnswerer); !ok {
+		return nil
+	}
+	return r
+}
+
+// stillAskedLocked reports whether the conversation shown still asks for
+// the secret request r. mu must be held.
+func (p *Pane) stillAskedLocked(r *SecretRequest) bool {
+	now := p.secretAskedLocked()
+	return now != nil && now.ID == r.ID
+}
+
+// secretEndedLocked handles a secret request that ended while the composer
+// took keys for it. What was typed is wiped. Unless the user sent or
+// declined it, keys are swallowed until the next enter or esc: the user may
+// still be typing it blind, and the rest would land in the visible draft,
+// which enter would send to the agent. mu must be held.
+func (p *Pane) secretEndedLocked(r *SecretRequest) {
+	p.secret.clear()
+	if p.secret.answered == r.ID {
+		return
+	}
+	p.secretGone = true
+	p.note = "the secret request ended: what you typed is wiped, and keys are ignored until Enter or Esc"
+}
+
+// secretGoneTextLocked swallows typed bytes after a secret request ended
+// (secretEndedLocked), up to and including the next enter or esc, and
+// reports whether it took s. mu must be held.
+func (p *Pane) secretGoneTextLocked(s string) bool {
+	if !p.secretGone {
+		return false
+	}
+	if s == "\x1b" || strings.ContainsAny(s, "\r\n") {
+		p.secretGone = false
+		p.note = ""
+	}
+	return true
 }
 
 // secretTextLocked takes typed bytes for a pending secret: characters are
@@ -158,6 +208,7 @@ func (p *Pane) sendSecretLocked(r *SecretRequest) {
 		return
 	}
 	p.secret.clear()
+	p.secret.answered = id
 }
 
 // declineSecretLocked turns the request down. mu must be held.
@@ -175,6 +226,7 @@ func (p *Pane) declineSecretLocked(r *SecretRequest) {
 		return
 	}
 	p.secret.clear()
+	p.secret.answered = id
 }
 
 // secretRowLocked is the input row while a secret is pending: what is asked
@@ -216,21 +268,23 @@ func secretName(r *SecretRequest) string {
 }
 
 // secretRows shows a secret request in the transcript: while it is pending,
-// what is asked for and why, with how to answer; then how it ended, in a line.
-func secretRows(s SecretRequest, w int, st styles) []string {
+// what is asked for and why, with how to answer; then how it ended. What
+// the agent wrote is wrapped, never cut.
+func secretRows(s SecretRequest, w int, st styles) block {
 	if !s.Pending {
 		ended := s.Status
 		if ended == "" || ended == "pending" {
 			ended = "no longer asked"
 		}
-		return []string{st.muted.Render(ansi.Truncate(inset+"🔑 "+secretName(&s)+": "+ended, w, "…"))}
+		return insetRows(wrapText("🔑 ", secretName(&s)+": "+ended, w, false), st.muted)
 	}
-	out := []string{st.warn.Render(ansi.Truncate(inset+"🔑 the agent asks for the "+secretName(&s), w, "…"))}
+	out := insetRows(wrapText("🔑 ", "the agent asks for the "+secretName(&s), w, false), st.warn)
 	if s.Reason != "" {
-		out = append(out, wrapLines(s.Reason, w)...)
+		out.join(wrapLines(s.Reason, w))
 	}
 	if s.URL != "" {
-		out = append(out, wrapLines("  "+s.URL, w)...)
+		out.join(wrapLines("  "+s.URL, w))
 	}
-	return append(out, st.muted.Render(ansi.Truncate(inset+"  type it below, Enter sends it to T3 Code · Esc declines", w, "…")))
+	out.plain(st.muted.Render(ansi.Truncate(inset+"  type it below, Enter sends it to T3 Code · Esc declines", w, "…")))
+	return out
 }

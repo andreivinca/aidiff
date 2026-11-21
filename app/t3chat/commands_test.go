@@ -292,3 +292,38 @@ func TestPickModel(t *testing.T) {
 	_, err = pickModel(models, "one")
 	require.Error(t, err)
 }
+
+func TestBackend_CatalogFetchInFlightIsShared(t *testing.T) {
+	f := newFakeServer(idle(withModel("claude", "claude-sonnet-4")))
+	hold := make(chan struct{})
+	f.mu.Lock()
+	f.catalogNow = hold
+	f.mu.Unlock()
+	chats := newChats(f)
+	open := func(thread string) *fakeViewer {
+		b, _ := chats.Thread(thread).(*Backend)
+		v := newFakeViewer()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = b.Subscribe(ctx, v)
+		}()
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
+		<-f.subscribed
+		v.next(t) // the snapshot, before the catalog
+		return v
+	}
+	first := open("th-1")
+	second := open("th-1") // a second pane, or the thread switched to, while the fetch is in flight
+	assert.Equal(t, 1, f.fetches(), "the fetch in flight is joined, not started again")
+	assert.Equal(t, "claude-sonnet-4", second.latest().Settings.Model, "the catalog is not there yet")
+	close(hold)
+	for _, v := range []*fakeViewer{first, second} {
+		assert.Equal(t, "Sonnet 4 · medium", v.next(t).Settings.Model, "each backend shows the catalog once it came")
+	}
+	assert.Equal(t, 1, f.fetches())
+}

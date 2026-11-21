@@ -17,7 +17,8 @@ type textPoint struct {
 
 // textSelection is a drag over the transcript and the queued messages.
 type textSelection struct {
-	rows        []string // the frame the drag started on, so streaming output cannot move under the pointer
+	rows        []string  // the frame the drag started on, so streaming output cannot move under the pointer
+	meta        []rowMeta // how a copy reads its rows
 	start, end  textPoint
 	top, bottom int // the rows it may cover: from top up to, not including, bottom
 	dragging    bool
@@ -56,7 +57,7 @@ func (p *Pane) startSelectionLocked(m uv.Mouse) {
 		return
 	}
 	point := textPoint{p.selectionX(m.X), m.Y}
-	p.selection = textSelection{rows: f.rows, start: point, end: point, top: f.layout.headerH, bottom: f.layout.textBottom, dragging: true}
+	p.selection = textSelection{rows: f.rows, meta: f.meta, start: point, end: point, top: f.layout.headerH, bottom: f.layout.textBottom, dragging: true}
 }
 
 // dragSelectionLocked moves the end of the drag under the pointer, within
@@ -109,19 +110,81 @@ func (s textSelection) bounds(y, width int) (int, int) {
 	return left, right
 }
 
+// text is what a copy of the selection yields: its rows' text without the
+// pane's inset, rails and padding, a line wrapped over several rows put
+// back into one, as it was before the wrap, and a drawn table as its
+// records' cells, its borders left out.
 func (s textSelection) text(width int) string {
 	var lines []string
+	joined := false // the last row taken may be continued
+	lastRecord := -1
 	for y := s.top; y < s.bottom; y++ {
 		left, right := s.bounds(y, width)
-		if right > left {
-			lines = append(lines, strings.TrimRight(ansi.Strip(ansi.Cut(s.rows[y], left, right)), " "))
+		if right <= left {
+			joined, lastRecord = false, -1
+			continue
 		}
+		var m rowMeta
+		if y < len(s.meta) {
+			m = s.meta[y]
+		}
+		if r := m.table; r != nil {
+			if r.cells != "" && r.record != lastRecord {
+				lines = append(lines, r.cells)
+			}
+			joined, lastRecord = false, r.record // a border's is -1
+			continue
+		}
+		lastRecord = -1
+		var text string
+		if m.end > 0 {
+			text = ansi.Strip(ansi.Cut(s.rows[y], max(left, m.start), min(right, m.end)))
+		} else {
+			text = strings.TrimRight(ansi.Strip(ansi.Cut(s.rows[y], left, right)), " ")
+		}
+		if m.cont && joined && len(lines) > 0 {
+			lines[len(lines)-1] += m.joint + text
+		} else {
+			lines = append(lines, text)
+		}
+		joined = m.end > 0
 	}
 	return strings.Trim(strings.Join(lines, "\n"), "\n")
 }
 
+// follow is a released selection on a new frame, whose text area spans
+// rows top to bottom: moved with the rows it selected when they show there
+// still, unchanged, the nearest first (a note pushed the transcript up, or
+// output scrolled it), so the highlight never hides text the frame it was
+// made on did not show. ok is false, and the selection gone, when they do
+// not show.
+func (s textSelection) follow(rows []string, meta []rowMeta, top, bottom int) (textSelection, bool) {
+	lo, hi := min(s.start.y, s.end.y), max(s.start.y, s.end.y)
+	for d := 0; d <= len(rows); d++ {
+		for _, off := range []int{-d, d} {
+			if lo+off < top || hi+off >= bottom || hi >= len(s.rows) {
+				continue
+			}
+			same := true
+			for y := lo; y <= hi && same; y++ {
+				same = rows[y+off] == s.rows[y]
+			}
+			if same {
+				s.rows, s.meta, s.top, s.bottom = rows, meta, top, bottom
+				s.start.y += off
+				s.end.y += off
+				return s, true
+			}
+		}
+	}
+	return textSelection{}, false
+}
+
 // draw lays the selection, from the frame it was made on, over a frame's
-// rows and joins them into the pane's screen.
+// rows and joins them into the pane's screen. While the drag goes on, that
+// frame stands for the rows it covers, so streamed output cannot move the
+// text under the pointer; once released, the selection follows its text on
+// each new frame instead (follow).
 func (s textSelection) draw(rows []string, width int) string {
 	if s.rows == nil {
 		return strings.Join(rows, "\n")

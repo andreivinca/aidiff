@@ -148,3 +148,53 @@ func TestSplit_ForceQuitSkipsTheDialog(t *testing.T) {
 	assert.IsType(t, tea.QuitMsg{}, quit)
 	assert.Equal(t, quit, filterQuit(hs.m, quit), "the guard lets a forced quit through")
 }
+
+func TestSplit_UnmappedKeysFollowFocus(t *testing.T) {
+	ctrlDot := unknownCSIMsg(t, "\x1b[27;5;46~") // ctrl+., which has no legacy form
+	other := unknownCSIMsg(t, "\x1b[5;9z")
+	hs := newHarness(t, 100, 30)
+	before := len(*hs.inner)
+	hs.send(ctrlDot)
+	assert.Equal(t, []string{"\x1b[27;5;46~"}, hs.term(0).text, "a focused terminal gets the report as it came")
+	assert.Len(t, *hs.inner, before, "not the review")
+
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP})
+	hs.send(ctrlDot)
+	hs.send(other)
+	assert.Len(t, hs.term(0).text, 1, "a popup drops them")
+	assert.Len(t, *hs.inner, before)
+	assert.Equal(t, commandPrefix, ">"+hs.m.palette.commandQuery())
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	hs.send(ctrlDot)
+	assert.Contains(t, *hs.inner, ctrlDot, "with the review focused it is the review's")
+
+	sb := &fakeSidebar{available: true}
+	hs = newSidebarHarness(sb)
+	hs.send(ShowSidebarMsg{})
+	before = len(*hs.inner)
+	hs.send(ctrlDot)
+	hs.send(other)
+	assert.Len(t, *hs.inner, before, "a focused sidebar drops them: the review is not where the user types")
+}
+
+func TestSplit_ClosedPaneShiftsTheFocusToComeBackTo(t *testing.T) {
+	sb := &fakeSidebar{available: true, hideOn: "esc"}
+	hs := newSidebarHarness(sb)
+	hs.send(OpenTerminalMsg{})
+	hs.send(OpenTerminalMsg{})
+	hs.send(OpenTerminalMsg{})
+	require.Len(t, hs.m.terms, 3)
+	a, b := hs.term(0), hs.term(1)
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	require.Equal(t, 1, hs.m.focus, "b has focus")
+	hs.send(ShowSidebarMsg{})
+
+	a.exited = true
+	hs.send(termUpdateMsg{term: a})
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+	assert.False(t, hs.m.sideOpen)
+	require.Equal(t, 0, hs.m.focus)
+	assert.Same(t, b, hs.term(0), "focus comes back to b, not to its neighbor")
+}

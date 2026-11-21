@@ -3,14 +3,12 @@ package t3palette
 import (
 	"slices"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/umputun/revdiff/app/splitview"
-	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/ui"
 )
 
@@ -167,6 +165,10 @@ func (b *connectionsSidebar) row(r connRow, width int, selected, focused bool) s
 // the sidebar.
 func (b *connectionsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	rows := b.t.connRows()
+	if len(rows) == 0 {
+		return nil, msg.String() == "esc"
+	}
+	b.sel = max(0, min(b.sel, len(rows)-1)) // the list may have shrunk since View
 	switch msg.String() {
 	case "up", "k":
 		b.sel = max(0, b.sel-1)
@@ -209,6 +211,9 @@ func (b *connectionsSidebar) Select(int) (tea.Cmd, bool) {
 // machine shows the history of its folders instead. The connect row asks
 // which server.
 func (b *connectionsSidebar) use(rows []connRow, i int) (tea.Cmd, bool) {
+	if i < 0 || i >= len(rows) {
+		return nil, false
+	}
 	r := rows[i]
 	switch {
 	case r.connect:
@@ -242,29 +247,41 @@ func (t *Palette) useLocal() {
 	if t.closed {
 		return
 	}
+	t.chooseLocked()
 	t.live, t.project = nil, nil
-	t.shell, t.shellAt = t3client.Shell{}, time.Time{}
+	t.resetShellLocked()
 	t.closeLaterLocked(t.takeUnusedLocked())
 }
 
 // useLive makes s, a session the palette holds, the one the commands and the
-// projects sidebar work with. A session nothing uses any more is closed. It
-// reports false when s is no longer held.
+// projects sidebar work with. A session nothing uses any more is closed. A
+// connection that ended while it was not the live one was never reconnected
+// (watchDrop), so selecting it starts the reconnect. It reports false when s
+// is no longer held.
 func (t *Palette) useLive(s Session) bool {
 	t.mu.Lock()
 	if t.closed || !t.held[s] {
 		t.mu.Unlock()
 		return false
 	}
+	t.chooseLocked()
 	if t.live != s {
 		if t.live == nil || t.live.Label() != s.Label() {
 			t.project = nil // a project belongs to its server
 		}
 		t.live = s
-		t.shell, t.shellAt = t3client.Shell{}, time.Time{} // the other server's listing
+		t.resetShellLocked() // the other server's listing
 		t.closeLaterLocked(t.takeUnusedLocked())
 	}
+	dead := ended(s)
+	if dead && t.claimRetryLocked(s) {
+		t.loops.Go(func() {
+			t.autoReconnect(s)
+		})
+	}
 	t.mu.Unlock()
-	t.refreshShell()
+	if !dead {
+		t.refreshShell()
+	}
 	return true
 }

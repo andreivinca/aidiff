@@ -1,7 +1,10 @@
 package t3palette
 
 import (
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -139,4 +142,37 @@ func TestProjects_SidebarNeedsAConnection(t *testing.T) {
 	assert.True(t, hide)
 	assert.Equal(t, "alpha1", shown(find[splitview.SwitchWorkspaceMsg](t, run(cmd))).review.thread().ID,
 		"with nothing on screen enter opens the first project")
+}
+
+func TestProjects_FailedListingIsShownAndBacksOff(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	a := newFakeSession("ssh://a", twoProjectShell())
+	h.connect(t, "ssh://a", a)
+	a.server.failFetches(errors.New("server gone"))
+	h.p.useLocal()
+	require.True(t, h.p.useLive(a), "back to a: its listing is fetched afresh")
+	sb := h.p.Sidebar()
+	view := func() string { return ansi.Strip(sb.View(40, 14, false)) }
+	require.Eventually(t, func() bool { return strings.Contains(view(), "list threads: server gone") }, 2*time.Second, time.Millisecond,
+		"the sidebar says why there are no projects")
+	assert.NotContains(t, view(), "loading…")
+
+	h.settle()
+	n := a.server.fetched()
+	for range 5 {
+		view()
+	}
+	h.settle()
+	assert.Equal(t, n, a.server.fetched(), "a redraw right after a failure fetches nothing")
+
+	a.server.failFetches(nil)
+	h.p.mu.Lock()
+	assert.Equal(t, 1, h.p.shellFails)
+	assert.True(t, h.p.shellRetry.After(time.Now()), "the next fetch waits")
+	h.p.shellRetry = time.Time{} // the wait is over
+	h.p.mu.Unlock()
+	view()
+	h.settle()
+	assert.Contains(t, view(), "Alpha", "the server answers again: its projects")
+	assert.NotContains(t, view(), "server gone")
 }

@@ -52,13 +52,15 @@ func (m *Model) setCompactContext(n int) tea.Cmd {
 	if n == m.modes.compactContext && m.modes.compact {
 		return nil
 	}
-	anchor := m.captureCompactAnchor()
-	m.modes.compactContext = n
-	m.modes.compact = true
-	cmd := m.reloadCurrentFile()
-	if cmd != nil && anchor != nil {
-		anchor.seq = m.file.loadSeq
-		m.compact.pendingAnchor = anchor
+	// the C toggle re-fetches the file keeping the cursor; turned off first,
+	// it turns compact mode back on at the new size. The checks above only
+	// word the refusals for a size change: should the toggle refuse anyway,
+	// nothing changes
+	prev, wasCompact := m.modes.compactContext, m.modes.compact
+	m.modes.compactContext, m.modes.compact = n, false
+	cmd := m.toggleCompactMode()
+	if !m.modes.compact {
+		m.modes.compactContext, m.modes.compact = prev, wasCompact
 	}
 	return cmd
 }

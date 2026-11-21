@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -302,4 +303,16 @@ func TestToolbar_ViewToggle(t *testing.T) {
 
 	m = press(t, m, "f10")
 	assert.Equal(t, keymap.ActionViewMenu, m.toolbarButtons()[m.toolbar.button].action, "f10 still opens View, past the toggle")
+}
+
+func TestToolbar_OpeningFromTheTreeRepaintsTheDiffFocused(t *testing.T) {
+	m := toolbarModel(t)
+	m.layout.focus = paneTree
+	m.layout.viewport.SetContent(m.renderDiff())
+	unfocused := slices.Clone(m.layout.viewport.lines)
+
+	m = press(t, m, "f10", "esc")
+	assert.Equal(t, paneDiff, m.layout.focus)
+	assert.Equal(t, strings.Split(m.renderDiff(), "\n"), m.layout.viewport.lines, "the diff is drawn focused")
+	assert.NotEqual(t, unfocused, m.layout.viewport.lines, "with its cursor")
 }

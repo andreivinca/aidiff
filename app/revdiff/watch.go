@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"log"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +21,10 @@ import (
 // refreshes, so a burst (an editor's save, a checkout, a build) refreshes once.
 const refreshSettle = 150 * time.Millisecond
 
+// ignoreCheckTimeout bounds one git check-ignore of the folders created
+// while the review runs.
+const ignoreCheckTimeout = 10 * time.Second
+
 // msgSender is the program the watchers report to; *tea.Program is one.
 type msgSender interface {
 	Send(msg tea.Msg)
@@ -28,13 +37,14 @@ type msgSender interface {
 // function. If watching cannot start, it logs a warning and the review runs
 // without it.
 func watchRepo(workDir string, p msgSender) (stop func()) {
-	return watchInBackground(func() func() {
-		return startRepoWatch(workDir, p)
+	return watchInBackground(func(ctx context.Context) func() {
+		return startRepoWatch(ctx, workDir, p)
 	})
 }
 
-// startRepoWatch does watchRepo's setup and starts the watcher.
-func startRepoWatch(workDir string, p msgSender) (stop func()) {
+// startRepoWatch does watchRepo's setup and starts the watcher, unless ctx
+// ends first.
+func startRepoWatch(ctx context.Context, workDir string, p msgSender) (stop func()) {
 	g := diff.NewGit(workDir)
 	root, gitDir, err := g.WatchDirs()
 	if err != nil {
@@ -45,41 +55,86 @@ func startRepoWatch(workDir string, p msgSender) (stop func()) {
 	if err != nil {
 		log.Printf("[WARN] listing ignored directories: %v", err)
 	}
-	cfg := watch.Config{Root: root, GitDir: gitDir, Ignored: ignored, IsIgnored: g.IsIgnored, Settle: refreshSettle}
-	return watchFiles(cfg, p, nil)
+	cfg := watch.Config{Root: root, GitDir: gitDir, Ignored: ignored, CheckIgnored: ignoredAmong(root), Settle: refreshSettle}
+	return watchFiles(ctx, cfg, p, nil)
+}
+
+// ignoredAmong is a watch.Config.CheckIgnored for the repository at root:
+// one git check-ignore for all of dirs. On failure it reports none ignored,
+// and they are watched; the first failure is logged.
+func ignoredAmong(root string) func(ctx context.Context, dirs []string) []string {
+	var warn sync.Once
+	return func(ctx context.Context, dirs []string) []string {
+		var in bytes.Buffer
+		for _, d := range dirs {
+			in.WriteString(d)
+			in.WriteByte(0)
+		}
+		ctx, cancel := context.WithTimeout(ctx, ignoreCheckTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "check-ignore", "--stdin", "-z")
+		cmd.Dir = root
+		cmd.Stdin = &in
+		out, err := cmd.Output()
+		if err != nil {
+			exit, ok := errors.AsType[*exec.ExitError](err)
+			if (!ok || exit.ExitCode() != 1) && ctx.Err() == nil { // 1: none is ignored; ctx: the watcher closed
+				warn.Do(func() { log.Printf("[WARN] checking ignored directories: %v", err) })
+			}
+			return nil
+		}
+		var ignored []string
+		for d := range strings.SplitSeq(string(out), "\x00") {
+			if d != "" {
+				ignored = append(ignored, d)
+			}
+		}
+		return ignored
+	}
 }
 
 // watchLazyFolder refreshes a plain folder when files are created, edited, or
 // removed in the root or a directory opened in the tree. The watch is shallow
 // and follows the directories each listing of reader actually read.
 func watchLazyFolder(reader *diff.FolderReader, workDir string, p msgSender) (stop func()) {
-	return watchFiles(watch.Config{Root: workDir, Shallow: true, Settle: refreshSettle}, p, reader)
+	return watchFiles(context.Background(), watch.Config{Root: workDir, Shallow: true, Settle: refreshSettle}, p, reader)
 }
 
 // watchInBackground runs start off the caller's goroutine. The returned stop
-// waits for start to finish, then stops what it started; calling it again
-// does nothing.
-func watchInBackground(start func() (stop func())) (stop func()) {
+// stops what start started; calling it again does nothing. It does not wait
+// for a start still running, whose git calls and walk of the worktree take a
+// while in a large repository and would hold up the exit: it ends start's
+// ctx, and what start returns is stopped once it does.
+func watchInBackground(start func(ctx context.Context) (stop func())) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan func(), 1)
 	go func() {
-		started <- start()
+		started <- start(ctx)
 	}()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			stopWatch := <-started
-			stopWatch()
+			cancel()
+			select {
+			case stopWatch := <-started:
+				stopWatch()
+			default:
+				go func() { (<-started)() }()
+			}
 		})
 	}
 }
 
-// watchFiles starts a watcher for cfg and sends the program a FilesChangedMsg
-// for each settled change. With a reader, the watch follows the directories
-// the reader lists. The returned stop may be called more than once.
-func watchFiles(cfg watch.Config, p msgSender, reader *diff.FolderReader) (stop func()) {
-	w, err := watch.New(cfg)
+// watchFiles starts a watcher for cfg, unless ctx ends during its setup, and
+// sends the program a FilesChangedMsg for each settled change. With a reader,
+// the watch follows the directories the reader lists. The returned stop may
+// be called more than once.
+func watchFiles(ctx context.Context, cfg watch.Config, p msgSender, reader *diff.FolderReader) (stop func()) {
+	w, err := watch.New(ctx, cfg)
 	if err != nil {
-		log.Printf("[WARN] file watching disabled: %v", err)
+		if ctx.Err() == nil {
+			log.Printf("[WARN] file watching disabled: %v", err)
+		}
 		return func() {}
 	}
 	if reader != nil {

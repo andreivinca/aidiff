@@ -3,38 +3,35 @@ package splitview
 import (
 	"slices"
 	"strconv"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
-
-// quit dialog buttons
-const (
-	quitButton = iota
-	cancelButton
-)
-
-// dialogIndent is the blank column on each side of the quit dialog's text.
-const dialogIndent = 1
 
 // QuitGuard is the program option that makes every quit go through the split:
 // a tea.QuitMsg the user has not confirmed becomes a quit request, which
 // quits at once when no pane is open and asks first otherwise. Filtering the
 // message itself, rather than the commands that produce it, covers quits from
-// anywhere: the wrapped model, palette commands, batches and sequences.
+// anywhere: the wrapped model, palette commands, batches and sequences. The
+// filter also takes the switcher's keyboard flags back before Bubble Tea
+// gives the terminal away (keyreports.go).
 func QuitGuard() tea.ProgramOption {
 	return tea.WithFilter(filterQuit)
 }
 
-// filterQuit is QuitGuard's filter.
+// filterQuit is QuitGuard's filter. Bubble Tea runs it before it acts on a
+// message, so a pop written here still reaches the alternate screen the
+// flags were pushed on; the next Update pushes them again should the
+// switcher still be open when the program comes back.
 func filterQuit(model tea.Model, msg tea.Msg) tea.Msg {
-	if _, ok := msg.(tea.QuitMsg); !ok {
+	m, ok := model.(Model)
+	if !ok {
 		return msg
 	}
-	if m, ok := model.(Model); ok && !m.quitConfirmed {
+	if _, quit := msg.(tea.QuitMsg); quit && !m.quitConfirmed {
 		return quitRequestMsg{}
+	}
+	if handsOverTerminal(msg) {
+		m.keys.pop()
 	}
 	return msg
 }
@@ -64,21 +61,17 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// handleQuitDialogKey answers the quit dialog (dialogKey); the quit key
+// confirms too, so pressing it twice quits.
 func (m Model) handleQuitDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y", "Y", m.cfg.Keys.Quit:
+	switch dialogKey(msg, &m.quitSel, m.cfg.Keys.Quit) {
+	case dialogYes:
 		return m.quit()
-	case "n", "N", "esc":
+	case dialogNo:
 		m.quitDialog = false
-	case "left", "right", "tab", "shift+tab", "h", "l":
-		m.quitSel = 1 - m.quitSel
-	case "enter", " ":
-		if m.quitSel == quitButton {
-			return m.quit()
-		}
-		m.quitDialog = false
+	case dialogOpen:
 	}
-	return m, nil // anything else keeps the dialog open
+	return m, nil
 }
 
 // quitDetails are the paragraphs saying what quitting closes: the shells,
@@ -115,32 +108,5 @@ func (m Model) quitDetails() []string {
 
 // quitDialogView renders the quit confirmation popup.
 func (m Model) quitDialogView() string {
-	inner := m.boxInner(paletteWidth)
-	indent := strings.Repeat(" ", dialogIndent)
-	lines := []string{indent + m.cfg.Quit.Title, ""}
-	for _, detail := range m.quitDetails() {
-		for l := range strings.SplitSeq(ansi.Wordwrap(detail, inner-2*dialogIndent, ""), "\n") {
-			lines = append(lines, indent+l)
-		}
-		lines = append(lines, "")
-	}
-	buttons := quitDialogButton("Quit", m.quitSel == quitButton) + "  " + quitDialogButton("Cancel", m.quitSel == cancelButton)
-	lines = append(lines,
-		lipgloss.PlaceHorizontal(inner, lipgloss.Center, buttons),
-		"",
-		m.styles.muted.Render(lipgloss.PlaceHorizontal(inner, lipgloss.Center, "y quit · n/esc cancel · ←→ enter")),
-	)
-	for i, l := range lines {
-		lines[i] = fitLine(l, inner)
-	}
-	return m.styles.box.Render(strings.Join(lines, "\n"))
-}
-
-// quitDialogButton renders a button, reversed when selected.
-func quitDialogButton(label string, selected bool) string {
-	st := lipgloss.NewStyle().Padding(0, 2)
-	if selected {
-		st = st.Reverse(true)
-	}
-	return st.Render(label)
+	return m.dialogView(dialog{title: m.cfg.Quit.Title, details: m.quitDetails(), confirm: "Quit", sel: m.quitSel})
 }

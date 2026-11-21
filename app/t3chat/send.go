@@ -31,21 +31,21 @@ func (b *Backend) Send(ctx context.Context, m chat.Outgoing) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sent = true
+	if msg.FreshContext && b.fresh { // used up only now: a message that failed leaves it for the retry
+		b.fresh = false
+		b.showLocked()
+	}
 	return nil
 }
 
-// outgoing is the message m as T3 takes it. It uses up a fresh context
-// armed by /clear.
+// outgoing is the message m as T3 takes it, with a fresh context armed by
+// /clear, which Send uses up once the message went out.
 func (b *Backend) outgoing(m chat.Outgoing) t3client.OutgoingMessage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	msg := t3client.OutgoingMessage{ThreadID: b.threadID, MessageID: m.ID, Text: m.Text, FreshContext: b.fresh, Model: b.chosen}
 	if !b.sent && !b.thread.hasUserMessage() {
 		msg.TitleSeed = t3client.TitleSeed(m.Prose(), len(m.Images))
-	}
-	if b.fresh {
-		b.fresh = false
-		b.showLocked()
 	}
 	return msg
 }

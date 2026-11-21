@@ -27,6 +27,7 @@ type palette struct {
 	rows  []row // what the query matches; rebuilt whenever it may change
 
 	// pick and prompt modes
+	ws          int // the wrapped model the picker or prompt was opened for: its answers are scoped to it
 	title       string
 	items       []PickerItem
 	onPick      func(PickerItem) tea.Cmd
@@ -64,6 +65,7 @@ func (m Model) showPicker(msg ShowPickerMsg) (tea.Model, tea.Cmd) {
 	m.palette = palette{
 		open:      true,
 		mode:      modePick,
+		ws:        m.wsID,
 		title:     msg.Title,
 		items:     msg.Items,
 		onPick:    msg.OnPick,
@@ -82,6 +84,7 @@ func (m Model) showPrompt(msg ShowPromptMsg) (tea.Model, tea.Cmd) {
 	m.palette = palette{
 		open:        true,
 		mode:        modePrompt,
+		ws:          m.wsID,
 		title:       msg.Title,
 		placeholder: msg.Placeholder,
 		onText:      msg.OnSubmit,
@@ -123,6 +126,9 @@ func (m Model) paletteRows() []row {
 // ungrouped commands, Quit last among them, then each group's commands.
 func (m Model) commands() []row {
 	rows := []row{{label: "Open Terminal", run: Model.openTerminal}}
+	if r, ok := m.switchCommand(); ok {
+		rows = append(rows, r)
+	}
 	var groups []string
 	byGroup := map[string][]row{}
 	if m.cfg.Commands != nil {
@@ -162,7 +168,7 @@ func runCommand(c Command) func(Model) (tea.Model, tea.Cmd) {
 		if c.Run == nil {
 			return m, nil
 		}
-		return m, c.Run(m.inner)
+		return m, m.scoped(c.Run(m.inner))
 	}
 }
 
@@ -173,31 +179,32 @@ func (p palette) pickRows() []row {
 	exact := false
 	for _, it := range p.items {
 		if fuzzyMatch(p.query, it.Label+" "+it.Detail) {
-			out = append(out, pickRow(it, p.onPick))
+			out = append(out, pickRow(it, p.onPick, p.ws))
 		}
 		exact = exact || strings.EqualFold(it.Label, text)
 	}
 	if text != "" && p.onText != nil && !exact {
-		out = append(out, textRow(fmt.Sprintf(p.textLabel, text), text, p.onText))
+		out = append(out, textRow(fmt.Sprintf(p.textLabel, text), text, p.onText, p.ws))
 	}
 	return out
 }
 
-// pickRow adapts a picker item to a palette row.
-func pickRow(it PickerItem, onPick func(PickerItem) tea.Cmd) row {
+// pickRow adapts a picker item, listed for wrapped model ws, to a palette
+// row.
+func pickRow(it PickerItem, onPick func(PickerItem) tea.Cmd, ws int) row {
 	run := func(m Model) (tea.Model, tea.Cmd) {
 		if onPick == nil {
 			return m, nil
 		}
-		return m, onPick(it)
+		return m, scopeCmd(ws, onPick(it))
 	}
 	return row{label: it.Label, detail: it.Detail, group: it.Group, run: run}
 }
 
 // textRow is the picker's free-text row: it hands text to onText.
-func textRow(label, text string, onText func(string) tea.Cmd) row {
+func textRow(label, text string, onText func(string) tea.Cmd, ws int) row {
 	run := func(m Model) (tea.Model, tea.Cmd) {
-		return m, onText(text)
+		return m, scopeCmd(ws, onText(text))
 	}
 	return row{label: label, run: run}
 }
@@ -286,7 +293,7 @@ func (m Model) runPaletteSelection() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.palette = palette{}
-		return m, p.onText(text)
+		return m, scopeCmd(p.ws, p.onText(text))
 	}
 	if p.sel < len(p.rows) {
 		run := p.rows[p.sel].run

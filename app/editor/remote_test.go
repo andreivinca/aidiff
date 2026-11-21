@@ -33,6 +33,27 @@ func TestRemoteCommand_Fresh(t *testing.T) {
 	}
 }
 
+func TestRemoteCommand_HostWithPort(t *testing.T) {
+	t.Setenv("EDITOR", "fresh")
+	cmd, ok := Editor{}.RemoteCommand("me@box:2222", "", "/srv", "a.go", 0)
+	require.True(t, ok)
+	assert.Equal(t, []string{"fresh", "ssh://me@box:2222/srv/a.go"}, cmd.Args, "host:port is the URL's own form")
+}
+
+func TestSSHOptions(t *testing.T) {
+	assert.Equal(t, []string{"-o", "ClearAllForwardings=yes"}, SSHOptions(""), "no socket: a connection of its own")
+	assert.Equal(t, []string{"-o", "ClearAllForwardings=yes", "-o", "ControlMaster=no", "-o", "ControlPath=/t/ssh.ctl"},
+		SSHOptions("/t/ssh.ctl"))
+}
+
+func TestShellQuote(t *testing.T) {
+	assert.Equal(t, `'a b'`, ShellQuote("a b"))
+	assert.Equal(t, `'it'\''s'`, ShellQuote("it's"))
+	out, err := exec.Command("sh", "-c", "printf %s "+ShellQuote(`$x "y" it's \z`)).Output() //nolint:gosec // the quoting under test
+	require.NoError(t, err)
+	assert.Equal(t, `$x "y" it's \z`, string(out))
+}
+
 func TestRemoteCommand_NotRemoteCapable(t *testing.T) {
 	t.Setenv("EDITOR", "vim")
 	_, ok := Editor{}.RemoteCommand("box", "", "/home/u/proj", "a.go", 1)
@@ -71,7 +92,7 @@ func TestRemoteCommand_SharesTheTunnelsConnection(t *testing.T) {
 	require.NoError(t, ssh.Run())
 	got, err := os.ReadFile(out) //nolint:gosec // test-owned path
 	require.NoError(t, err)
-	assert.Equal(t, []string{"-o", "ControlMaster=no", "-o", "ControlPath=" + control, "-o", "ClearAllForwardings=yes",
+	assert.Equal(t, []string{"-o", "ClearAllForwardings=yes", "-o", "ControlMaster=no", "-o", "ControlPath=" + control,
 		"-o", "BatchMode=yes", "box", "fresh-agent"}, strings.Split(strings.TrimSpace(string(got)), "\n"),
 		"the system ssh, on the tunnel's connection, then what fresh asked")
 	info, err := os.Stat(filepath.Join(bin, "ssh"))

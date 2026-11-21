@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,11 +17,13 @@ type command struct {
 	args  []string
 	stdin io.Reader // nil: no input
 	// limit is the most output bytes accepted. Zero runs the program without
-	// reading its output or errors, as a writer must be run: wl-copy and
-	// xclip leave a process behind to serve the clipboard, which would hold
-	// any pipe open.
+	// reading its output, as a writer must be run: wl-copy and xclip leave a
+	// process behind to serve the clipboard, which would hold any pipe open.
 	limit int64
 }
+
+// maxStderrBytes caps how much of a failed writer's stderr its error quotes.
+const maxStderrBytes = 4 << 10
 
 // exitError is a clipboard program that ran and failed.
 type exitError struct {
@@ -45,12 +48,32 @@ func runCommand(ctx context.Context, c command) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, c.name, c.args...) //nolint:gosec // a known tool, fixed arguments
 	cmd.Stdin = c.stdin
 	if c.limit == 0 {
-		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("%s: %w", c.name, err)
-		}
-		return nil, nil
+		return nil, runWriter(cmd, c)
 	}
 	return readOutput(cmd, c)
+}
+
+// runWriter runs a writer, its stderr going to an unlinked temp file rather
+// than a pipe: the process a writer leaves behind holds what it inherited,
+// and a pipe would keep Wait from returning until it exits, while a file
+// is read once the writer itself has, and only when it failed.
+func runWriter(cmd *exec.Cmd, c command) error {
+	stderr, err := os.CreateTemp("", "aidiff-clipboard-*")
+	if err != nil {
+		return fmt.Errorf("%s: %w", c.name, err)
+	}
+	_ = os.Remove(stderr.Name()) // gone with the last open handle
+	defer func() { _ = stderr.Close() }()
+	cmd.Stderr = stderr
+	runErr := cmd.Run()
+	if runErr == nil {
+		return nil
+	}
+	if _, exited := errors.AsType[*exec.ExitError](runErr); !exited {
+		return fmt.Errorf("%s: %w", c.name, runErr)
+	}
+	msg, _ := io.ReadAll(io.NewSectionReader(stderr, 0, maxStderrBytes))
+	return &exitError{name: c.name, stderr: strings.TrimSpace(string(msg)), err: runErr}
 }
 
 // readOutput runs cmd and returns its output, refusing more than c.limit bytes.

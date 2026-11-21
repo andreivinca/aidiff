@@ -43,36 +43,51 @@ func (b *Backend) clearDescription() string {
 }
 
 // Commands are T3's slash commands, then the commands the thread's
-// provider understands, which go to the agent as messages.
+// provider understands, which go to the agent as messages. The pane asks
+// on every frame while a slash command is typed, so they are read without
+// mu, which the connection's reader holds while it builds a conversation:
+// T3's own are fixed once the backend is handed out, and the provider is
+// the one showLocked saw last (instanceLocked).
 func (b *Backend) Commands() []chat.Command {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.instanceMu.Lock()
+	instance := b.instance
+	b.instanceMu.Unlock()
 	out := slices.Clone(b.commands)
-	for _, pc := range b.providerCommandsLocked() {
+	for _, pc := range b.providerCommands(instance) {
 		out = append(out, providerCommand(pc))
 	}
 	return out
 }
 
-// providerCommandsLocked are the catalog's commands for the thread's
-// provider, or every provider's while the thread's is unknown; mu must be
-// held.
-func (b *Backend) providerCommandsLocked() []t3client.ProviderCommand {
+// providerCommands are the catalog's commands for the provider instance,
+// or every provider's while it is not known ("").
+func (b *Backend) providerCommands(instance string) []t3client.ProviderCommand {
 	cat, _ := b.catalog.get()
 	if cat == nil {
 		return nil
 	}
-	model := b.selectionLocked()
-	if model == nil || model.InstanceID == "" {
+	if instance == "" {
 		return cat.Commands
 	}
 	var out []t3client.ProviderCommand
 	for _, c := range cat.Commands {
-		if c.InstanceID == model.InstanceID {
+		if c.InstanceID == instance {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// instanceLocked keeps the provider instance of the selection the next
+// message runs with, for Commands; mu must be held.
+func (b *Backend) instanceLocked() {
+	instance := ""
+	if m := b.selectionLocked(); m != nil {
+		instance = m.InstanceID
+	}
+	b.instanceMu.Lock()
+	b.instance = instance
+	b.instanceMu.Unlock()
 }
 
 // providerCommand is a provider's command as the popup lists it.

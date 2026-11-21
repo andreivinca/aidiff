@@ -96,6 +96,11 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 	switch {
 	case v.live == nil:
 		lines = append(lines, faint.Render(" not connected"))
+	case len(list) == 0 && v.shell.Projects == nil && v.shellErr != nil: // the fetch failed: say why, not "loading…"
+		why := strings.Split(ansi.Wrap(v.shellErr.Error(), max(1, width-1), " "), "\n")
+		for _, l := range why[:min(len(why), 3)] {
+			lines = append(lines, faint.Render(" "+l))
+		}
 	case len(list) == 0 && v.shell.Projects == nil:
 		lines = append(lines, faint.Render(" loading…"))
 	case len(list) == 0:
@@ -126,6 +131,7 @@ var sidebarHelp = []string{
 	" a            add project",
 	" ctrl+b       show / hide",
 	" ctrl/alt+1…9 switch project",
+	" alt+s        switch session",
 	" alt+← alt+→  move focus",
 }
 

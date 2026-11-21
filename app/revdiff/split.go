@@ -18,10 +18,17 @@ const paletteKey = "ctrl+p"
 // machine's history, whose key help names it.
 const projectsKey = "ctrl+b"
 
+// switchKey and switchAltKey open the session switcher; the sidebars' key
+// help names the second, which every terminal delivers.
+const (
+	switchKey    = "ctrl+tab"
+	switchAltKey = "alt+s"
+)
+
 // newSplit wraps the review in the split view. It always does: ctrl+p can
 // open terminals even when none start open, and the T3 commands live there
-// too.
-func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) splitview.Model {
+// too. out is the terminal the program draws on.
+func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs, out io.Writer) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	finder := &paletteFinder{project: reviewProject(t3p, local, diffs)}
 	return splitview.New(review, splitview.Config{
@@ -33,11 +40,23 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		Files:        finder.files,
 		Carry:        finder.carry,
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
-		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey},
+		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey, Switch: switchKey, SwitchAlt: switchAltKey},
 		Sidebar:      t3p.Sidebar(),
 		OuterSidebar: t3p.Connections(),
 		Workspace:    t3p.Workspace(),
+		Sessions:     t3p.Sessions(),
+		Output:       terminalOutput(out),
 	})
+}
+
+// terminalOutput writes the split's escape sequences to out while the
+// program runs. Bubble Tea's renderer writes each frame to the same out in
+// one Write, and an *os.File holds a lock across a Write, so a sequence
+// written whole never lands inside a frame, nor a frame inside it.
+func terminalOutput(out io.Writer) func(seq string) {
+	return func(seq string) {
+		_, _ = io.WriteString(out, seq)
+	}
 }
 
 // startsWithTerminal reports whether the split opens a terminal pane at

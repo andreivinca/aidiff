@@ -70,14 +70,34 @@ func (m Model) focusedSpan() (from, to int, ok bool) {
 
 // withFocusMark draws line, the status line, green except for the focused
 // panel's columns, which keep the line's own colors. A line with no
-// background color gets those columns in reverse video instead.
+// background color gets those columns in reverse video instead. The result
+// is kept until the line, the focused columns or the colors change.
 func (m Model) withFocusMark(line string) string {
 	from, to, ok := m.focusedSpan()
 	if !ok {
 		return line
 	}
+	var cbg, cfg string
+	if c, isColorer := m.inner.(focusColorer); isColorer {
+		cbg, cfg = c.FocusMarkColors()
+	}
+	key := markKey{line: line, winW: m.winW, from: from, to: to, colorBg: cbg, colorFg: cfg}
+	c := m.panes
+	if c != nil && c.markValid && c.markKey == key {
+		return c.mark
+	}
+	out := m.drawFocusMark(line, from, to, cbg, cfg)
+	if c != nil {
+		c.markValid, c.markKey, c.mark = true, key, out
+	}
+	return out
+}
+
+// drawFocusMark is withFocusMark's drawing, with the wrapped model's colors
+// cbg and cfg ("" for none).
+func (m Model) drawFocusMark(line string, from, to int, cbg, cfg string) string {
 	mid := ansi.Cut(line, from, to) // each piece carries the escapes of the whole line
-	bg, fg := m.focusColors(line)
+	bg, fg := focusColors(line, cbg, cfg)
 	if bg == "" {
 		return ansi.Cut(line, 0, from) + ansi.ResetStyle + "\x1b[7m" + mid + ansi.ResetStyle + ansi.Cut(line, to, m.winW)
 	}
@@ -115,18 +135,16 @@ func focusBackground(line string) string {
 }
 
 // focusColors are the mark's background and foreground parameters for
-// line: the wrapped model's colors, else the fixed green on the line's own
-// text color; bg is "" when the line sets no background to replace.
-func (m Model) focusColors(line string) (bg, fg string) {
+// line: the wrapped model's colors cbg and cfg (focusColorer), else the
+// fixed green on the line's own text color; bg is "" when the line sets no
+// background to replace.
+func focusColors(line, cbg, cfg string) (bg, fg string) {
 	fallback := focusBackground(line)
 	if fallback == "" {
 		return "", ""
 	}
-	if c, ok := m.inner.(focusColorer); ok {
-		cbg, cfg := c.FocusMarkColors()
-		if p := sgrBody(cbg); p != "" {
-			return p, sgrBody(cfg)
-		}
+	if p := sgrBody(cbg); p != "" {
+		return p, sgrBody(cfg)
 	}
 	return fallback, ""
 }

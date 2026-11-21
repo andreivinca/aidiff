@@ -35,9 +35,11 @@ type Model struct {
 
 	palette       palette
 	quitDialog    bool          // the quit dialog is open
-	quitSel       int           // selected quit-dialog button: quitButton or cancelButton
+	quitSel       int           // selected quit-dialog button: confirmButton or cancelButton
 	quitConfirmed bool          // nothing stands in the way of quitting; QuitGuard lets tea.QuitMsg through
 	confirm       *confirmState // the open confirmation popup (ConfirmMsg), nil when none
+	switcher      switcherState // the session switcher (switcher.go)
+	keys          *keyReports   // the terminal's keyboard mode as the split set it; shared across copies
 	flash         string        // one-line message shown until the next key
 
 	winW          int       // the window's width
@@ -55,6 +57,7 @@ type Model struct {
 	innerSized     bool // the wrapped model has received a size (0x0 is a valid one)
 
 	leftCache *leftCache      // shared across copies; see leftBlock
+	panes     *paneCache      // shared across copies; see fitted
 	closing   *sync.WaitGroup // panes being closed; shared across copies so Close can wait for them
 
 	pending []StartFunc // panes requested before the window had a size
@@ -62,6 +65,7 @@ type Model struct {
 	wsKey  string               // the workspace on screen; "" is unnamed, closed when left
 	parked map[string]workspace // the named workspaces not on screen; shared across copies, cloned on write
 	wsID   int                  // the workspace on screen's wrapped model, as innerMsg names it
+	mru    []string             // the workspaces, most recently used first; replaced, never written in place
 
 	sideOpen   bool // the sidebar is shown
 	sideReturn int  // the focus before the sidebar was shown, given back when it hides
@@ -80,9 +84,12 @@ func New(inner tea.Model, cfg Config) Model {
 		focus:     focusDiff,
 		termRatio: float64(cfg.WidthPercent) / 100,
 		leftCache: &leftCache{},
+		panes:     &paneCache{},
 		closing:   &sync.WaitGroup{},
 		wsKey:     cfg.Workspace,
 		wsID:      nextWorkspaceID(),
+		mru:       []string{cfg.Workspace},
+		keys:      newKeyReports(cfg.Output),
 	}
 }
 
@@ -96,14 +103,33 @@ func (m Model) Init() tea.Cmd {
 	return m.tag(m.inner.Init())
 }
 
-// Update implements tea.Model.
+// Update implements tea.Model. The terminal reports key releases while the
+// switcher is open waiting for one, and only then (keyreports.go), whatever
+// opened or closed it.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.updateAll(msg)
+	next := model.(Model)
+	next.keys.follow(next.switcher.awaitsRelease())
+	return next, cmd
+}
+
+// updateAll is Update before the terminal's keyboard mode follows.
+func (m Model) updateAll(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(FilesChangedMsg); ok {
 		m.refreshPending = m.cfg.RefreshMsg != nil
 		return m.flushRefresh(nil)
 	}
 	model, cmd := m.update(msg)
-	model, cmd = model.(Model).closeUnfocused(cmd)
+	next := model.(Model)
+	if next.switcher.open && (next.palette.open || next.quitDialog || next.confirm != nil) {
+		// another popup came up: the switcher gives way to it
+		closed, closeCmd := next.closeSwitcher()
+		next, cmd = closed.(Model), tea.Batch(cmd, closeCmd)
+	}
+	if next.modal() {
+		next.dragging = false // a popup takes the mouse: the drag's release would never come
+	}
+	model, cmd = next.closeUnfocused(cmd)
 	// any message may have ended what kept the wrapped model busy
 	return model.(Model).flushRefresh(cmd)
 }
@@ -123,8 +149,12 @@ func (m Model) flushRefresh(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if seq, ok := rawSequence(msg); ok {
-		if k, ok := parseModifiedKey(seq); ok {
-			return m.handleModifiedKey(k, msg)
+		if flags, ok := keyFlagsReply(seq); ok {
+			m.keys.answered(flags) // the terminal's answer, never typed into a pane
+			return m, nil
+		}
+		if r, ok := parseKeyReport(seq); ok {
+			return m.handleKeyReport(r, seq, msg)
 		}
 		return m.forwardRaw(seq, msg)
 	}
@@ -158,7 +188,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Run == nil {
 			return m, nil
 		}
-		return m, msg.Run(m.inner)
+		return m, m.scoped(msg.Run(m.inner))
 	case ShowSidebarMsg:
 		return m.showSidebar()
 	case HideSidebarMsg:
@@ -169,6 +199,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.switchWorkspace(msg)
 	case innerMsg:
 		return m.routeInner(msg)
+	case scopedMsg:
+		return m.routeScoped(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -201,6 +233,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.palette.open {
 		return m.handlePaletteKey(msg)
+	}
+	if m.switcher.open {
+		return m.handleSwitcherKey(msg)
+	}
+	switch k := msg.String(); {
+	case m.isSwitchKey(k):
+		return m.openSwitcher(1, heldIn(k))
+	case k == m.cfg.Keys.SwitchBack:
+		return m.openSwitcher(-1, heldIn(k))
 	}
 	switch msg.String() {
 	case m.cfg.Keys.Focus:

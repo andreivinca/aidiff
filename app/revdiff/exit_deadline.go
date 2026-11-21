@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime/pprof"
 	"sync"
 	"time"
@@ -28,6 +27,7 @@ type exitDeadline struct {
 	exit  func(code int) // os.Exit outside tests
 	log   io.Writer      // the note saying so; stderr outside tests
 	dump  func(io.Writer) error
+	code  *int // the exit code finalize computed, nil before it did (result)
 }
 
 // newExitDeadline builds a deadline that dumps to the temp directory and
@@ -69,6 +69,20 @@ func (d *exitDeadline) expireNow() {
 	d.expire()
 }
 
+// result records the exit code finalize computed and passes it on. The steps
+// after finalize (closing the T3 connection, stopping the watchers) run under
+// the deadline too, and by then the -o output is written: an exit cut short
+// there exits with this code, so a launcher reading 10 (annotations) still
+// gets it. An error leaves the cut-short exit at 1.
+func (d *exitDeadline) result(code int, err error) (int, error) {
+	if d != nil && err == nil {
+		d.mu.Lock()
+		d.code = &code
+		d.mu.Unlock()
+	}
+	return code, err
+}
+
 func (d *exitDeadline) expire() {
 	d.mu.Lock()
 	if d.done {
@@ -76,29 +90,35 @@ func (d *exitDeadline) expire() {
 		return
 	}
 	d.done = true
+	code := 1
+	if d.code != nil {
+		code = *d.code
+	}
 	d.mu.Unlock()
-	path := filepath.Join(d.dir, fmt.Sprintf("aidiff-shutdown-%d.txt", os.Getpid()))
 	note := "aidiff: exit did not finish; quitting anyway"
-	if err := d.writeDump(path); err == nil {
+	if path, err := d.writeDump(); err == nil {
 		note += ", goroutine stacks saved to " + path
 	}
 	_, _ = fmt.Fprintln(d.log, note)
-	d.exit(1)
+	d.exit(code)
 }
 
-func (d *exitDeadline) writeDump(path string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // path built from the temp dir and our pid
+// writeDump saves the goroutine stacks to a new file of a random name in
+// d.dir, returning its path; a fixed name in a shared temp directory could be
+// a link another user planted.
+func (d *exitDeadline) writeDump() (string, error) {
+	f, err := os.CreateTemp(d.dir, "aidiff-shutdown-*.txt")
 	if err != nil {
-		return fmt.Errorf("create goroutine dump: %w", err)
+		return "", fmt.Errorf("create goroutine dump: %w", err)
 	}
 	if err := d.dump(f); err != nil {
 		_ = f.Close()
-		return err
+		return "", err
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("close goroutine dump: %w", err)
+		return "", fmt.Errorf("close goroutine dump: %w", err)
 	}
-	return nil
+	return f.Name(), nil
 }
 
 // dumpGoroutines writes every goroutine's stack, as a crash would print it.

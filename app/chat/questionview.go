@@ -16,14 +16,15 @@ const customLabel = "Type something…"
 // it asks several questions, then the current question in full, its options
 // with their text wrapped under the text rather than under the number, and
 // one line of keys. tab past the last question is the review of the answers.
-func questionPromptRows(e Questions, w int, st styles, answered map[string]Answer, tab, choice int) []string {
+func questionPromptRows(e Questions, w int, st styles, answered map[string]Answer, tab, choice int) block {
 	multi := len(e.Questions) > 1
-	var out []string
+	var out block
 	if multi {
-		out = append(out, questionTabRows(e.Questions, tab, answered, w, st)...)
-		out = append(out, "")
+		out.plain(questionTabRows(e.Questions, tab, answered, w, st)...)
+		out.plain("")
 		if tab >= len(e.Questions) {
-			return append(out, reviewRows(e.Questions, answered, w, st)...)
+			out.join(reviewRows(e.Questions, answered, w, st))
+			return out
 		}
 	}
 	tab = min(max(tab, 0), len(e.Questions)-1)
@@ -34,24 +35,27 @@ func questionPromptRows(e Questions, w int, st styles, answered map[string]Answe
 	if isSaved {
 		mark, markStyle = "✓ ", st.muted
 	}
-	for i, row := range hangRows(mark, q.Text, w) {
+	text := hangRows(mark, q.Text, w)
+	for i, row := range text.rows {
 		if i == 0 {
 			row = markStyle.Render(mark) + st.bold.Render(strings.TrimPrefix(row, mark))
 		} else {
 			row = st.bold.Render(row)
 		}
-		out = append(out, inset+row)
+		text.rows[i] = inset + row
 	}
-	out = append(out, "")
+	out.join(text)
+	out.plain("")
 
 	if len(q.Options) > 0 {
-		out = append(out, optionRows(q, saved, isSaved, choice, w, st)...)
-		out = append(out, "")
+		out.join(optionRows(q, saved, isSaved, choice, w, st))
+		out.plain("")
 	} else if isSaved {
-		out = append(out, styledHang(st.text, "  ✓ ", strings.Join(saved.Values, ", "), w)...)
-		out = append(out, "")
+		out.join(styledHang(st.text, "  ✓ ", answerText(saved), w))
+		out.plain("")
 	}
-	return append(out, keyRows(q, multi, w, st)...)
+	out.plain(keyRows(q, multi, w, st)...)
+	return out
 }
 
 // questionTabRows is the strip naming each question, the current one
@@ -83,7 +87,7 @@ func tabLabel(label string, current bool, st styles) string {
 // optionRows lists a question's options and the row for an answer of the
 // user's own. The highlighted row is drawn as a bar; the saved answer is
 // ticked. A description is shown only when it says more than the label.
-func optionRows(q Question, saved Answer, isSaved bool, choice, w int, st styles) []string {
+func optionRows(q Question, saved Answer, isSaved bool, choice, w int, st styles) block {
 	picked := map[string]bool{}
 	if isSaved {
 		for _, v := range saved.Values {
@@ -93,9 +97,9 @@ func optionRows(q Question, saved Answer, isSaved bool, choice, w int, st styles
 	options := append(append([]Option{}, q.Options...), Option{Label: customLabel})
 	custom := ""
 	if isSaved && savedChoice(q, saved, true) == len(q.Options) {
-		custom = strings.Join(saved.Values, ", ")
+		custom = answerText(saved)
 	}
-	var out []string
+	var out block
 	for i, o := range options {
 		cursor := "  "
 		if i == choice {
@@ -110,18 +114,20 @@ func optionRows(q Question, saved Answer, isSaved bool, choice, w int, st styles
 		if i == choice {
 			style = st.selected
 		}
-		for _, row := range hangRows(lead, label, w) {
+		rows := hangRows(lead, label, w)
+		for j, row := range rows.rows {
 			if i == choice {
 				row = fit(row, max(1, w-len(inset)))
 			}
-			out = append(out, inset+style.Render(row))
+			rows.rows[j] = inset + style.Render(row)
 		}
+		out.join(rows)
 		pad := strings.Repeat(" ", ansi.StringWidth(lead))
 		switch {
 		case i == len(q.Options) && custom != "":
-			out = append(out, styledHang(st.muted, pad, "“"+custom+"”", w)...)
+			out.join(styledHang(st.muted, pad, "“"+custom+"”", w))
 		case describes(o):
-			out = append(out, styledHang(st.muted, pad, o.Description, w)...)
+			out.join(styledHang(st.muted, pad, o.Description, w))
 		}
 	}
 	return out
@@ -135,31 +141,35 @@ func describes(o Option) bool {
 
 // reviewRows lists every question with its answer, for a last look before
 // the answers are sent.
-func reviewRows(qs []Question, answered map[string]Answer, w int, st styles) []string {
-	out := []string{inset + st.bold.Render("Review your answers")}
+func reviewRows(qs []Question, answered map[string]Answer, w int, st styles) block {
+	var out block
+	out.plain(inset + st.bold.Render("Review your answers"))
 	for _, q := range qs {
-		out = append(out, "")
+		out.plain("")
 		a, ok := answered[q.ID]
 		mark, markStyle := "○ ", st.warn
 		if ok {
 			mark, markStyle = "✓ ", st.muted
 		}
-		for i, row := range hangRows(mark, firstLine(q.Text), w) {
+		text := hangRows(mark, q.Text, w)
+		for i, row := range text.rows {
 			if i == 0 {
 				row = markStyle.Render(mark) + st.text.Render(strings.TrimPrefix(row, mark))
 			} else {
 				row = st.text.Render(row)
 			}
-			out = append(out, inset+row)
+			text.rows[i] = inset + row
 		}
+		out.join(text)
 		value := "not answered yet"
 		if ok {
-			value = strings.Join(a.Values, ", ")
+			value = answerText(a)
 		}
-		out = append(out, styledHang(st.muted, "  → ", value, w)...)
+		out.join(styledHang(st.muted, "  → ", value, w))
 	}
-	out = append(out, "")
-	return append(out, keyHints(w, st, "enter submit all", "tab / shift+tab revise", "/dismiss skips")...)
+	out.plain("")
+	out.plain(keyHints(w, st, "enter submit all", "tab / shift+tab revise", "/dismiss skips")...)
+	return out
 }
 
 // keyRows is the line of keys under a question.
@@ -213,31 +223,17 @@ func packRows(parts []string, sep string, w int) []string {
 }
 
 // hangRows wraps text after lead so the rows after the first continue under
-// the text, not under the lead. Rows carry no inset.
-func hangRows(lead, text string, w int) []string {
-	lw := ansi.StringWidth(lead)
-	limit := max(1, w-len(inset)-lw)
-	pad := strings.Repeat(" ", lw)
-	var out []string
-	for para := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
-		for l := range strings.SplitSeq(ansi.Wrap(para, limit, ""), "\n") {
-			if len(out) == 0 {
-				out = append(out, lead+l)
-			} else {
-				out = append(out, pad+l)
-			}
-		}
-	}
-	return out
+// the text, not under the lead. Rows carry no inset; their meta is for rows
+// the caller puts it in front of.
+func hangRows(lead, text string, w int) block {
+	return wrapText(lead, text, w, false)
 }
 
 // styledHang is hangRows inset and drawn in one style.
-func styledHang(style lipgloss.Style, lead, text string, w int) []string {
-	rows := hangRows(lead, text, w)
-	for i, row := range rows {
-		rows[i] = inset + style.Render(row)
-	}
-	return rows
+func styledHang(style lipgloss.Style, lead, text string, w int) block {
+	return wrapText(lead, text, w, false).styled(func(r string) string {
+		return inset + style.Render(r)
+	})
 }
 
 // savedChoice is the picker row of a saved answer: its option, or the row
@@ -253,4 +249,10 @@ func savedChoice(q Question, a Answer, ok bool) int {
 		}
 	}
 	return len(q.Options)
+}
+
+// answerText shows an answer's values, which may be the backend's option
+// values, kept exact to send back and so sanitized only here.
+func answerText(a Answer) string {
+	return sanitize(strings.Join(a.Values, ", "))
 }

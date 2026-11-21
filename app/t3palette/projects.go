@@ -89,8 +89,9 @@ func (v state) currentProjectID() string {
 }
 
 // openProject puts project p of the live server on screen: its workspace as
-// it was left, when it has one; else a new one with its most recently
-// updated thread, else its root. A project already on screen stays as it is.
+// it was left, when it has one, its review rebuilt when a reconnect replaced
+// the session it read over; else a new one with its most recently updated
+// thread, else its root. A project already on screen stays as it is.
 func (t *Palette) openProject(p t3client.Project) tea.Cmd {
 	v := t.state()
 	s := v.live
@@ -101,10 +102,14 @@ func (t *Palette) openProject(p t3client.Project) tea.Cmd {
 	key := projectKey(s, p.ID)
 	t.mu.Lock()
 	onScreen := t.ws == key
-	_, parked := t.parked[key]
+	left, parked := t.parked[key]
+	stale := parked && t.stale[left]
 	t.mu.Unlock()
 	if onScreen {
 		return nil
+	}
+	if stale {
+		return t.rebuildParked(left)
 	}
 	if parked {
 		return func() tea.Msg {

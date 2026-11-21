@@ -50,9 +50,9 @@ func BenchmarkPane_WheelScroll(b *testing.B) {
 func TestRowCache(t *testing.T) {
 	var c rowCache
 	renders := 0
-	render := func() []string {
+	render := func() block {
 		renders++
-		return []string{"row"}
+		return block{rows: []string{"row"}, meta: []rowMeta{{}}}
 	}
 	a, b := rowKey{kind: 'a', text: "hello", w: 40}, rowKey{kind: 'a', text: "hello▍", w: 40}
 	c.rows(a, render)

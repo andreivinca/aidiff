@@ -33,8 +33,11 @@ func (p *Pane) SendText(s string) {
 			return
 		}
 	}
-	p.note = ""
 	p.gen++
+	if p.secretGoneTextLocked(s) { // a secret request just ended (secret.go)
+		return
+	}
+	p.note = ""
 	if p.secretTextLocked(s) { // aidiff: a secret the agent asks for (secret.go)
 		return
 	}
@@ -92,9 +95,10 @@ func (p *Pane) typeLocked(r rune) {
 	}
 }
 
-// insertLocked puts text into the input at the cursor; mu must be held.
+// insertLocked puts text into the input at the cursor, without the escape
+// sequences and control characters a paste may carry; mu must be held.
 func (p *Pane) insertLocked(text string) {
-	p.input.insert(text)
+	p.input.insert(sanitize(text))
 	p.inputChanged()
 }
 
@@ -207,8 +211,8 @@ func (p *Pane) SendModifiedKey(k uv.KeyPressEvent) bool {
 	if k.Mod == 0 || p.stop.turn != "" || p.activity.open {
 		return false
 	}
-	if p.secretLocked() != nil {
-		return true // no line breaks or word edits in a secret
+	if p.secretLocked() != nil || p.secretGone {
+		return true // no line breaks or word edits in a secret, nor in what was meant for one
 	}
 	if k.Mod&(uv.ModCtrl|uv.ModShift) == uv.ModCtrl|uv.ModShift && unicode.ToLower(k.Code) == 'c' {
 		p.copyKeyLocked()
@@ -239,8 +243,14 @@ func (p *Pane) SendKey(k uv.KeyPressEvent) {
 	p.lock()
 	defer p.mu.Unlock()
 	p.selection = textSelection{}
-	p.note = ""
 	p.gen++
+	if p.secretGone { // a secret request just ended (secret.go): only enter or esc gets the composer back
+		if k.Code == uv.KeyEnter || k.Code == uv.KeyEscape {
+			p.secretGone, p.note = false, ""
+		}
+		return
+	}
+	p.note = ""
 	switch {
 	case p.stop.turn != "":
 		p.stopKeyLocked(k)
@@ -325,8 +335,11 @@ func (p *Pane) Paste(s string) {
 	p.lock()
 	defer p.mu.Unlock()
 	p.selection = textSelection{}
-	p.note = ""
 	p.gen++
+	if p.secretGone {
+		return // a password pasted for the secret request that just ended
+	}
+	p.note = ""
 	p.activity.open = false
 	p.stop = stopConfirmation{}
 	if p.secretPasteLocked(s) {
@@ -361,7 +374,7 @@ func (p *Pane) SendMouse(m vt.Mouse) {
 	case p.stop.turn != "":
 		return
 	case p.activity.open:
-		p.moveActivityLocked(dir * wheelStep)
+		p.pageActivityLocked(dir * wheelStep)
 	default:
 		p.scrollLocked(-dir * p.wheel.step(dir, p.now()))
 	}

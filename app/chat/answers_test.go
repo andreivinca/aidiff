@@ -161,7 +161,7 @@ func TestQuestionRowsWrapFullText(t *testing.T) {
 		ID: "q", Text: "A long question that must wrap\nwith its final detail preserved",
 		Options: []Option{{Label: "An option", Description: "A long description that must wrap and preserve its ending"}},
 	}}}, 32, p.styles, nil)
-	rendered := strings.Join(rows, "\n")
+	rendered := strings.Join(rows.rows, "\n")
 	assert.Contains(t, rendered, "preserved")
 	assert.Contains(t, rendered, "ending")
 }
@@ -205,7 +205,7 @@ func TestQuestionPromptRowsLayout(t *testing.T) {
 	}}
 	rows := questionPromptRows(Questions{ID: "x", Pending: true, Questions: []Question{q, {ID: "tone", Text: "Tone?"}}},
 		40, p.styles, map[string]Answer{"story": {Values: []string{"c"}}}, 0, 1)
-	text := ansi.Strip(strings.Join(rows, "\n"))
+	text := ansi.Strip(strings.Join(rows.rows, "\n"))
 	assert.Contains(t, text, "Story ✓")
 	assert.Equal(t, 1, strings.Count(text, "investigate"), "a description that repeats the label is not shown")
 	assert.Contains(t, text, "\n        photograph and trace", "wrapped option text hangs under the label")

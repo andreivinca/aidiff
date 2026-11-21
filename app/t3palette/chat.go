@@ -33,6 +33,8 @@ type openChat struct {
 	chats     *t3chat.Chats
 	newThread func(t3chat.NewThread) // what /clear in the pane does
 	ws        string                 // the split workspace the pane is in
+	session   Session                // the session of the thread it follows, for a reconnect to move it (repointLocked)
+	th        t3client.Thread        // the thread it follows
 }
 
 // threads are the threads of conn: the ones the pane followed before, when
@@ -49,7 +51,14 @@ func (c *openChat) threads(conn *t3client.Conn) *t3chat.Chats {
 
 // follow points the pane at the thread th reached over conn.
 func (c *openChat) follow(conn *t3client.Conn, th t3client.Thread) {
+	c.th = th
 	c.pane.Follow(c.threads(conn).Thread(th.ID), threadTitle(th))
+}
+
+// followOn points the pane at the thread th reached over s.
+func (c *openChat) followOn(s Session, th t3client.Thread) {
+	c.session = s
+	c.follow(s.Conn(), th)
 }
 
 // followChatsLocked points the open chat panes of the workspace on screen
@@ -59,7 +68,7 @@ func (t *Palette) followChatsLocked(r *Review) {
 	th := r.thread()
 	for _, c := range t.liveChatsLocked() {
 		if th != nil && c.ws == t.ws {
-			c.follow(r.Session.Conn(), *th)
+			c.followOn(r.Session, *th)
 		}
 	}
 }
@@ -103,7 +112,7 @@ func (t *Palette) autoChatLocked(r *Review) tea.Msg {
 // chatPaneMsg is the split's request for a chat pane on th over s.
 func (t *Palette) chatPaneMsg(s Session, th t3client.Thread) tea.Msg {
 	return splitview.OpenPaneMsg{Start: func(width, height int) (splitview.Terminal, error) {
-		c := &openChat{newThread: t.clearThread}
+		c := &openChat{newThread: t.clearThread, session: s, th: th}
 		cfg := t.cfg.Chat
 		cfg.QuitNote = chatQuitNote
 		pane := chat.New(c.threads(s.Conn()).Thread(th.ID), threadTitle(th), width, height, cfg)

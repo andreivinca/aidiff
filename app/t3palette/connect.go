@@ -66,8 +66,13 @@ func serverSpec(s string) string {
 
 // connect reaches the server named by spec, makes it the live session and
 // shows its projects in the sidebar. The review on screen stays, and so does
-// its session while it is there.
+// its session while it is there. A connection that lands after the user
+// chose another one (chooseLocked) is closed instead: the last choice wins,
+// not the last dial to finish. It runs on the UI goroutine, as the choice.
 func (t *Palette) connect(spec string) tea.Cmd {
+	t.mu.Lock()
+	choice := t.chooseLocked()
+	t.mu.Unlock()
 	return tea.Batch(flash("T3: connecting to "+spec+"…"), func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
 		defer cancel()
@@ -78,7 +83,11 @@ func (t *Palette) connect(spec string) tea.Cmd {
 		if err != nil {
 			return t3Failed(err)
 		}
-		if !t.adopt(s, sh, nil) {
+		ok, stale := t.adoptChosen(s, sh, choice)
+		if stale {
+			return splitview.FlashMsg{Text: "T3: " + spec + " answered after another connection was chosen; not used"}
+		}
+		if !ok {
 			return nil // the program is ending
 		}
 		connected := tea.BatchMsg{
@@ -96,7 +105,8 @@ func (t *Palette) connect(spec string) tea.Cmd {
 // takeOver puts s, a new session to old's server (autoreconnect.go), in
 // old's place and rebuilds the review on screen over it, with the
 // annotations of inner, when that review came over old; the live refresh and
-// the chat panes follow it. It runs on the UI goroutine, so the review on
+// the chat panes follow it, and the parked reviews over old are rebuilt as
+// they come back (adopt). It runs on the UI goroutine, so the review on
 // screen is the one the user sees.
 func (t *Palette) takeOver(old, s Session, sh t3client.Shell, inner tea.Model) tea.Cmd {
 	shown, store := t.OnScreen(), storeOf(inner)
@@ -119,4 +129,25 @@ func (t *Palette) reopen(s Session, sh t3client.Shell, target t3client.Target, s
 		}
 	}
 	return t.showMsg(t.newReview(s, target), store, "reopen thread")
+}
+
+// rebuildParked rebuilds r, a parked review moved to the session that
+// replaced its own (repointLocked), over that session, with its annotations
+// and the way it compared; a thread is looked up again. Its workspace comes
+// on screen with it.
+func (t *Palette) rebuildParked(r *Review) tea.Cmd {
+	return asking("reopening "+r.Target.Label(), func(ctx context.Context) tea.Msg {
+		sh, err := t.fetchShell(ctx, r.Session)
+		if err != nil {
+			return t3Error("reopen "+r.Target.Label(), err)
+		}
+		target := r.Target
+		if th := target.Thread; th != nil {
+			if target, err = t3client.Resolve(sh, th.ID); err != nil {
+				return t3Error("reopen thread", err)
+			}
+		}
+		next := &Review{Session: r.Session, Target: target, Source: r.Source, SourceLabel: r.SourceLabel, View: r.View}
+		return t.showMsg(next, t.storeFor(r), "reopen thread")
+	})
 }

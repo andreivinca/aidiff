@@ -3,6 +3,8 @@ package t3client
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -164,4 +166,35 @@ func TestConn_SubscribeCallbackStopsWithIt(t *testing.T) {
 	// the late chunk is sent before this reply, and frames arrive in order
 	require.NoError(t, c.call(context.Background(), "after", nil, nil))
 	assert.Equal(t, 1, calls)
+}
+
+func TestConn_CloseDoesNotWaitForASilentPeer(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = ws.CloseNow()
+		}()
+		<-release // a peer gone without a word: it never reads, so never answers the close
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		close(release) // before srv.Close, which waits for the handler
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := dial(ctx, directEndpoint(srv.URL), "tok")
+	require.NoError(t, err)
+
+	start := time.Now()
+	_ = c.close()
+	assert.Less(t, time.Since(start), 3*closeHandshakeTimeout, "the handshake is cut short, not waited out for 5s")
+	select {
+	case <-c.Done():
+	case <-time.After(time.Second):
+		t.Fatal("the connection did not end")
+	}
 }

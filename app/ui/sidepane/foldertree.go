@@ -244,13 +244,15 @@ func (t *FolderTree) appendRows(rows []treeEntry, children map[string][]treeEntr
 	return rows
 }
 
-// renderFolderRow draws one folder row, highlighted under the cursor.
+// renderFolderRow draws one folder row, highlighted under the cursor. The
+// name is sanitized: a newline or an escape sequence in it would add a row
+// or reach the terminal, breaking the pane's height and its click mapping.
 func (t *FolderTree) renderFolderRow(e treeEntry, idx int, r FileTreeRender) string {
 	key := style.StyleKeyDirEntry
 	if idx == t.cursor {
 		key = style.StyleKeyFileSelected
 	}
-	return r.Resolver.Style(key).Render(" " + t.truncateDirName(e.name, r.Width-3))
+	return r.Resolver.Style(key).Render(" " + t.truncateDirName(style.SanitizeFilenameForDisplay(e.name), r.Width-3))
 }
 
 // hiddenReviewed returns the reviewed marks on files under closed folders.

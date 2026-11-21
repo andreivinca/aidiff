@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,19 +83,46 @@ func TestSourceSetup_MachineName(t *testing.T) {
 	assert.Equal(t, "local-host", sourceSetup{}.machineName("local-host"))
 }
 
-func TestWatchInBackground_StopWaitsForStartAndRunsOnce(t *testing.T) {
-	release := make(chan struct{})
-	stops := 0
-	stop := watchInBackground(func() func() {
-		<-release
-		return func() {
-			stops++
-		}
+func TestWatchInBackground_StopRunsWhatStartReturnedOnce(t *testing.T) {
+	started := make(chan struct{})
+	var stops atomic.Int32
+	stop := watchInBackground(func(context.Context) func() {
+		defer close(started)
+		return func() { stops.Add(1) }
 	})
+	<-started
+	stop()
+	stop()
+	require.Eventually(t, func() bool { return stops.Load() == 1 }, time.Second, time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, int32(1), stops.Load(), "stop runs what start returned, once")
+}
+
+func TestWatchInBackground_StopDoesNotWaitForASlowStart(t *testing.T) {
+	release, stopped := make(chan struct{}), make(chan struct{})
+	var canceled atomic.Bool
+	stop := watchInBackground(func(ctx context.Context) func() {
+		<-release // git still listing a large worktree
+		canceled.Store(ctx.Err() != nil)
+		return func() { close(stopped) }
+	})
+	returned := make(chan struct{})
+	go func() {
+		stop()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("stop waited for the setup")
+	}
 	close(release)
-	stop()
-	stop()
-	assert.Equal(t, 1, stops, "stop runs what start returned, once")
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("what the setup started was not stopped")
+	}
+	assert.True(t, canceled.Load(), "the setup is told it is no longer wanted")
 }
 
 func TestSourceSetup_BranchFollowsCheckout(t *testing.T) {

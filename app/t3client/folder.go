@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf16"
 
 	"github.com/umputun/revdiff/app/diff"
 )
@@ -112,8 +113,8 @@ func (r *FolderReader) list(dir string) ([]projectEntry, error) {
 }
 
 // FileDiff is the file's text as context lines. A file the server will not
-// show as text (binary, unreadable) is one placeholder line saying why; a
-// file it cut short ends with a line saying so.
+// show as text (see unshowable) is one placeholder line saying why; a file
+// it cut short ends with a line saying so.
 func (r *FolderReader) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
@@ -122,8 +123,7 @@ func (r *FolderReader) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, erro
 		Truncated bool   `json:"truncated"`
 	}
 	err := r.conn.call(ctx, "projects.readFile", map[string]any{"cwd": r.cwd, "relativePath": req.Path}, &res)
-	var refused *rpcError
-	if errors.As(err, &refused) && refused.Tag != "" {
+	if refused, ok := errors.AsType[*rpcError](err); ok && unshowable(refused) {
 		detail := cmpOr(refused.Detail, "the T3 server cannot show this file")
 		return []diff.DiffLine{{ChangeType: diff.ChangeContext, Content: detail, IsPlaceholder: true}}, nil
 	}
@@ -144,6 +144,41 @@ func (r *FolderReader) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, erro
 	return lines, nil
 }
 
+// unshowable reports whether a projects.readFile failure is about the file
+// itself, which then shows as a placeholder: binary, not a regular file, a
+// symlink leading out of the folder, or one that cannot be opened or read.
+// Anything else, such as a folder the server no longer knows, is an error:
+// a placeholder would pass it off as a property of the file.
+func unshowable(e *rpcError) bool {
+	if e.Tag != "ProjectReadFileError" {
+		return false
+	}
+	switch e.Failure {
+	case "binary_file", "path_not_file", "resolved_path_outside_root":
+		return true
+	case "operation_failed":
+		// realpath-workspace-root is the folder failing, not the file
+		switch e.Operation {
+		case "realpath-target", "open", "stat", "read":
+			return true
+		}
+	}
+	return false
+}
+
+// cutQuery shortens a trimmed query to what projects.searchEntries takes:
+// whole characters only, and trimmed again, since the server also refuses
+// a query that ends in a space.
+func cutQuery(query string) string {
+	units := 0
+	for i, r := range query {
+		if units += utf16.RuneLen(r); units > searchQueryMax {
+			return strings.TrimSpace(query[:i])
+		}
+	}
+	return query
+}
+
 func cmpOr(s, fallback string) string {
 	if s == "" {
 		return fallback
@@ -153,6 +188,10 @@ func cmpOr(s, fallback string) string {
 
 // searchEntriesMax is the most matches projects.searchEntries returns.
 const searchEntriesMax = 200
+
+// searchQueryMax is the longest query projects.searchEntries takes, in
+// UTF-16 code units: the server checks a JavaScript string's length.
+const searchQueryMax = 256
 
 // SearchFiles finds the files of the whole folder matching query, opened
 // folders or not, best first, with projects.searchEntries: at most limit,
@@ -165,9 +204,7 @@ func (r *FolderReader) SearchFiles(ctx context.Context, query string, limit int)
 	if limit <= 0 || limit > searchEntriesMax {
 		limit = searchEntriesMax
 	}
-	if len(query) > 256 {
-		query = query[:256]
-	}
+	query = cutQuery(query)
 	var res struct {
 		Entries   []projectEntry `json:"entries"`
 		Truncated bool           `json:"truncated"`

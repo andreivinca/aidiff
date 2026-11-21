@@ -100,3 +100,70 @@ func TestSaved_ListedConnectedAndForgotten(t *testing.T) {
 	assert.Nil(t, cmd, "this machine cannot be forgotten")
 	h.settle()
 }
+
+// count is how many times spec was remembered.
+func (f *savedFake) count(spec string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, s := range f.remembered {
+		if s == spec {
+			n++
+		}
+	}
+	return n
+}
+
+func TestSaved_ForgottenStaysForgottenOnReconnect(t *testing.T) {
+	f := &savedFake{}
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, Saved: f.config()}, nil)
+	a := newFakeSession("ssh://a", testShell())
+	a2 := newFakeSession("ssh://a", testShell())
+	a.redial = func() (Session, error) { return a2, nil }
+	h.connect(t, "ssh://a", a)
+	assert.Equal(t, []string{"forgot ssh://a"}, flashes(run(h.p.forget("ssh://a", "ssh://a"))))
+
+	h.reconnect(t, a, nil) // the connection dropped and came back by itself
+	h.settle()
+	assert.Equal(t, 1, f.count("ssh://a"), "a reconnect does not save a forgotten server back")
+	h.p.mu.Lock()
+	assert.Negative(t, savedIndex(h.p.saved, "ssh://a"), "nor list it as saved")
+	h.p.mu.Unlock()
+
+	h.connect(t, "ssh://a", newFakeSession("ssh://a", testShell()))
+	h.settle()
+	assert.Equal(t, 2, f.count("ssh://a"), "connecting to it again does")
+}
+
+func TestSaved_WritesKeepTheirOrderAndFinishBeforeClose(t *testing.T) {
+	var mu sync.Mutex
+	var log []string
+	note := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		log = append(log, s)
+	}
+	logged := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), log...)
+	}
+	cfg := SavedConfig{
+		Remember: func(spec, _ string) {
+			time.Sleep(30 * time.Millisecond) // a slow disk
+			note("remember " + spec)
+		},
+		Forget: func(spec string) error {
+			note("forget " + spec)
+			return nil
+		},
+	}
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, Saved: cfg}, nil)
+	h.connect(t, "ssh://a", newFakeSession("ssh://a", testShell()))
+	run(h.p.forget("ssh://a", "ssh://a"))
+	assert.Equal(t, []string{"remember ssh://a", "forget ssh://a"}, logged(), "the forget lands after the save it undoes")
+
+	h.connect(t, "ssh://b", newFakeSession("ssh://b", testShell()))
+	h.p.Close()
+	assert.Contains(t, logged(), "remember ssh://b", "a quick exit does not lose the save")
+}

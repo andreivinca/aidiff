@@ -1,84 +1,71 @@
 package splitview
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // ConfirmMsg opens a confirmation popup over the split, as the quit dialog
-// is: Yes runs when the user confirms (y, or enter on the confirm button),
-// nothing when they cancel (n, esc, or enter on Cancel, which is selected
-// first). Another one replaces an open one.
+// is, with its keys: Yes runs when the user confirms (y, or enter on the
+// confirm button), No when the popup goes without a yes: the user cancels
+// (n, esc, or enter on Cancel, which is selected first), another ConfirmMsg
+// replaces it, or it is dropped unseen because the model that asked is no
+// longer on screen. Both are tagged like the asking model's own commands.
 type ConfirmMsg struct {
 	Title   string  // the question, such as "Revert a.go?"
 	Detail  string  // what confirming does, wrapped under the title; may be empty
 	Confirm string  // the confirm button's label; "OK" by default
 	Yes     tea.Cmd // what confirming runs
+	No      tea.Cmd // what any other end of the popup runs; may be nil
 }
 
 // confirmState is the open confirmation popup.
 type confirmState struct {
 	msg ConfirmMsg
-	sel int // quitButton (the confirm button) or cancelButton
+	sel int // confirmButton or cancelButton
+	ws  int // the wrapped model on screen when it opened: Yes is scoped to it
 }
 
-// showConfirm opens the popup msg asks for.
+// showConfirm opens the popup msg asks for; one open already is answered
+// no.
 func (m Model) showConfirm(msg ConfirmMsg) (tea.Model, tea.Cmd) {
+	var replaced tea.Cmd
+	if c := m.confirm; c != nil {
+		replaced = scopeCmd(c.ws, c.msg.No)
+	}
 	if msg.Confirm == "" {
 		msg.Confirm = "OK"
 	}
-	m.confirm = &confirmState{msg: msg, sel: cancelButton}
-	return m, nil
+	m.confirm = &confirmState{msg: msg, sel: cancelButton, ws: m.wsID}
+	return m, replaced
 }
 
 // modal reports whether a popup takes the keys and swallows the mouse.
 func (m Model) modal() bool {
-	return m.palette.open || m.quitDialog || m.confirm != nil
+	return m.palette.open || m.quitDialog || m.confirm != nil || m.switcher.open
 }
 
-// handleConfirmKey answers the popup.
+// handleConfirmKey answers the popup (dialogKey).
 func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	c := m.confirm
-	switch msg.String() {
-	case "y", "Y":
+	c := *m.confirm // a copy: older Models share the pointer
+	switch dialogKey(msg, &c.sel) {
+	case dialogYes:
 		m.confirm = nil
-		return m, c.msg.Yes
-	case "n", "N", "esc", "q":
+		return m, scopeCmd(c.ws, c.msg.Yes)
+	case dialogNo:
 		m.confirm = nil
-	case "left", "right", "tab", "shift+tab", "h", "l":
-		m.confirm = &confirmState{msg: c.msg, sel: 1 - c.sel}
-	case "enter", " ":
-		m.confirm = nil
-		if c.sel == quitButton {
-			return m, c.msg.Yes
-		}
+		return m, scopeCmd(c.ws, c.msg.No)
+	case dialogOpen:
+		m.confirm = &c
 	}
-	return m, nil // anything else keeps the popup open
+	return m, nil
 }
 
 // confirmView renders the popup.
 func (m Model) confirmView() string {
 	c := m.confirm
-	inner := m.boxInner(paletteWidth)
-	indent := strings.Repeat(" ", dialogIndent)
-	lines := []string{indent + c.msg.Title, ""}
+	d := dialog{title: c.msg.Title, confirm: c.msg.Confirm, sel: c.sel}
 	if c.msg.Detail != "" {
-		for l := range strings.SplitSeq(ansi.Wordwrap(c.msg.Detail, inner-2*dialogIndent, ""), "\n") {
-			lines = append(lines, indent+l)
-		}
-		lines = append(lines, "")
+		d.details = []string{c.msg.Detail}
 	}
-	buttons := quitDialogButton(c.msg.Confirm, c.sel == quitButton) + "  " + quitDialogButton("Cancel", c.sel == cancelButton)
-	lines = append(lines,
-		lipgloss.PlaceHorizontal(inner, lipgloss.Center, buttons),
-		"",
-		m.styles.muted.Render(lipgloss.PlaceHorizontal(inner, lipgloss.Center, "y "+strings.ToLower(c.msg.Confirm)+" · n/esc cancel · ←→ enter")),
-	)
-	for i, l := range lines {
-		lines[i] = fitLine(l, inner)
-	}
-	return m.styles.box.Render(strings.Join(lines, "\n"))
+	return m.dialogView(d)
 }

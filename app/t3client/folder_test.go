@@ -12,8 +12,22 @@ import (
 	"github.com/umputun/revdiff/app/diff"
 )
 
+// readFailures are the projects.readFile failures startFolderFake answers,
+// by path, spelled as T3 0.1.9 sends them.
+var readFailures = map[string]map[string]any{
+	"a.bin":      {"_tag": "ProjectReadFileError", "failure": "binary_file", "message": "a.bin is a binary file"},
+	"fifo":       {"_tag": "ProjectReadFileError", "failure": "path_not_file", "message": "fifo is not a file"},
+	"denied.txt": {"_tag": "ProjectReadFileError", "failure": "operation_failed", "operation": "open", "message": "permission denied"},
+	"escape.txt": {"_tag": "ProjectReadFileError", "failure": "resolved_path_outside_root", "message": "outside the workspace"},
+	"gone-root": {"_tag": "ProjectReadFileError", "failure": "operation_failed", "operation": "realpath-workspace-root",
+		"message": "the workspace is gone"},
+	"unknown-ws": {"_tag": "ProjectReadFileError", "failure": "workspace_path_outside_root", "message": "unknown workspace"},
+	"untold":     {"_tag": "ProjectReadFileError", "detail": "no failure given"},
+	"other-tag":  {"_tag": "VcsRepositoryDetectionError", "detail": "cwd outside workspace"},
+}
+
 // startFolderFake serves a folder with src/ and README.md, src/ holding
-// main.go and lib/; reading a.bin fails as binary, big.txt comes cut short.
+// main.go and lib/; reading a readFailures path fails, big.txt comes cut short.
 func startFolderFake(t *testing.T, got *capture) *FolderReader {
 	t.Helper()
 	listings := map[string][]any{
@@ -42,11 +56,13 @@ func startFolderFake(t *testing.T, got *capture) *FolderReader {
 				map[string]any{"path": "src/lib/needle.go", "kind": "file"}, map[string]any{"path": "src/needles", "kind": "directory"},
 			}, "truncated": true}))
 		case "projects.readFile":
-			switch p["relativePath"] {
-			case "a.bin":
+			path, _ := p["relativePath"].(string)
+			if failure, ok := readFailures[path]; ok {
 				send(t, ws, map[string]any{"_tag": "Exit", "requestId": req["id"], "exit": map[string]any{
-					"_tag": "Failure", "cause": []any{map[string]any{"_tag": "Fail", "error": map[string]any{
-						"_tag": "ProjectReadFileError", "detail": "a.bin is a binary file"}}}}})
+					"_tag": "Failure", "cause": []any{map[string]any{"_tag": "Fail", "error": failure}}}})
+				return
+			}
+			switch path {
 			case "big.txt":
 				send(t, ws, success(req["id"], map[string]any{"relativePath": "big.txt", "contents": "one\n", "byteLength": 9e6, "truncated": true}))
 			default:
@@ -125,6 +141,26 @@ func TestFolderReader_ShowsAFileWhole(t *testing.T) {
 	assert.True(t, lines[1].IsPlaceholder, "a file cut short says so")
 }
 
+func TestFolderReader_OnlyAFileFailureIsAPlaceholder(t *testing.T) {
+	var got capture
+	r := startFolderFake(t, &got)
+	for path, placeholder := range map[string]bool{
+		"a.bin": true, "fifo": true, "denied.txt": true, "escape.txt": true,
+		"gone-root": false, "unknown-ws": false, "untold": false, "other-tag": false,
+	} {
+		lines, err := r.FileDiff(diff.FileDiffRequest{Path: path})
+		if !placeholder {
+			require.Error(t, err, "%s: a failure that is not the file's own is an error", path)
+			assert.Contains(t, err.Error(), readFailures[path]["_tag"], path)
+			continue
+		}
+		require.NoError(t, err, path)
+		require.Len(t, lines, 1, path)
+		assert.True(t, lines[0].IsPlaceholder, path)
+		assert.Equal(t, readFailures[path]["message"], lines[0].Content, path)
+	}
+}
+
 func TestFolderReader_SearchFiles(t *testing.T) {
 	var got capture
 	r := startFolderFake(t, &got)
@@ -138,9 +174,18 @@ func TestFolderReader_SearchFiles(t *testing.T) {
 	assert.InDelta(t, 200, p["limit"], 0, "never more than the server's limit")
 	assert.Equal(t, "file", p["kind"])
 
-	_, err = r.SearchFiles(context.Background(), strings.Repeat("x", 300), 10)
-	require.NoError(t, err)
-	assert.Len(t, payloadOf(t, got.last())["query"], 256, "the query is cut to what the server takes")
+	for query, want := range map[string]string{
+		strings.Repeat("x", 300):                           strings.Repeat("x", 256),
+		strings.Repeat("€", 300):                           strings.Repeat("€", 256), // 3 bytes, one UTF-16 unit each
+		strings.Repeat("😀", 200):                           strings.Repeat("😀", 128), // two UTF-16 units each
+		strings.Repeat("x", 255) + " yy":                   strings.Repeat("x", 255), // trimmed: the server takes no trailing space
+		strings.Repeat("é", 100) + strings.Repeat("a", 10): strings.Repeat("é", 100) + strings.Repeat("a", 10),
+	} {
+		_, err = r.SearchFiles(context.Background(), query, 10)
+		require.NoError(t, err)
+		sent, _ := payloadOf(t, got.last())["query"].(string)
+		assert.Equal(t, want, sent, "the query is cut to whole characters the server takes")
+	}
 
 	n := got.count()
 	found, err = r.SearchFiles(context.Background(), "  ", 10)

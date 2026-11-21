@@ -57,9 +57,34 @@ func liveSession(pid int) (int, bool) {
 func waitExited(pid int) {
 	var info unix.Siginfo
 	for {
-		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
-		if !errors.Is(err, unix.EINTR) {
+		err := waitid(pid, &info)
+		if err == nil {
 			return
 		}
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
 	}
+	pollExited(pid) // waitid cannot watch it (ECHILD: reaped elsewhere, SIGCHLD ignored)
+}
+
+// waitid waits for child pid to exit without reaping it; a variable so a
+// test can make it fail.
+var waitid = func(pid int, info *unix.Siginfo) error {
+	return unix.Waitid(unix.P_PID, pid, info, unix.WEXITED|unix.WNOWAIT, nil)
+}
+
+// running reports whether pid exists and has not exited; a zombie has. With
+// /proc unreadable, a process that exists counts as running.
+func running(pid int) bool {
+	if errors.Is(unix.Kill(pid, 0), unix.ESRCH) {
+		return false
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return true // gone meanwhile, which the next look tells, or no /proc
+	}
+	end := bytes.LastIndexByte(stat, ')')
+	fields := strings.Fields(string(stat[end+1:]))
+	return len(fields) == 0 || fields[0] != "Z"
 }

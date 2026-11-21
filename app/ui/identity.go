@@ -16,7 +16,10 @@ type machineIdentity struct {
 	name    string // the host, sanitized for display; "" shows none
 	branch  string
 	project string // the folder, or the T3 project, sanitized for display; "" shows none
-	t3      bool   // the review comes from T3 Code
+	t3      bool   // the live connection is T3 Code's, so the label says "T3"
+	// t3Review marks a review from T3 Code, whatever connection the palette
+	// has made since: set once in NewModel, it keeps the branch poll going
+	t3Review bool
 }
 
 // MachineIdentityMsg updates the active host after connecting through the
@@ -34,15 +37,17 @@ func newMachineIdentity(name, project string, t3 bool, branch ...string) machine
 	if len(branch) > 0 {
 		b = style.SanitizeFilenameForDisplay(branch[0])
 	}
-	return machineIdentity{branch: b, name: style.SanitizeFilenameForDisplay(name), project: style.SanitizeFilenameForDisplay(project), t3: t3}
+	return machineIdentity{branch: b, name: style.SanitizeFilenameForDisplay(name), project: style.SanitizeFilenameForDisplay(project),
+		t3: t3, t3Review: t3}
 }
 
 // handleMachineIdentity shows the host the palette connected to. The
 // review's project and branch stay unless the message names others: a
 // connection says which machine, not what the review on screen shows.
 func (m Model) handleMachineIdentity(msg MachineIdentityMsg) Model {
-	project, branch := m.identity.project, m.identity.branch
+	project, branch, review := m.identity.project, m.identity.branch, m.identity.t3Review
 	m.identity = newMachineIdentity(msg.Name, msg.Project, msg.T3, msg.Branch)
+	m.identity.t3Review = review
 	if msg.Project == "" {
 		m.identity.project = project
 	}
@@ -92,10 +97,10 @@ func (m Model) loadBranchCmd(poll bool) tea.Cmd {
 	}
 }
 
-// pollBranch schedules the T3 poll's next read; nil outside T3 mode, where
-// the file watcher's reloads re-read the branch.
+// pollBranch schedules the T3 poll's next read; nil outside a T3 review,
+// where the file watcher's reloads re-read the branch.
 func (m Model) pollBranch() tea.Cmd {
-	if !m.identity.t3 || m.loadBranch == nil {
+	if !m.identity.t3Review || m.loadBranch == nil {
 		return nil
 	}
 	load := m.loadBranchCmd(true)

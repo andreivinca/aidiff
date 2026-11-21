@@ -61,6 +61,7 @@ aidiff handles these keys itself, before revdiff's keymap, so the keybindings fi
 | ctrl+p | command palette (`>` commands; delete it to search files by name) |
 | ctrl+b | show / hide the side panel: the T3 projects panel while a T3 server is selected, the history panel while `local` is |
 | ctrl+1 … ctrl+9, alt+1 … alt+9 | switch to T3 project 1–9 (while connected) |
+| ctrl+tab, alt+s | session switcher: the open sessions, most recently used first (ctrl+shift+tab opens it on the oldest); letting go of ctrl (alt) switches where the terminal reports key releases (kitty keyboard protocol), enter everywhere. ctrl+tab needs a terminal that reports modified keys and leaves the chord alone; alt+s works everywhere |
 | alt+← / alt+→ | focus the panel to the left / right, stopping at either end; the review's file tree and diff count as two panels. Past the leftmost panel alt+← shows the side panel (T3 projects, or the local history), then the connections panel |
 | ctrl+q | quit (asks first when panes are open) |
 

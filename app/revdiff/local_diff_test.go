@@ -197,6 +197,40 @@ func TestLocalDiff_FileTreeAndWholeFiles(t *testing.T) {
 	assert.NotContains(t, paths, "deep/er/x.txt", "a folder is listed only once opened")
 }
 
+func TestLocalDiff_ShowViewKeepsCompact(t *testing.T) {
+	work, _ := branchRepo(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(work)
+	opts, err := parseArgs(noConfigArgs(t))
+	require.NoError(t, err)
+	src, err := setupSource(opts)
+	require.NoError(t, err)
+	deps := newReviewDeps(opts)
+	l := newLocalDiff(deps, src, "")
+	require.NotNil(t, l)
+	review, err := deps.newModel(src, annotation.NewStore(), "")
+	require.NoError(t, err)
+	require.False(t, review.Compact())
+
+	updated, _ := review.Update(ui.SetCompactMsg{On: true}) // C, then the toolbar's View switch with no picker between
+	review = updated.(ui.Model)
+	var tree ui.Model
+	for _, m := range runCmd(l.showView(review, true)) {
+		if r, ok := m.(splitview.ReplaceInnerMsg); ok {
+			tree, _ = r.Model.(ui.Model)
+		}
+	}
+	require.NotNil(t, tree.Store())
+	var changes ui.Model
+	for _, m := range runCmd(l.showView(tree, false)) {
+		if r, ok := m.(splitview.ReplaceInnerMsg); ok {
+			changes, _ = r.Model.(ui.Model)
+		}
+	}
+	require.NotNil(t, changes.Store())
+	assert.True(t, changes.Compact(), "the changes come back in the changed blocks the review showed")
+}
+
 func TestNewLocalDiff_OnlyForGitChanges(t *testing.T) {
 	assert.Nil(t, newLocalDiff(reviewDeps{}, sourceSetup{}, ""), "no repository")
 	git := sourceSetup{}

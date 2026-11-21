@@ -18,9 +18,14 @@ type activityView struct {
 
 // window is the first list row to show in room rows of a list of n rows:
 // the scroll, moved as little as keeps the selected entry's rows, first up
-// to last, in view.
+// to last, in view. An entry taller than the room, expanded, keeps the
+// scroll anywhere within its rows, so page keys can read it to its end.
 func (v activityView) window(first, last, n, room int) int {
 	scroll := v.scroll
+	if last-first > room {
+		scroll = min(max(scroll, first), last-room)
+		return max(0, min(scroll, n-room))
+	}
 	if last > scroll+room {
 		scroll = last - room
 	}
@@ -58,14 +63,29 @@ func (p *Pane) activityKeyLocked(k uv.KeyPressEvent) {
 	case uv.KeyDown:
 		p.moveActivityLocked(1)
 	case uv.KeyPgUp:
-		p.moveActivityLocked(-page)
+		p.pageActivityLocked(-page)
 	case uv.KeyPgDown:
-		p.moveActivityLocked(page)
+		p.pageActivityLocked(page)
 	case uv.KeyHome:
 		p.moveActivityLocked(-len(p.activities))
 	case uv.KeyEnd:
 		p.moveActivityLocked(len(p.activities))
 	}
+}
+
+// pageActivityLocked moves a page: through the expanded entry while it
+// goes on past the room, else to another entry. mu must be held.
+func (p *Pane) pageActivityLocked(delta int) {
+	if entries := p.visibleActivityLocked(); p.activity.expanded && len(entries) > 0 {
+		_, first, last := p.activityListLocked(entries, p.width)
+		room := p.frame.layout.bodyH - 1 // under the list's heading
+		before := p.frame.layout.activityScroll
+		if next := min(max(before+delta, first), last-room); last-first > room && next != before {
+			p.activity.scroll = next
+			return
+		}
+	}
+	p.moveActivityLocked(delta)
 }
 
 func (p *Pane) visibleActivityLocked() []Activity {
@@ -123,10 +143,10 @@ func (p *Pane) activityRowsLocked(w, h int) ([]string, int) {
 			message = "No subagents or processes have been reported in this conversation."
 		}
 		rows = append(rows, "")
-		rows = append(rows, wrapLines(message, w)...)
+		rows = append(rows, wrapLines(message, w).rows...)
 		return activityFitRows(rows, h), 0
 	}
-	list, first, last := p.activityListLocked(entries, w, h)
+	list, first, last := p.activityListLocked(entries, w)
 	room := h - len(rows)
 	scroll := p.activity.window(first, last, len(list), room)
 	rows = append(rows, list[scroll:min(len(list), scroll+room)]...)
@@ -134,8 +154,9 @@ func (p *Pane) activityRowsLocked(w, h int) ([]string, int) {
 }
 
 // activityListLocked is every row of the list, grouped, with the selected
-// entry's first row and the row after its last. mu must be held.
-func (p *Pane) activityListLocked(entries []Activity, w, h int) (list []string, first, last int) {
+// entry's first row and the row after its last. The expanded entry shows
+// its title, progress and details in full, wrapped. mu must be held.
+func (p *Pane) activityListLocked(entries []Activity, w int) (list []string, first, last int) {
 	selected := p.selectedActivityLocked(entries)
 	lastGroup := ""
 	for i, e := range entries {
@@ -147,15 +168,25 @@ func (p *Pane) activityListLocked(entries []Activity, w, h int) (list []string, 
 			list = append(list, "", p.styles.muted.Render(inset+group))
 			lastGroup = group
 		}
+		open := i == selected && p.activity.expanded
 		if i == selected {
 			first = len(list)
 		}
-		list = append(list, p.ActivityRow(e, i == selected, w))
-		if e.Progress != "" {
-			list = append(list, p.styles.muted.Render(ansi.Truncate(inset+"    "+firstLine(e.Progress), w, "…")))
+		if open {
+			list = append(list, p.activityTitleRows(e, w)...)
+		} else {
+			list = append(list, p.ActivityRow(e, i == selected, w))
 		}
-		if i == selected && p.activity.expanded {
-			list = append(list, p.activityDetailRows(e, w, max(1, h-3))...)
+		switch {
+		case open && e.Progress != "":
+			list = append(list, wrapText("    ", e.Progress, w, false).styled(func(r string) string {
+				return p.styles.muted.Render(inset + r)
+			}).rows...)
+		case e.Progress != "":
+			list = append(list, p.styles.muted.Render(ansi.Truncate(inset+"    "+firstLine(e.Progress), w, "…"))) // a list row; enter shows it whole
+		}
+		if open {
+			list = append(list, p.activityDetailRows(e, w)...)
 		}
 		if i == selected {
 			last = len(list)
@@ -198,20 +229,37 @@ func (p *Pane) ActivityRow(e Activity, selected bool, w int) string {
 	return lead + ansi.Truncate(firstLine(label), max(0, w-ansi.StringWidth(lead)), "…")
 }
 
-func (p *Pane) activityDetailRows(e Activity, w, limit int) []string {
+// activityTitleRows is the expanded entry's row, its title wrapped under
+// itself instead of cut.
+func (p *Pane) activityTitleRows(e Activity, w int) []string {
+	row := p.ActivityRow(e, true, w)
+	label := e.Title
+	if label == "" {
+		label = e.kind()
+	}
+	lead := ansi.Cut(row, 0, len(inset)+2+11+1) // the mark and the status
+	leadW := ansi.StringWidth(lead)
+	pieces := wrapLine(strings.Join(strings.Fields(label), " "), max(1, w-leadW), max(1, w-leadW), false)
+	rows := make([]string, 0, len(pieces))
+	for i, pc := range pieces {
+		if i == 0 {
+			rows = append(rows, lead+pc.text)
+			continue
+		}
+		rows = append(rows, strings.Repeat(" ", leadW)+pc.text)
+	}
+	return rows
+}
+
+// activityDetailRows is the expanded entry's details, every line of them,
+// wrapped: the list scrolls through them (pageActivityLocked).
+func (p *Pane) activityDetailRows(e Activity, w int) []string {
 	var rows []string
 	for _, part := range e.Details {
-		rows = append(rows, wrapLines(part, max(1, w-2))...)
-		if len(rows) >= limit {
-			break
-		}
+		rows = append(rows, wrapLines(part, max(1, w-2)).rows...)
 	}
 	if len(rows) == 0 {
 		rows = []string{inset + "No further details reported."}
-	}
-	if len(rows) > limit {
-		rows = rows[:limit]
-		rows[limit-1] = ansi.Truncate(rows[limit-1], max(1, w-3), "") + "…"
 	}
 	for i := range rows {
 		rows[i] = p.styles.muted.Render("  " + rows[i])

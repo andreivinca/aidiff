@@ -30,12 +30,19 @@ func sessionMembers(sid int) []int {
 	return pids
 }
 
-// waitExited blocks until child pid has exited, leaving it unreaped. It
-// watches the process through kqueue, which, unlike wait4, does not reap.
+// waitExited blocks until child pid has exited, leaving it unreaped.
 func waitExited(pid int) {
+	if !watchExit(pid) {
+		pollExited(pid) // kqueue cannot watch it (no descriptor left, ...)
+	}
+}
+
+// watchExit waits for pid's exit through kqueue, which, unlike wait4, does
+// not reap, and reports whether it could watch it.
+func watchExit(pid int) bool {
 	kq, err := unix.Kqueue()
 	if err != nil {
-		return
+		return false
 	}
 	defer func() {
 		_ = unix.Close(kq)
@@ -48,9 +55,30 @@ func waitExited(pid int) {
 	}}
 	events := make([]unix.Kevent_t, 1)
 	for {
-		_, err := unix.Kevent(kq, watch, events, nil)
-		if !errors.Is(err, unix.EINTR) {
-			return // exited, or already gone when registering (ESRCH)
+		n, err := unix.Kevent(kq, watch, events, nil)
+		switch {
+		case errors.Is(err, unix.EINTR):
+			continue
+		case errors.Is(err, unix.ESRCH):
+			return true // already gone when registering
+		case err != nil:
+			return false
+		case n > 0 && events[0].Flags&unix.EV_ERROR != 0:
+			// a registration error comes back as an event
+			return events[0].Data == int64(unix.ESRCH)
 		}
+		return true // exited
 	}
+}
+
+// running reports whether pid exists and has not exited; a zombie has.
+func running(pid int) bool {
+	if errors.Is(unix.Kill(pid, 0), unix.ESRCH) {
+		return false
+	}
+	p, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		return true // gone meanwhile, which the next look tells
+	}
+	return p.Proc.P_stat != darwinZombie
 }

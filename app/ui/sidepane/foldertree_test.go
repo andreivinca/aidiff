@@ -139,3 +139,17 @@ func TestFolderTree_EmptyFolder(t *testing.T) {
 	tree.Move(MotionDown)
 	assert.Empty(t, tree.SelectedFile())
 }
+
+func TestFolderTree_FolderNamesAreSanitized(t *testing.T) {
+	tree := NewFolderTree(&fakeFolderSource{})
+	listFolder(tree, []diff.FileEntry{
+		{Path: "bad\nname\x1b[31m", IsDir: true},
+		{Path: "a.txt"},
+	})
+	res := style.PlainResolver()
+	out := tree.Render(FileTreeRender{Width: 40, Height: 10, Resolver: res, Renderer: style.NewRenderer(res)})
+	rows := strings.Split(out, "\n")
+	require.Len(t, rows, 2, "one row per entry")
+	assert.Contains(t, rows[0], "badname[31m/")
+	assert.NotContains(t, out, "\x1b[31m", "no escape from the name reaches the terminal")
+}

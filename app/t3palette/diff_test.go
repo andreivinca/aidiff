@@ -90,6 +90,17 @@ func TestPalette_DiffChoiceStaysWithItsFolder(t *testing.T) {
 	other := login.Target
 	other.Cwd = "/srv/elsewhere"
 	assert.Equal(t, t3client.DiffSource{}, h.p.newReview(a, other).Source, "another folder compares what the run says")
+	b := newFakeSession("ssh://b", testShell())
+	assert.Equal(t, t3client.DiffSource{}, h.p.newReview(b, login.Target).Source, "so does the same folder on another server")
+	assert.Equal(t, "main", h.p.newReview(newFakeSession("ssh://a", testShell()), login.Target).Source.BaseRef,
+		"a reconnect to the same server keeps the choice")
+
+	hb := newHarness(t, Config{NoWatch: true, NoChat: true, DiffLabel: "uncommitted"}, threadReview(t, b, loginID))
+	run(hb.p.showDiff(login, diffChoice{source: t3client.DiffSource{Kind: t3client.SourceBranchRange, BaseRef: "main"}, label: "vs main"},
+		annotatedModel().store))
+	back := shownReview(t, run(hb.p.ShowView(annotatedModel(), false)))
+	assert.Equal(t, t3client.DiffSource{}, back.Source, "the toolbar's way back on b does not take a's choice")
+	assert.Equal(t, "uncommitted", back.SourceLabel)
 }
 
 func TestPalette_DiffWithoutBranches(t *testing.T) {

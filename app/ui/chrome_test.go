@@ -202,3 +202,21 @@ func TestModel_T3PollsBranch(t *testing.T) {
 	_, cmd = m.Update(branchLoadedMsg{err: errors.New("down"), poll: true})
 	assert.NotNil(t, cmd, "a failed read keeps polling")
 }
+
+func TestModel_T3PollSurvivesSwitchingToLocal(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.layout.width = 120
+	m.identity = newMachineIdentity("box", "Sabra2", true, "main")
+	m.loadBranch = func() (string, error) { return "hotfix", nil }
+
+	updated, _ := m.Update(MachineIdentityMsg{Name: "workstation"}) // the palette switched to local
+	m = updated.(Model)
+	label := ansi.Strip(m.statusBarWithMachine())
+	assert.True(t, strings.HasPrefix(label, "workstation"), "the status bar names the live connection")
+	assert.NotContains(t, label, "T3")
+
+	updated, cmd := m.Update(branchLoadedMsg{branch: "hotfix", poll: true})
+	m = updated.(Model)
+	assert.NotNil(t, cmd, "the T3 review's branch is still polled")
+	assert.Equal(t, "hotfix", m.identity.branch)
+}

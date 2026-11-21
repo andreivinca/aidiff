@@ -171,9 +171,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleOverlayMouse(msg)
 	}
 
-	if model, handled := m.treeDividerMouse(msg); handled {
-		return model, nil
+	model, cmd, handled := m.treeDividerMouse(msg)
+	if handled {
+		return model, cmd
 	}
+	m = model // a press that ended a stale drag goes on as any other
 
 	// reload, output, compact-mode, editor and reviewed hints persist for exactly
 	// one render cycle; any mouse event that reaches this point dismisses them,
@@ -183,6 +185,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	m.compact.hint = ""
 	m.editorState.hint = ""
 	m.reviewed.hint = ""
+	m.revert.hint = ""
 
 	zone := m.hitTest(msg.X, msg.Y)
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,4 +200,31 @@ func TestRunCommand(t *testing.T) {
 	out, err = runCommand(t.Context(), command{name: "sh", args: []string{"-c", "cat >/dev/null"}, stdin: strings.NewReader("x")})
 	require.NoError(t, err)
 	assert.Nil(t, out, "a writer's output is not read")
+}
+
+func TestRunCommand_WriterFailureSaysWhy(t *testing.T) {
+	_, err := runCommand(t.Context(), command{name: "sh", args: []string{"-c", `echo "Error: Can't open display" >&2; exit 1`},
+		stdin: strings.NewReader("x")})
+	var failed *exitError
+	require.ErrorAs(t, err, &failed)
+	assert.Equal(t, "sh: Error: Can't open display", err.Error(), "the writer's own words, not just its exit status")
+
+	_, err = runCommand(t.Context(), command{name: "sh", args: []string{"-c", `head -c 100000 /dev/zero | tr '\0' x >&2; exit 1`}})
+	require.ErrorAs(t, err, &failed)
+	assert.Len(t, failed.stderr, maxStderrBytes, "a flood of errors is cut short")
+}
+
+func TestRunCommand_WriterLeavingAServerBehindReturns(t *testing.T) {
+	// like wl-copy: a child keeps stderr (and stdout) open after the writer exits
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCommand(context.Background(), command{name: "sh", args: []string{"-c", "sleep 5 & exit 0"}, stdin: strings.NewReader("x")})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the writer's server process held the run open")
+	}
 }

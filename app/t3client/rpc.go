@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -106,7 +107,7 @@ type frameHeader struct {
 
 // dial opens an authenticated session with the server at ep.
 func dial(ctx context.Context, ep endpoint, token string) (*Conn, error) {
-	wsURL, err := socketURL(ep.origin)
+	wsURL, err := socketURL(ep.base)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,7 @@ func dial(ctx context.Context, ep endpoint, token string) (*Conn, error) {
 		_ = resp.Body.Close() // the upgrade response carries nothing further
 	}
 	if err != nil {
-		return nil, dialError(ep.origin, resp, err)
+		return nil, dialError(ep.base, resp, err)
 	}
 	ws.SetReadLimit(maxFrameBytes)
 
@@ -171,10 +172,19 @@ func dialError(baseURL string, resp *http.Response, err error) error {
 	return fmt.Errorf("connect to T3 at %s: HTTP %d: %w", baseURL, resp.StatusCode, err)
 }
 
+// closeHandshakeTimeout bounds the close handshake: a peer gone without a
+// word (a sleeping laptop, a dropped VPN) never answers it, and the
+// websocket library would wait 5s for that.
+const closeHandshakeTimeout = time.Second
+
 // close ends the connection. Session.Close is the public way to do it, since
 // a session may own an SSH tunnel as well.
 func (c *Conn) close() error {
+	// canceling the read loop's context closes the socket, which ends a
+	// handshake still waiting for the peer
+	stop := time.AfterFunc(closeHandshakeTimeout, c.cancel)
 	err := c.ws.Close(websocket.StatusNormalClosure, "")
+	stop.Stop()
 	c.cancel()
 	if err != nil {
 		return fmt.Errorf("close T3 connection: %w", err)

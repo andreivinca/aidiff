@@ -43,7 +43,7 @@ func (m Model) queryChanged() (Model, tea.Cmd) {
 		m.palette.files, m.palette.filesNote, m.palette.searching = nil, "", false
 		return m.refilterPalette(), nil
 	}
-	cmd := m.cfg.Files(m.inner, m.palette.query)
+	cmd := m.scoped(m.cfg.Files(m.inner, m.palette.query))
 	m.palette.searching = cmd != nil
 	if cmd == nil {
 		m.palette.files, m.palette.filesNote = nil, ""
@@ -58,7 +58,7 @@ func (m Model) showFiles(msg FilesMsg) Model {
 	}
 	rows := make([]row, 0, len(msg.Items))
 	for _, it := range msg.Items {
-		rows = append(rows, pickRow(it, msg.OnPick))
+		rows = append(rows, pickRow(it, msg.OnPick, m.wsID))
 	}
 	m.palette.files, m.palette.filesNote, m.palette.searching = rows, msg.Note, false
 	m.palette.sel = 0

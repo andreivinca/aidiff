@@ -1,8 +1,6 @@
 package splitview
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 	uv "github.com/charmbracelet/ultraviolet"
 )
@@ -60,12 +58,21 @@ func (m Model) sideW() int {
 	if !m.sideOpen || m.cfg.Sidebar == nil {
 		return 0
 	}
+	return m.sideFit()
+}
+
+// sideFit is the width the sidebar gets when shown, 0 when the window has no
+// room for it.
+func (m Model) sideFit() int {
 	w := min(m.cfg.SidebarWidth, m.winW-minPaneWidth-1)
 	if w < minSidebarWidth {
 		return 0
 	}
 	return w
 }
+
+// tooNarrow is flashed when a sidebar has no room to be shown.
+const tooNarrow = "window too narrow for the side panel"
 
 // sideCols are the columns the sidebar takes, its separator included.
 func (m Model) sideCols() int {
@@ -75,9 +82,14 @@ func (m Model) sideCols() int {
 	return 0
 }
 
-// showSidebar shows the sidebar and focuses it.
+// showSidebar shows the sidebar and focuses it. A window too narrow to show
+// it keeps focus where it is: a sidebar no one sees must not take the keys.
 func (m Model) showSidebar() (tea.Model, tea.Cmd) {
 	if !m.sidebarAvailable() {
+		return m, nil
+	}
+	if m.winW > 0 && m.sideFit() == 0 {
+		m.flash = tooNarrow
 		return m, nil
 	}
 	if !m.sideOpen {
@@ -98,6 +110,11 @@ func (m Model) hideSidebar() (tea.Model, tea.Cmd) {
 	if !m.sideOpen {
 		return m, nil
 	}
+	return m.leaveSidebar().relayout()
+}
+
+// leaveSidebar is hideSidebar without the relayout.
+func (m Model) leaveSidebar() Model {
 	m.sideOpen = false
 	m.outerOpen = false // nothing is left to its right to come back to
 	if m.focus == focusSidebar || m.focus == focusOuter {
@@ -106,7 +123,7 @@ func (m Model) hideSidebar() (tea.Model, tea.Cmd) {
 			m.focus = m.sideReturn
 		}
 	}
-	return m.relayout()
+	return m
 }
 
 // toggleSidebar shows a hidden sidebar and hides a shown one.
@@ -117,8 +134,10 @@ func (m Model) toggleSidebar() (tea.Model, tea.Cmd) {
 	return m.showSidebar()
 }
 
-// sidebarResult applies what the sidebar asked for.
+// sidebarResult applies what the sidebar asked for; its command acts for
+// the wrapped model on screen (see scopedMsg).
 func (m Model) sidebarResult(cmd tea.Cmd, hide bool) (tea.Model, tea.Cmd) {
+	cmd = m.scoped(cmd)
 	if !hide {
 		return m, cmd
 	}
@@ -163,13 +182,8 @@ func altNumber(msg tea.KeyMsg) (int, bool) {
 
 // sidebarLines are the sidebar's rows, each followed by its separator.
 func (m Model) sidebarLines() []string {
-	w := m.sideW()
-	lines := strings.Split(fitBlock(m.cfg.Sidebar.View(w, m.bodyH(), m.focus == focusSidebar), w, m.bodyH()), "\n")
-	sep := m.styles.grip.Render("│")
-	for i := range lines {
-		lines[i] += sep
-	}
-	return lines
+	w, h := m.sideW(), m.bodyH()
+	return m.sidebarBlock(slotSide, m.cfg.Sidebar.View(w, h, m.focus == focusSidebar), w, h)
 }
 
 // sidebarMouse handles the mouse over the sidebar's columns: a left click

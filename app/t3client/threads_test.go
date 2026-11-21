@@ -166,7 +166,8 @@ func TestDefaultModel(t *testing.T) {
 }
 
 func TestSSHHostsFrom(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
 	require.NoError(t, os.WriteFile(path, []byte(`# my hosts
 Host workpc
   HostName 10.0.0.2
@@ -176,9 +177,37 @@ Host *
 Match host boxdev
 host workpc
 Host !bastion
+Host=eqbox
+Host = spaced
+  Host	"quoted"  tabbed
+Host bad;name ok-after-bad -dash
+Host "unterminated
+Include conf.d/*.conf
+Host last
 `), 0o600))
-	assert.Equal(t, []string{"workpc", "box", "boxdev"}, sshHostsFrom(path))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "conf.d"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "conf.d", "b.conf"), []byte("Host included-b\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "conf.d", "a.conf"), []byte("Host included-a\nInclude "+path+"\n"), 0o600))
+	assert.Equal(t, []string{"workpc", "box", "boxdev", "eqbox", "spaced", "quoted", "tabbed", "ok-after-bad",
+		"included-a", "included-b", "last"}, sshHostsFrom(path), "an include loop is read once")
 	assert.Nil(t, sshHostsFrom(filepath.Join(t.TempDir(), "missing")))
+}
+
+func TestSSHConfigLine(t *testing.T) {
+	for line, want := range map[string][]string{
+		"Host a b":           {"Host", "a", "b"},
+		"Host=a":             {"Host", "a"},
+		"  Host = a  # x":    {"Host", "a"},
+		`Host "a" b`:         {"Host", "a", "b"},
+		`Host "a b"`:         {"Host", "a b"},
+		`Host "a`:            {"Host"},
+		"# Host commented":   {""},
+		"Host":               {"Host"},
+		"Include ~/x/*.conf": {"Include", "~/x/*.conf"},
+	} {
+		keyword, args := sshConfigLine(line)
+		assert.Equal(t, want, append([]string{keyword}, args...), line)
+	}
 }
 
 func TestTokenStoreServers(t *testing.T) {

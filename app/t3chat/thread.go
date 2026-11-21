@@ -2,6 +2,7 @@ package t3chat
 
 import (
 	"cmp"
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -25,6 +26,8 @@ type thread struct {
 	model        *t3client.ModelSelection // the thread's model
 	interaction  string                   // default (build) or plan, as reported by the thread
 	runtimeMode  string                   // the thread's permission level
+	decoded      map[string]*itemTexts    // what items' JSON fields read as, by item id (texts)
+	secrets      map[string]bool          // the ids of the secret requests among allItems, which pendingSecret reads
 }
 
 func newThread(id string) thread {
@@ -37,7 +40,45 @@ func newThread(id string) thread {
 		requests:     map[string]t3client.RuntimeRequest{},
 		subagents:    map[string]t3client.Subagent{},
 		providers:    map[string]t3client.ProviderThread{},
+		decoded:      map[string]*itemTexts{},
+		secrets:      map[string]bool{},
 	}
+}
+
+// itemTexts is what an item's JSON fields read as, each decoded once. The
+// conversation is built again for every event, a streamed token included,
+// and decoding every command's input and whole output each time made a long
+// thread slow to stream into. The texts hold while the item keeps the same
+// raw fields: an update decodes into new ones.
+type itemTexts struct {
+	input, output json.RawMessage // the fields the texts were decoded from
+	in, out       string
+	outDecoded    bool
+}
+
+// texts is the decoded texts of it, as cached for its id.
+func (t *thread) texts(it t3client.TurnItem) *itemTexts {
+	c := t.decoded[it.ID]
+	if c == nil || !sameBytes(c.input, it.Input) || !sameBytes(c.output, it.Output) {
+		c = &itemTexts{input: it.Input, output: it.Output, in: it.InputText()}
+		t.decoded[it.ID] = c
+	}
+	return c
+}
+
+// outputText is the item's output as text, decoded the first time it is
+// asked for.
+func (c *itemTexts) outputText() string {
+	if !c.outDecoded {
+		c.out, c.outDecoded = t3client.JSONText(c.output), true
+	}
+	return c.out
+}
+
+// sameBytes reports whether a and b are the very same bytes, not merely
+// equal ones: what an item kept since its last update.
+func sameBytes(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 // load takes a snapshot: it replaces everything known of the thread.
@@ -47,14 +88,20 @@ func (t *thread) load(pr t3client.ThreadProjection) {
 		t.message(m)
 	}
 	for _, it := range pr.TurnItems {
-		t.allItems[it.ID] = it
+		t.merge(it)
 	}
 	ordered := slices.Clone(pr.VisibleTurnItems)
 	slices.SortStableFunc(ordered, func(a, b t3client.ProjectedTurnItem) int {
 		return cmp.Compare(a.Position, b.Position)
 	})
-	for _, it := range ordered {
-		t.upsert(it.Item)
+	for _, row := range ordered {
+		it := t.merge(row.Item)
+		if i, ok := t.index[it.ID]; ok {
+			t.items[i] = it
+			continue
+		}
+		t.index[it.ID] = len(t.items) // the snapshot's own order, whatever the ordinals: a fork lists the items it inherits first
+		t.items = append(t.items, it)
 	}
 	for _, r := range pr.Runs {
 		t.runs[r.ID] = r
@@ -81,9 +128,40 @@ func (t *thread) message(m t3client.Message) bool {
 	return true
 }
 
-// upsert replaces an item by id or appends a new one. Fields the server
-// left out of an update keep their last value.
+// upsert replaces an item by id or adds a new one. Fields the server left
+// out of an update keep their last value. The transcript stays in T3's
+// order, by ordinal (its snapshot lists items by ordinal, then id): a new
+// item goes after the last one whose ordinal is not greater, and an item
+// whose ordinal changed, as a queued message's does once it is promoted to
+// run, moves, so the live transcript reads as a reconnect would show it.
+// An item without an ordinal stays where it arrived.
 func (t *thread) upsert(it t3client.TurnItem) {
+	it = t.merge(it)
+	i, known := t.index[it.ID]
+	if known {
+		moved := it.Ordinal > 0 && it.Ordinal != t.items[i].Ordinal
+		t.items[i] = it
+		if !moved {
+			return
+		}
+		t.items = slices.Delete(t.items, i, i+1)
+	}
+	at := len(t.items)
+	for it.Ordinal > 0 && at > 0 && t.items[at-1].Ordinal > it.Ordinal {
+		at--
+	}
+	t.items = slices.Insert(t.items, at, it)
+	if known {
+		at = min(at, i)
+	}
+	for j := at; j < len(t.items); j++ {
+		t.index[t.items[j].ID] = j
+	}
+}
+
+// merge keeps the item among every item of the thread, with the fields an
+// update left out at their last value, and returns it so.
+func (t *thread) merge(it t3client.TurnItem) t3client.TurnItem {
 	if previous, ok := t.allItems[it.ID]; ok {
 		if it.PromptOmitted {
 			it.Prompt = previous.Prompt
@@ -93,12 +171,19 @@ func (t *thread) upsert(it t3client.TurnItem) {
 		}
 	}
 	t.allItems[it.ID] = it
-	if i, ok := t.index[it.ID]; ok {
-		t.items[i] = it
-		return
+	if it.Type == "secret_request" {
+		t.secrets[it.ID] = true
 	}
-	t.index[it.ID] = len(t.items)
-	t.items = append(t.items, it)
+	return it
+}
+
+// visible applies the rule by which T3's snapshot picks the transcript's
+// items (visibleTurnItems) to items that arrive live as well, and to items
+// whose run ended since: nothing of a rolled-back run. A queued message
+// taken back before its run started is left out by entries itself
+// (cancelledBeforeStart).
+func (t *thread) visible(it t3client.TurnItem) bool {
+	return it.RunID == nil || t.runs[*it.RunID].Status != "rolled_back"
 }
 
 // subagent takes a subagent's update; a prompt or result it left out keeps

@@ -6,10 +6,17 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+// jpeg and png are content that starts as those images do.
+const (
+	jpeg = "\xFF\xD8\xFF\xE0jpegdata"
+	png  = "\x89PNG\r\n\x1a\npngdata"
 )
 
 // anySize takes a file of any size.
@@ -29,11 +36,11 @@ func TestReader_Read(t *testing.T) {
 	var r Reader
 	dir := t.TempDir()
 	file := filepath.Join(dir, "shot.jpg")
-	require.NoError(t, os.WriteFile(file, []byte("jpegdata"), 0o600))
+	require.NoError(t, os.WriteFile(file, []byte(jpeg), 0o600))
 
 	img, err := r.Read(file, anySize)
 	require.NoError(t, err)
-	assert.Equal(t, Image{Name: "shot.jpg", MIME: "image/jpeg", Data: []byte("jpegdata")}, img)
+	assert.Equal(t, Image{Name: "shot.jpg", MIME: "image/jpeg", Data: []byte(jpeg)}, img)
 
 	_, err = r.Read(filepath.Join(dir, "notes.txt"), anySize)
 	require.ErrorIs(t, err, ErrNotImage)
@@ -71,4 +78,33 @@ func TestReader_ReadExpandsHome(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "cat.gif", img.Name)
 	assert.Equal(t, "image/gif", img.MIME)
+}
+
+func TestReader_ReadChecksTheContent(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "notes.png")
+	require.NoError(t, os.WriteFile(fake, []byte("just some text"), 0o600))
+	_, err := Reader{}.Read(fake, anySize)
+	require.ErrorIs(t, err, ErrNotImage, "the extension alone does not make an image")
+	assert.Contains(t, err.Error(), "text/plain")
+
+	misnamed := filepath.Join(dir, "shot.jpg")
+	require.NoError(t, os.WriteFile(misnamed, []byte(png), 0o600))
+	img, err := Reader{}.Read(misnamed, anySize)
+	require.NoError(t, err)
+	assert.Equal(t, "image/png", img.MIME, "the media type is the content's")
+}
+
+func TestReader_ReadNoMoreThanChecked(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "shot.png")
+	require.NoError(t, os.WriteFile(file, []byte(png), 0o600))
+	_, err := Reader{}.Read(file, func(string, int64) error {
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0) //nolint:gosec // a test file in a temporary directory
+		require.NoError(t, err)
+		_, err = f.WriteString(strings.Repeat("x", 1<<20)) // grows after its size was approved
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		return nil
+	})
+	require.ErrorContains(t, err, "grew while it was read")
 }

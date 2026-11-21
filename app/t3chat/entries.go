@@ -29,7 +29,7 @@ func (t *thread) entry(it t3client.TurnItem) chat.Entry {
 	case "secret_request":
 		return secretRequest(it)
 	}
-	return step(it)
+	return stepOf(it, t.texts(it).in)
 }
 
 // secretRequest is a secret_request item as the pane shows it: pending
@@ -78,7 +78,12 @@ func questions(qs []t3client.Question) []chat.Question {
 
 // step is one of the agent's work items as a step of the pane's.
 func step(it t3client.TurnItem) chat.Step {
-	s := chat.Step{Kind: chat.StepOther, Text: stepLabel(it)}
+	return stepOf(it, it.InputText())
+}
+
+// stepOf is step, with the item's input already read as text.
+func stepOf(it t3client.TurnItem, input string) chat.Step {
+	s := chat.Step{Kind: chat.StepOther}
 	s.State, s.Why = stepState(it)
 	switch it.Type {
 	case "reasoning":
@@ -87,7 +92,7 @@ func step(it t3client.TurnItem) chat.Step {
 			s.State = chat.Running
 		}
 	case "command_execution":
-		s.Kind, s.Text = chat.StepCommand, it.InputText()
+		s.Kind, s.Text = chat.StepCommand, input
 	case "file_change":
 		s.Kind, s.Text = chat.StepEdit, it.FileName
 		if it.Additions != nil || it.Deletions != nil {
@@ -98,7 +103,7 @@ func step(it t3client.TurnItem) chat.Step {
 	case "web_search":
 		s.Kind, s.Text = chat.StepWeb, strings.Join(it.Patterns, ", ")
 	case "dynamic_tool":
-		s.Kind, s.Text = chat.StepTool, toolName(it)+" "+firstLine(it.InputText())
+		s.Kind, s.Text = chat.StepTool, toolName(it)+" "+firstLine(input)
 	case "subagent":
 		s.Kind, s.Text = chat.StepSubagent, it.Prompt
 	case "system_notice":
@@ -107,6 +112,8 @@ func step(it t3client.TurnItem) chat.Step {
 		s.Kind, s.Text = chat.StepInterrupt, it.Message
 	case "compaction":
 		s.Kind, s.Text = chat.StepCompaction, "context compacted"
+	default:
+		s.Text = stepLabel(it)
 	}
 	return s
 }

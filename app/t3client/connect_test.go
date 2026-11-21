@@ -100,8 +100,8 @@ func TestConnectHTTP_WarnsAboutPlainHTTPToAnotherHost(t *testing.T) {
 		var d net.Dialer
 		return d.DialContext(ctx, network, addr)
 	}}}
-	ep := endpoint{origin: "http://t3.example:3773", client: client}
-	srv := server{kind: serverHTTP, label: ep.origin, origin: ep.origin}
+	ep := endpoint{base: "http://t3.example:3773", client: client}
+	srv := server{kind: serverHTTP, label: ep.base, base: ep.base}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := connectHTTP(ctx, srv, ep, ConnectOptions{Token: "tok"}, nil)
@@ -133,4 +133,103 @@ func TestPair_RefusesRedirectsAndTrimsErrors(t *testing.T) {
 	_, err = pair(context.Background(), directEndpoint(long.URL), "CRED")
 	require.ErrorContains(t, err, "HTTP 502")
 	assert.Less(t, len(err.Error()), 400, "the body is quoted only in part")
+}
+
+// startProxiedFake serves a fake T3 server under /t3, as a reverse proxy
+// would, pairing CRED for its token.
+func startProxiedFake(t *testing.T) string {
+	t.Helper()
+	f := &fakeServer{t: t, token: "tok", handler: func(ws *websocket.Conn, req map[string]any) {
+		send(t, ws, success(req["id"], nil))
+	}}
+	mux := http.NewServeMux()
+	mux.Handle("/t3/ws", f)
+	mux.HandleFunc("/t3/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("subject_token") != "CRED" {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"tok","token_type":"Bearer"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestConnect_ReachesAServerUnderAPath(t *testing.T) {
+	url := startProxiedFake(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store := TokenStore{Path: filepath.Join(t.TempDir(), "t3-tokens.json")}
+	s, err := Connect(ctx, url+"/t3/", ConnectOptions{Store: store, Pair: "CRED"})
+	require.NoError(t, err, "pairing and the socket are both below the path")
+	defer s.Close()
+	assert.Equal(t, url+"/t3", s.Label(), "the path is part of the server's name, to connect to it again")
+	require.NoError(t, s.Conn().call(ctx, "x", nil, nil))
+
+	tok, err := store.Get(url + "/t3")
+	require.NoError(t, err)
+	assert.Equal(t, "tok", tok)
+	tok, err = store.Get(url)
+	require.NoError(t, err)
+	assert.Empty(t, tok, "another server under the same origin has a token of its own")
+}
+
+// startRotatingFake is startPairingFake whose server can stop accepting its token.
+func startRotatingFake(t *testing.T) (*fakeServer, string) {
+	t.Helper()
+	f := &fakeServer{t: t, token: "tok", handler: func(ws *websocket.Conn, req map[string]any) {
+		send(t, ws, success(req["id"], nil))
+	}}
+	mux := http.NewServeMux()
+	mux.Handle("/ws", f)
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("subject_token") != "CRED" {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"tok","token_type":"Bearer"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return f, srv.URL
+}
+
+func TestConnect_PairedSessionRedialsPastAnExpiredToken(t *testing.T) {
+	for name, store := range map[string]func(t *testing.T) TokenStore{
+		"saved": func(t *testing.T) TokenStore { return TokenStore{Path: filepath.Join(t.TempDir(), "t3-tokens.json")} },
+		"kept":  unwritableStore,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, url := startRotatingFake(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var issued atomic.Int32
+			issue := func(context.Context) (string, error) {
+				issued.Add(1)
+				return "tok2", nil
+			}
+			// connectHTTP with an issuer stands in for a local or ssh:// server,
+			// which Redial would reach with its own
+			srv, err := parseServer(url)
+			require.NoError(t, err)
+			ep := directEndpoint(srv.base)
+			s, err := connectHTTP(ctx, srv, ep, ConnectOptions{Store: store(t), Pair: "CRED"}, issue)
+			require.NoError(t, err)
+			defer s.Close()
+			assert.Empty(t, s.opts.Pair, "the credential is spent")
+			assert.Empty(t, s.opts.Token, "the paired token is not held as an explicit one")
+
+			f.rotate("tok2") // the paired token expires
+			again, err := connectHTTP(ctx, s.server, ep, s.opts, issue)
+			require.NoError(t, err, "an expired paired token is replaced, not retried forever")
+			defer again.Close()
+			assert.EqualValues(t, 1, issued.Load())
+
+			third, err := connectHTTP(ctx, again.server, ep, again.opts, issue)
+			require.NoError(t, err)
+			defer third.Close()
+			assert.EqualValues(t, 1, issued.Load(), "the replacement is reused")
+		})
+	}
 }

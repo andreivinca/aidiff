@@ -63,8 +63,11 @@ func (Editor) sharedSSH(control string) string {
 		return ""
 	}
 	bin := filepath.Join(filepath.Dir(control), "bin")
-	script := "#!/bin/sh\nexec " + shellQuote(real) + " -o ControlMaster=no -o ControlPath=" + shellQuote(control) +
-		" -o ClearAllForwardings=yes \"$@\"\n"
+	words := []string{ShellQuote(real)}
+	for _, o := range SSHOptions(control) {
+		words = append(words, ShellQuote(o))
+	}
+	script := "#!/bin/sh\nexec " + strings.Join(words, " ") + " \"$@\"\n"
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		return ""
 	}
@@ -74,7 +77,23 @@ func (Editor) sharedSSH(control string) string {
 	return bin
 }
 
-// shellQuote quotes s as one word for a POSIX shell.
-func shellQuote(s string) string {
+// SSHOptions are the ssh options that run a command on the connection
+// behind the ControlMaster socket control ("" for none: a connection of its
+// own) and set up none of the host's forwards (ClearAllForwardings): the T3
+// tunnel's ssh holds them already, a second bind of the same local ports
+// would fail, and fail the login under ExitOnForwardFailure. When the socket
+// is gone ssh connects on its own.
+func SSHOptions(control string) []string {
+	opts := []string{"-o", "ClearAllForwardings=yes"}
+	if control != "" {
+		opts = append(opts, "-o", "ControlMaster=no", "-o", "ControlPath="+control)
+	}
+	return opts
+}
+
+// ShellQuote quotes s as one word for a POSIX shell. A word with no single
+// quote in it comes out as one plain single-quoted string, which fish, csh
+// and nushell read the same way.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

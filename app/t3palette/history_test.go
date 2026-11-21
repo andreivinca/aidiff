@@ -91,6 +91,8 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	h := newHarness(t, Config{NoChat: true, LocalName: "andrei-pc", Local: f.config(a, b, gone, a)}, nil)
 	sb := h.p.Sidebar()
 	require.True(t, sb.Available(), "this machine is selected: its history shows")
+	require.Eventually(t, func() bool { return !slices.Contains(h.p.historyDirs(), gone) }, time.Second, time.Millisecond,
+		"a folder no longer there is left out, in the background")
 	assert.Equal(t, localKey(a), h.p.Workspace(), "the run's folder is a workspace of its own")
 	assert.Equal(t, a, h.p.LocalDir())
 	assert.Equal(t, Place{Dir: a}, h.p.TerminalPlace(), "a terminal opens in the folder on screen")
@@ -198,4 +200,33 @@ func TestHistory_NewFolderOpensWithATerminal(t *testing.T) {
 		_ = h.swap(find[splitview.SwitchWorkspaceMsg](t, back), inner)
 		h.settle()
 	}
+}
+
+func TestHistory_StartDoesNotWaitOnTheFolders(t *testing.T) {
+	root := t.TempDir()
+	a, gone := filepath.Join(root, "alpha"), filepath.Join(root, "gone")
+	require.NoError(t, os.MkdirAll(a, 0o750))
+	release := make(chan struct{})
+	prev := isFolder
+	isFolder = func(dir string) bool { // a stale network mount
+		<-release
+		return prev(dir)
+	}
+	t.Cleanup(func() { isFolder = prev })
+	built := make(chan *Palette, 1)
+	go func() {
+		built <- newPalette(Config{NoChat: true, Local: (&localFake{}).config("", a, gone)}, nil, nil)
+	}()
+	var p *Palette
+	select {
+	case p = <-built:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("building the palette waits on a folder check: a hung mount hangs the start")
+	}
+	t.Cleanup(p.Close)
+	assert.Equal(t, []string{a, gone}, p.historyDirs(), "listed at once")
+	close(release)
+	assert.Eventually(t, func() bool { return slices.Equal([]string{a}, p.historyDirs()) }, 2*time.Second, time.Millisecond,
+		"and the folder gone left out once checked")
 }

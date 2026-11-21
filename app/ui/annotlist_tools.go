@@ -38,7 +38,7 @@ func (m Model) handleAnnotListTool(kind overlay.OutcomeKind) (tea.Model, tea.Cmd
 			title = "Delete the annotation?"
 		}
 		yes := func() tea.Msg { return deleteAllAnnotationsMsg{} }
-		return m, m.revert.confirm(title, "Removes every annotation of this review. They cannot be brought back.", "Delete", yes)
+		return m, m.revert.confirm(title, "Removes every annotation of this review. They cannot be brought back.", "Delete", yes, nil)
 	default:
 		return m, nil
 	}

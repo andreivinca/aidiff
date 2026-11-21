@@ -29,8 +29,9 @@ func (p *Pane) lastQueuedLocked() (Queued, bool) {
 // unqueueLastLocked takes the newest queued message back into an empty
 // input, for the user to edit and send again or to drop by clearing it, and
 // reports whether there was one. The backend drops it from the queue first,
-// so it is never both queued and in the input; its images stay behind, and
-// the note says so. mu must be held.
+// so it is never both queued and in the input; a draft typed meanwhile
+// stays, under it. Its images stay behind, and the note says so. mu must be
+// held.
 func (p *Pane) unqueueLastLocked() bool {
 	q, ok := p.lastQueuedLocked()
 	if !ok {
@@ -44,16 +45,11 @@ func (p *Pane) unqueueLastLocked() bool {
 			}
 			return nil
 		},
-		finish: func(err error) {
+		keep: func(err error) {
 			if err != nil {
 				return
 			}
-			if !p.input.empty() {
-				p.note = "the queued message was dropped; the input already held a draft: " + firstLine(q.Text)
-				return
-			}
-			p.input.insert(q.Text)
-			p.inputChanged()
+			p.restoreLocked(q.Text, nil) // never dropped: ahead of a draft typed meanwhile
 			p.note = "the queued message is back in the input: enter queues it again, ctrl+u drops it"
 			if q.Images > 0 {
 				p.note += fmt.Sprintf("; its %d image%s stayed behind", q.Images, plural(q.Images))

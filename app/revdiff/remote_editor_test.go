@@ -46,7 +46,7 @@ func TestRemoteEditorArgv(t *testing.T) {
 	dir := t.TempDir()
 	p := t3palette.Place{SSHHost: "box", SSHControlPath: "/tmp/ctl", Dir: dir}
 	argv := remoteEditorArgv(p, "src/it's.go", 12)
-	assert.Equal(t, []string{"ssh", "-t", "-o", "ClearAllForwardings=yes", "-o", "ControlMaster=no", "-S", "/tmp/ctl", "--", "box"}, argv[:len(argv)-1],
+	assert.Equal(t, []string{"ssh", "-t", "-o", "ClearAllForwardings=yes", "-o", "ControlMaster=no", "-o", "ControlPath=/tmp/ctl", "--", "box"}, argv[:len(argv)-1],
 		"on the terminal's own SSH connection")
 
 	assert.Equal(t, []string{dir, "--flag", "+12", "src/it's.go"}, runRemote(t, argv, "nvim"), "in the folder, the line as nvim takes it")

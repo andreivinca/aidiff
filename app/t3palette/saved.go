@@ -9,7 +9,8 @@ import (
 // Saved connections. Every T3 server the user connects to is saved, as the
 // local folders are, so the connections panel lists it in later runs too:
 // greyed while not connected, Enter connects to it. x forgets one, after a
-// confirmation.
+// confirmation; a reconnect does not save it back, a connect by the user
+// does.
 
 // SavedConfig is how the palette keeps the servers connected to.
 type SavedConfig struct {
@@ -54,11 +55,12 @@ func savedIndex(list []SavedServer, spec string) int {
 }
 
 // saveLocked records s's server as connected now: listed (at the end, so
-// the rows stay put while the run lasts) and saved for later runs. mu must
-// be held.
+// the rows stay put while the run lasts) and saved for later runs, unless
+// the user forgot it in this run. mu must be held, or the palette not
+// shared yet.
 func (t *Palette) saveLocked(s Session) {
 	spec, machine := s.Label(), s.MachineName()
-	if spec == "" {
+	if spec == "" || t.forgotten[spec] {
 		return
 	}
 	if i := savedIndex(t.saved, spec); i >= 0 {
@@ -67,7 +69,43 @@ func (t *Palette) saveLocked(s Session) {
 		t.saved = append(t.saved, SavedServer{Spec: spec, Machine: machine})
 	}
 	if remember := t.cfg.Saved.Remember; remember != nil {
-		go remember(spec, machine)
+		t.queueLocked(func() {
+			remember(spec, machine)
+		})
+	}
+}
+
+// queueLocked runs work, a write of the saved servers or folders, after
+// the writes queued before it, so that a Forget never lands before the
+// Remember it undoes. They run one at a time in the background, and Close
+// waits for them, so none is lost on a quick exit. It reports false,
+// running nothing, once the palette is closed. mu must be held, or the
+// palette not shared yet.
+func (t *Palette) queueLocked(work func()) bool {
+	if t.closed {
+		return false
+	}
+	t.saveQ = append(t.saveQ, work)
+	if !t.saving {
+		t.saving = true
+		t.laterLocked(t.drainSaves)
+	}
+	return true
+}
+
+// drainSaves runs the queued writes in order until there are none.
+func (t *Palette) drainSaves() {
+	for {
+		t.mu.Lock()
+		if len(t.saveQ) == 0 {
+			t.saving = false
+			t.mu.Unlock()
+			return
+		}
+		work := t.saveQ[0]
+		t.saveQ = t.saveQ[1:]
+		t.mu.Unlock()
+		work()
 	}
 }
 
@@ -104,19 +142,30 @@ func (t *Palette) forgetPrompt(r connRow) tea.Cmd {
 	}
 }
 
-// forget removes spec from the saved servers.
+// forget removes spec from the saved servers, for the rest of the run too:
+// a reconnect to it does not save it back.
 func (t *Palette) forget(spec, label string) tea.Cmd {
 	return func() tea.Msg {
 		t.mu.Lock()
 		if i := savedIndex(t.saved, spec); i >= 0 {
 			t.saved = append(t.saved[:i:i], t.saved[i+1:]...)
 		}
+		t.forgotten[spec] = true
 		forget := t.cfg.Saved.Forget
+		errc := make(chan error, 1)
+		queued := forget != nil && t.queueLocked(func() {
+			errc <- forget(spec)
+		})
 		t.mu.Unlock()
-		if forget != nil {
-			if err := forget(spec); err != nil {
-				return t3Error("forget "+label, err)
-			}
+		var err error
+		switch {
+		case queued:
+			err = <-errc // after the writes queued before it
+		case forget != nil:
+			err = forget(spec) // the palette is closed: nothing else writes
+		}
+		if err != nil {
+			return t3Error("forget "+label, err)
 		}
 		return splitview.FlashMsg{Text: "forgot " + label}
 	}

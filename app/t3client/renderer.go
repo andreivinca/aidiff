@@ -3,6 +3,7 @@ package t3client
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -79,6 +80,16 @@ func (f diffFileStat) entry() diff.FileEntry {
 // patch is one parsed unified diff; the zero patch is an empty one.
 type patch struct {
 	reader *diff.MultiFileStdinReader
+	cutIn  string // the file the server cut the patch short in (or after); "" when it is whole
+}
+
+// cutShortNotice ends the lines of the file a patch was cut short in. As a
+// divider it cannot be taken for a line of the file: the cursor skips it, it
+// takes no annotation, and no change block, which a revert works on, spans
+// it. IsPlaceholder keeps a reviewed mark from outliving a reload, since
+// what was cut off went unseen.
+var cutShortNotice = diff.DiffLine{
+	ChangeType: diff.ChangeDivider, Content: "⋯ the T3 server cut this diff short here ⋯", IsPlaceholder: true,
 }
 
 // parsePatch reads a unified diff. The patch's final newline is dropped: the
@@ -135,19 +146,19 @@ type patchFetch struct {
 // ChangedFiles lists every changed file from a metadata-only preview, which
 // the server never cuts short the way it caps a patch; FileDiff then fetches
 // one file's patch when the file is opened, so a large change is complete.
-// A server that lists no files gets the old treatment: its one patch.
+// A server that lists no files gets the old treatment: its one patch. A
+// patch the server still cuts short ends with cutShortNotice.
 type Renderer struct {
 	conn    *Conn
 	cwd     string
 	source  string
 	baseRef string // the branch range's base; "" for the server's default
 
-	mu        sync.Mutex
-	stats     map[string]diffFileStat   // the latest listing, by path
-	patches   map[string]*patchFetch    // the patches of that listing, fetched or in flight, by path
-	contents  map[string]*contentsFetch // the new contents of that listing's files, by path (expand.go)
-	whole     patch                     // an older server's one patch
-	truncated bool
+	mu       sync.Mutex
+	stats    map[string]diffFileStat   // the latest listing, by path
+	patches  map[string]*patchFetch    // the patches of that listing, fetched or in flight, by path
+	contents map[string]*contentsFetch // the new contents of that listing's files, by path (expand.go)
+	whole    patch                     // an older server's one patch
 }
 
 // NewRenderer reviews cwd on the T3 host. source is SourceWorkingTree or
@@ -189,7 +200,7 @@ func (r *Renderer) ChangedFiles(_ string, _ bool) ([]diff.FileEntry, error) {
 	r.stats = map[string]diffFileStat{}
 	r.patches = map[string]*patchFetch{}
 	r.contents = map[string]*contentsFetch{}
-	r.whole, r.truncated = patch{}, false
+	r.whole = patch{}
 	if len(src.Files) == 0 {
 		return r.fromPatchLocked(src)
 	}
@@ -202,16 +213,27 @@ func (r *Renderer) ChangedFiles(_ string, _ bool) ([]diff.FileEntry, error) {
 }
 
 // fromPatchLocked lists the files of a server's one patch; mu must be held.
+// A patch cut short is cut in its last file, the files after it missing.
 func (r *Renderer) fromPatchLocked(src diffSource) ([]diff.FileEntry, error) {
 	whole, err := parsePatch(src.Diff)
 	if err != nil {
 		return nil, fmt.Errorf("parse T3 diff: %w", err)
 	}
-	r.whole, r.truncated = whole, src.Truncated && !whole.empty()
-	return whole.changedFiles()
+	files, err := whole.changedFiles()
+	if err != nil {
+		return nil, err
+	}
+	if src.Truncated && len(files) > 0 {
+		whole.cutIn = files[len(files)-1].Path
+	}
+	r.whole = whole
+	return files, nil
 }
 
-// FileDiff returns one file's lines, fetching its patch the first time.
+// FileDiff returns one file's lines, fetching its patch the first time. The
+// file a patch was cut short in ends with cutShortNotice, and gets no more
+// context: laid over the file's contents, the cut patch would pass the
+// changes it is missing off as unchanged lines.
 func (r *Renderer) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, error) {
 	p, err := r.patchOf(req.Path)
 	if err != nil {
@@ -220,6 +242,9 @@ func (r *Renderer) FileDiff(req diff.FileDiffRequest) ([]diff.DiffLine, error) {
 	lines, err := p.fileDiff(req)
 	if err != nil {
 		return nil, err
+	}
+	if p.cutIn != "" && p.cutIn == req.Path {
+		return append(slices.Clip(lines), cutShortNotice), nil // the patch's own lines stay as they are
 	}
 	return r.withContext(req, lines), nil
 }
@@ -248,15 +273,10 @@ func (r *Renderer) patchOf(path string) (patch, error) {
 	r.patches[path] = pf
 	r.mu.Unlock()
 
-	var truncated bool
-	pf.patch, truncated, pf.err = r.fetchPatch(stat)
+	pf.patch, pf.err = r.fetchPatch(stat)
 	r.mu.Lock()
-	switch {
-	case r.patches[path] != pf: // the listing was replaced meanwhile; the result is not its
-	case pf.err != nil:
+	if pf.err != nil && r.patches[path] == pf { // not replaced by a new listing meanwhile
 		delete(r.patches, path) // the next view asks again
-	case truncated:
-		r.truncated = true
 	}
 	r.mu.Unlock()
 	close(pf.done)
@@ -264,7 +284,7 @@ func (r *Renderer) patchOf(path string) (patch, error) {
 }
 
 // fetchPatch asks the server for one file's patch.
-func (r *Renderer) fetchPatch(stat diffFileStat) (p patch, truncated bool, err error) {
+func (r *Renderer) fetchPatch(stat diffFileStat) (p patch, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	var res diffPreview
@@ -274,21 +294,17 @@ func (r *Renderer) fetchPatch(stat diffFileStat) (p patch, truncated bool, err e
 		"file":       map[string]any{"path": stat.Path, "previousPath": stat.PreviousPath, "sourceKind": r.source},
 	}
 	if err = r.conn.call(ctx, "review.getDiffPreview", r.withBase(payload), &res); err != nil {
-		return patch{}, false, fmt.Errorf("T3 diff for %s: %w", stat.Path, err)
+		return patch{}, fmt.Errorf("T3 diff for %s: %w", stat.Path, err)
 	}
 	src, err := res.source(r.source)
 	if err != nil {
-		return patch{}, false, fmt.Errorf("T3 diff for %s: %w", stat.Path, err)
+		return patch{}, fmt.Errorf("T3 diff for %s: %w", stat.Path, err)
 	}
 	if p, err = parsePatch(src.Diff); err != nil {
-		return patch{}, false, fmt.Errorf("parse T3 diff for %s: %w", stat.Path, err)
+		return patch{}, fmt.Errorf("parse T3 diff for %s: %w", stat.Path, err)
 	}
-	return p, src.Truncated, nil
-}
-
-// cutShort reports whether the server cut a fetched patch short.
-func (r *Renderer) cutShort() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.truncated
+	if src.Truncated {
+		p.cutIn = stat.Path
+	}
+	return p, nil
 }

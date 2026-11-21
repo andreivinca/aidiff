@@ -1,15 +1,9 @@
 package localhist
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io/fs"
-	"os"
 	"slices"
 	"time"
-
-	"github.com/umputun/revdiff/app/fsutil"
 )
 
 // Connections is the list of T3 servers aidiff connected to, kept the way
@@ -35,19 +29,23 @@ type connectionsFile struct {
 // List returns the servers, most recently connected first. A missing file
 // is an empty list.
 func (c Connections) List() ([]Connection, error) {
-	f, err := c.load()
-	if err != nil {
+	var f connectionsFile
+	if err := c.file().load(&f); err != nil {
 		return nil, err
 	}
 	return f.Servers, nil
 }
 
 // Add records spec, on machine, as connected now: it moves to the top, and
-// the list keeps the newest maxEntries.
+// the list keeps the newest maxEntries. A spec is kept as it is dialed, not
+// cleaned as a folder is: ssh://host is no path.
 func (c Connections) Add(spec, machine string) error {
+	if spec == "" {
+		return errors.New("save connection: no server")
+	}
 	return c.change(func(list []Connection) []Connection {
 		list = slices.DeleteFunc(list, func(e Connection) bool { return e.Spec == spec })
-		list = slices.Insert(list, 0, Connection{Spec: spec, Machine: machine, Connected: c.clock().UTC()})
+		list = slices.Insert(list, 0, Connection{Spec: spec, Machine: machine, Connected: clock(c.now).UTC()})
 		return list[:min(len(list), maxEntries)]
 	})
 }
@@ -59,50 +57,14 @@ func (c Connections) Remove(spec string) error {
 	})
 }
 
-// change rewrites the list with edit, under the lock the folders' list
-// takes, so two aidiff instances saving at once both keep their change.
+// change rewrites the list with edit, under the exclusive lock beside
+// connections.json (update).
 func (c Connections) change(edit func([]Connection) []Connection) error {
-	if c.Path == "" {
-		return errors.New("no connections file")
-	}
-	unlock, err := Store{Path: c.Path}.lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	f, err := c.load()
-	if err != nil {
-		return err
-	}
-	f.Servers = edit(f.Servers)
-	b, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode connections: %w", err)
-	}
-	if err := fsutil.AtomicWriteFile(c.Path, append(b, '\n')); err != nil {
-		return fmt.Errorf("save connections: %w", err)
-	}
-	return nil
+	return update(c.file(), func(f *connectionsFile) {
+		f.Servers = edit(f.Servers)
+	})
 }
 
-func (c Connections) clock() time.Time {
-	if c.now == nil {
-		return time.Now()
-	}
-	return c.now()
-}
-
-func (c Connections) load() (connectionsFile, error) {
-	var f connectionsFile
-	b, err := os.ReadFile(c.Path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return f, nil
-	}
-	if err != nil {
-		return f, fmt.Errorf("read connections: %w", err)
-	}
-	if err := json.Unmarshal(b, &f); err != nil {
-		return connectionsFile{}, fmt.Errorf("parse connections %s: %w", c.Path, err)
-	}
-	return f, nil
+func (c Connections) file() jsonFile {
+	return jsonFile{path: c.Path, what: "connections"}
 }

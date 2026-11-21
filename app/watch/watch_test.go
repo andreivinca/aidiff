@@ -2,9 +2,11 @@ package watch
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,18 +27,18 @@ type repo struct {
 }
 
 // newRepo builds root/{src, node_modules(ignored), .git/refs/heads} and watches it.
-func newRepo(t *testing.T, isIgnored func(string) bool) *repo {
+func newRepo(t *testing.T, checkIgnored func(context.Context, []string) []string) *repo {
 	t.Helper()
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
 	for _, d := range []string{"src/deep", "node_modules/pkg", ".git/refs/heads"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, d), 0o750))
 	}
-	w, err := New(Config{
-		Root:      root,
-		GitDir:    gitDir,
-		Ignored:   []string{filepath.Join(root, "node_modules")},
-		IsIgnored: isIgnored,
+	w, err := New(t.Context(), Config{
+		Root:         root,
+		GitDir:       gitDir,
+		Ignored:      []string{filepath.Join(root, "node_modules")},
+		CheckIgnored: checkIgnored,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -118,7 +120,7 @@ func TestWatcher_BurstIsOneNotification(t *testing.T) {
 func TestWatcher_SettleWaitsForTheBurstToEnd(t *testing.T) {
 	root := t.TempDir()
 	const settle = 500 * time.Millisecond
-	w, err := New(Config{Root: root, Settle: settle})
+	w, err := New(t.Context(), Config{Root: root, Settle: settle})
 	require.NoError(t, err)
 	defer w.Close()
 
@@ -144,15 +146,42 @@ func TestWatcher_SettleWaitsForTheBurstToEnd(t *testing.T) {
 	}
 }
 
+// ignoredByName is a CheckIgnored that ignores the directories named one of
+// names, recording each call's directories, root-relative.
+type ignoredByName struct {
+	root  string
+	names []string
+	mu    sync.Mutex
+	asked [][]string
+}
+
+func (i *ignoredByName) check(_ context.Context, dirs []string) []string { // runs on the watcher's goroutine
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	var ignored, asked []string
+	for _, d := range dirs {
+		rel, _ := filepath.Rel(i.root, d)
+		asked = append(asked, filepath.ToSlash(rel))
+		if slices.Contains(i.names, filepath.Base(d)) {
+			ignored = append(ignored, d)
+		}
+	}
+	i.asked = append(i.asked, asked)
+	return ignored
+}
+
+func (i *ignoredByName) calls() [][]string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return slices.Clone(i.asked)
+}
+
 func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
-	var mu sync.Mutex
-	var asked []string
-	r := newRepo(t, func(dir string) bool { // runs on the watcher goroutine
-		mu.Lock()
-		defer mu.Unlock()
-		asked = append(asked, filepath.Base(dir))
-		return filepath.Base(dir) == "dist"
-	})
+	ign := &ignoredByName{names: []string{"dist"}}
+	r := newRepo(t, ign.check)
+	ign.mu.Lock()
+	ign.root = r.root
+	ign.mu.Unlock()
 
 	r.write(t, "node_modules/pkg/index.js", "x")
 	r.assertQuiet(t, "ignored at startup")
@@ -162,14 +191,74 @@ func TestWatcher_SkipsIgnoredTrees(t *testing.T) {
 	r.assertQuiet(t, "the ignored dir's own creation is not a change")
 	r.write(t, "dist/bundle.js", "x")
 	r.assertQuiet(t, "files inside a newly created ignored dir")
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, []string{"dist"}, asked)
+	assert.Equal(t, [][]string{{"dist"}}, ign.calls())
+}
+
+func TestWatcher_SkipsIgnoredFoldersInsideANewTree(t *testing.T) {
+	ign := &ignoredByName{names: []string{"node_modules"}}
+	r := newRepo(t, ign.check)
+	ign.mu.Lock()
+	ign.root = r.root
+	ign.mu.Unlock()
+
+	// a project moved in whole: its node_modules was never seen at startup
+	outside := filepath.Join(t.TempDir(), "app")
+	for _, d := range []string{"src/lib", "node_modules/a/b", "node_modules/c"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(outside, d), 0o750))
+	}
+	require.NoError(t, os.Rename(outside, filepath.Join(r.root, "app")))
+	r.next(t) // the new tree is a change once watched
+
+	var watched []string
+	for _, d := range r.w.fsw.WatchList() {
+		if rel, _ := filepath.Rel(r.root, d); strings.HasPrefix(filepath.ToSlash(rel), "app") {
+			watched = append(watched, filepath.ToSlash(rel))
+		}
+	}
+	assert.ElementsMatch(t, []string{"app", "app/src", "app/src/lib"}, watched, "an ignored folder inside a new tree is not watched")
+	assert.Equal(t, [][]string{{"app"}, {"app/node_modules", "app/src"}, {"app/src/lib"}}, ign.calls(),
+		"one question per level of the tree, and nothing below an ignored folder is asked about")
+
+	r.write(t, "app/node_modules/c/x.js", "x")
+	r.assertQuiet(t, "files in an ignored folder of a new tree")
+	r.write(t, "app/src/lib/x.go", "x")
+	r.next(t)
+}
+
+func TestWatcher_SlowIgnoreCheckDoesNotHoldBackChanges(t *testing.T) {
+	asked, release := make(chan struct{}, 1), make(chan struct{})
+	r := newRepo(t, func(context.Context, []string) []string {
+		select {
+		case asked <- struct{}{}:
+		default:
+		}
+		<-release // git stuck, as in a checkout creating folders by the hundred
+		return nil
+	})
+	defer close(release)
+	require.NoError(t, os.Mkdir(filepath.Join(r.root, "newpkg"), 0o750))
+	select {
+	case <-asked:
+	case <-time.After(waitFor):
+		t.Fatal("the new folder was not checked")
+	}
+	r.write(t, "src/a.go", "package a")
+	r.next(t) // an edit is reported while the check is still running
+}
+
+func TestNew_SetupEndsWithItsContext(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "a", "b"), 0o750))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	w, err := New(ctx, Config{Root: root})
+	require.ErrorIs(t, err, context.Canceled, "a setup no longer wanted stops walking")
+	assert.Nil(t, w)
 }
 
 func TestWatcher_WatchesNewDirectories(t *testing.T) {
-	r := newRepo(t, func(string) bool {
-		return false
+	r := newRepo(t, func(context.Context, []string) []string {
+		return nil
 	})
 	require.NoError(t, os.Mkdir(filepath.Join(r.root, "newpkg"), 0o750))
 	r.next(t)
@@ -222,7 +311,7 @@ func TestShallowWatchFollowsOpenedDirectories(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	require.NoError(t, os.MkdirAll(filepath.Join(src, "deep"), 0o700))
-	w, err := New(Config{Root: root, Shallow: true})
+	w, err := New(t.Context(), Config{Root: root, Shallow: true})
 	require.NoError(t, err)
 	defer w.Close()
 	assert.ElementsMatch(t, []string{root}, w.fsw.WatchList())
@@ -253,7 +342,7 @@ func TestWatcher_WarnsOnceAboutUnwatchedDirectories(t *testing.T) {
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
 	root := t.TempDir()
-	w, err := New(Config{Root: root, Shallow: true})
+	w, err := New(t.Context(), Config{Root: root, Shallow: true})
 	require.NoError(t, err)
 	defer w.Close()
 

@@ -181,7 +181,7 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 
-	p := tea.NewProgram(newSplit(opts, model, t3p, local, diffs), append(programOptions, splitProgramOptions()...)...)
+	p := tea.NewProgram(newSplit(opts, model, t3p, local, diffs, tuiOut), append(programOptions, splitProgramOptions()...)...)
 	t3p.Start(p, src.watch(opts, p))
 	guard := &shutdownGuard{deadline: deadline} // a signal bounds the exit even when the quit never lands
 	stop := guard.watch(forceQuitter{p})
@@ -202,8 +202,8 @@ func run(opts options) (int, error) {
 	// EIO that races the guard's QuitMsg — so the history safety net must run
 	// whenever the model is available and the exit was graceful or signaled.
 	if m, ok := finalModel.(ui.Model); ok && (runErr == nil || signaled) {
-		hist := src.exitHistory(opts, t3p) // the review on screen may not be the one the run opened
-		return finalize(finalizeReq{
+		hist := src.exitHistory(opts, t3p, diffs) // the review on screen may not be the one the run opened
+		return deadline.result(finalize(finalizeReq{
 			opts:        hist.opts,
 			annotations: m.Store().FormatOutput(),
 			files:       m.Store().Files(),
@@ -216,7 +216,7 @@ func run(opts options) (int, error) {
 			signaled:    signaled,
 			loadErr:     m.LoadError(),
 			stdout:      os.Stdout,
-		})
+		}))
 	}
 	if runErr != nil {
 		return 0, fmt.Errorf("TUI error: %w", runErr)

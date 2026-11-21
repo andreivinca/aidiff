@@ -14,7 +14,7 @@ import (
 	"github.com/umputun/revdiff/app/fsutil"
 )
 
-// TokenStore keeps one bearer token per T3 server origin in a 0600 JSON
+// TokenStore keeps one bearer token per T3 server (tokenKey) in a 0600 JSON
 // file. Changes take an exclusive lock on a file beside it, so two aidiff
 // instances saving at once both keep their token.
 type TokenStore struct {
@@ -37,14 +37,14 @@ func (s TokenStore) Get(baseURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return f.Servers[normalizeURL(baseURL)].Token, nil
+	return f.Servers[tokenKey(baseURL)].Token, nil
 }
 
 // Put saves token for baseURL, replacing any earlier one.
 func (s TokenStore) Put(baseURL, token string) error {
 	saved := storedToken{Token: token, SavedAt: s.clock().UTC()}
 	return s.update(func(f tokenFile) bool {
-		f.Servers[normalizeURL(baseURL)] = saved
+		f.Servers[tokenKey(baseURL)] = saved
 		return true
 	})
 }
@@ -71,7 +71,7 @@ func (s TokenStore) Servers() ([]string, error) {
 
 // remove forgets the token for baseURL.
 func (s TokenStore) remove(baseURL string) error {
-	key := normalizeURL(baseURL)
+	key := tokenKey(baseURL)
 	return s.update(func(f tokenFile) bool {
 		if _, ok := f.Servers[key]; !ok {
 			return false

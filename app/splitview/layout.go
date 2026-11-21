@@ -109,8 +109,15 @@ func (m Model) grownWeights() []float64 {
 }
 
 // relayout recomputes the split and pushes sizes to the wrapped model and the
-// terminals.
+// terminals. A sidebar the window no longer has room for is hidden, so it
+// does not keep the keys unseen.
 func (m Model) relayout() (tea.Model, tea.Cmd) {
+	if m.winW > 0 && m.outerOpen && m.outerW() == 0 {
+		m = m.leaveOuter()
+	}
+	if m.winW > 0 && m.sideOpen && m.sideW() == 0 {
+		m = m.leaveSidebar()
+	}
 	m.width = m.winW - m.leftCols()
 	m.leftW = m.leftWidth()
 	for i, r := range m.termRects() {

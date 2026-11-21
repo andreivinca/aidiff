@@ -1,8 +1,6 @@
 package splitview
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -28,6 +26,12 @@ func (m Model) outerW() int {
 	if !m.outerOpen || m.cfg.OuterSidebar == nil {
 		return 0
 	}
+	return m.outerFit()
+}
+
+// outerFit is the width the outer sidebar gets when shown beside the
+// sidebar as it is, 0 when the window has no room for it.
+func (m Model) outerFit() int {
 	w := min(m.cfg.SidebarWidth, m.winW-m.sideCols()-minPaneWidth-1)
 	if w < minSidebarWidth {
 		return 0
@@ -48,9 +52,14 @@ func (m Model) leftCols() int {
 	return m.outerCols() + m.sideCols()
 }
 
-// showOuter shows the outer sidebar and focuses it.
+// showOuter shows the outer sidebar and focuses it, unless the window is
+// too narrow to show it (see showSidebar).
 func (m Model) showOuter() (tea.Model, tea.Cmd) {
 	if !m.outerAvailable() {
+		return m, nil
+	}
+	if m.winW > 0 && m.outerFit() == 0 {
+		m.flash = tooNarrow
 		return m, nil
 	}
 	if !m.outerOpen {
@@ -70,6 +79,11 @@ func (m Model) hideOuter() (tea.Model, tea.Cmd) {
 	if !m.outerOpen {
 		return m, nil
 	}
+	return m.leaveOuter().relayout()
+}
+
+// leaveOuter is hideOuter without the relayout.
+func (m Model) leaveOuter() Model {
 	m.outerOpen = false
 	if m.focus == focusOuter {
 		m.focus = m.outerReturn
@@ -81,11 +95,13 @@ func (m Model) hideOuter() (tea.Model, tea.Cmd) {
 			m.focus = focusDiff
 		}
 	}
-	return m.relayout()
+	return m
 }
 
-// outerResult applies what the outer sidebar asked for.
+// outerResult applies what the outer sidebar asked for; its command acts
+// for the wrapped model on screen (see scopedMsg).
 func (m Model) outerResult(cmd tea.Cmd, hide bool) (tea.Model, tea.Cmd) {
+	cmd = m.scoped(cmd)
 	if !hide {
 		return m, cmd
 	}
@@ -156,13 +172,8 @@ func (m Model) focusRight() (tea.Model, tea.Cmd) {
 
 // outerLines are the outer sidebar's rows, each followed by its separator.
 func (m Model) outerLines() []string {
-	w := m.outerW()
-	lines := strings.Split(fitBlock(m.cfg.OuterSidebar.View(w, m.bodyH(), m.focus == focusOuter), w, m.bodyH()), "\n")
-	sep := m.styles.grip.Render("│")
-	for i := range lines {
-		lines[i] += sep
-	}
-	return lines
+	w, h := m.outerW(), m.bodyH()
+	return m.sidebarBlock(slotOuter, m.cfg.OuterSidebar.View(w, h, m.focus == focusOuter), w, h)
 }
 
 // outerMouse handles a left click on the outer sidebar's row y.

@@ -157,3 +157,65 @@ func TestParsePatch(t *testing.T) {
 	require.Len(t, lines, 1)
 	assert.Equal(t, "new", lines[0].Content, "the final newline is not read as a line")
 }
+
+// assertCutShort checks that lines end with the notice that the server cut
+// the patch short, a row nothing can take for a line of the file.
+func assertCutShort(t *testing.T, lines []diff.DiffLine) {
+	t.Helper()
+	require.NotEmpty(t, lines)
+	last := lines[len(lines)-1]
+	assert.Equal(t, diff.ChangeDivider, last.ChangeType, "the cursor, annotations and reverts all pass a divider by")
+	assert.True(t, last.IsPlaceholder)
+	assert.Contains(t, last.Content, "cut this diff short")
+	assert.Zero(t, last.NewNum)
+	assert.Zero(t, last.OldNum)
+}
+
+func TestRendererSaysAPatchWasCutShort(t *testing.T) {
+	var got capture
+	_, url := startFake(t, func(ws *websocket.Conn, req map[string]any) {
+		got.add(req)
+		if !isFileRequest(req) {
+			send(t, ws, listing(req["id"]))
+			return
+		}
+		patch := "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\n a\n+b\n"
+		send(t, ws, success(req["id"], map[string]any{"sources": []any{
+			map[string]any{"kind": "branch-range", "diff": patch, "truncated": true},
+		}}))
+	})
+	r := NewRenderer(dialFake(t, url), "/srv/wt", SourceBranchRange)
+	_, err := r.ChangedFiles("", false)
+	require.NoError(t, err)
+
+	for _, contextLines := range []int{patchContext, 0, 10} {
+		lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: contextLines})
+		require.NoError(t, err)
+		require.Len(t, lines, 3, "context %d: the patch's lines and the notice, nothing laid over the file", contextLines)
+		assert.Equal(t, "b", lines[1].Content)
+		assertCutShort(t, lines)
+	}
+	assert.Equal(t, 2, got.count(), "a cut patch is not expanded with the file's contents")
+}
+
+func TestRendererSaysAnOlderServersPatchWasCutShort(t *testing.T) {
+	_, url := startFake(t, func(ws *websocket.Conn, req map[string]any) {
+		send(t, ws, success(req["id"], map[string]any{"sources": []any{
+			map[string]any{"kind": "branch-range", "diff": sampleDiff, "truncated": true},
+		}}))
+	})
+	r := NewRenderer(dialFake(t, url), "/srv/wt", SourceBranchRange)
+	files, err := r.ChangedFiles("", false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"f.txt", "g.txt"}, diff.FileEntryPaths(files))
+
+	lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
+	require.NoError(t, err)
+	assert.Len(t, lines, 2, "a file before the cut is whole")
+	for range 2 { // the notice is added to each view, never to the patch itself
+		lines, err = r.FileDiff(diff.FileDiffRequest{Path: "g.txt", ContextLines: patchContext})
+		require.NoError(t, err)
+		require.Len(t, lines, 2, "the last file, where the patch was cut")
+		assertCutShort(t, lines)
+	}
+}

@@ -307,10 +307,12 @@ func (p *Pane) suggestionRowsLocked(w, limit int) []string {
 	if len(sugs) == 0 || limit == 0 {
 		return nil
 	}
+	sugs = slices.Clone(sugs) // a command's Complete may hand out a slice of its own
 	selected := min(p.sug, len(sugs)-1)
 	first := max(0, min(selected-limit+1, len(sugs)-limit))
 	labelW := 0
 	for i := first; i < len(sugs) && i < first+limit; i++ {
+		sugs[i].Label, sugs[i].Description = sanitize(sugs[i].Label), sanitize(sugs[i].Description) // a backend's command names and words
 		labelW = max(labelW, ansi.StringWidth(sugs[i].Label))
 	}
 	labelW = min(labelW, max(8, w/2))

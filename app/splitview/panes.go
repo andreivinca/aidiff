@@ -88,17 +88,23 @@ func (m Model) closeTerminal(i int) (tea.Model, tea.Cmd) {
 	m.weights = slices.Delete(slices.Clone(weights), i, i+1) // the others share its space proportionally
 	m.weights = m.normWeights()
 	m.closing.Go(t.Close) // may wait up to a second for stubborn processes
-	// focusDiff is negative, so the wrapped model keeps focus in every case
-	// but the first
-	switch {
-	case len(m.terms) == 0:
-		m.focus = focusDiff
-	case m.focus == i:
-		m.focus = min(i, len(m.terms)-1)
-	case m.focus > i:
-		m.focus--
-	}
+	// the focus to give back when a sidebar hides names a pane too
+	m.focus, m.sideReturn, m.outerReturn = m.afterClose(m.focus, i), m.afterClose(m.sideReturn, i), m.afterClose(m.outerReturn, i)
 	return m.relayout()
+}
+
+// afterClose is focus value f once pane i is gone, m.terms already without
+// it: a later pane moves down one, the closed one hands over to its right
+// neighbor, or the left one when it was last (focusDiff with none left).
+// The review and the sidebars, all negative, keep theirs.
+func (m Model) afterClose(f, i int) int {
+	switch {
+	case f == i:
+		return min(i, len(m.terms)-1)
+	case f > i:
+		return f - 1
+	}
+	return f
 }
 
 func (m Model) handleTermUpdate(msg termUpdateMsg) (tea.Model, tea.Cmd) {

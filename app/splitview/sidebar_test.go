@@ -268,3 +268,31 @@ func TestSidebar_ClosesWhenFocusLeaves(t *testing.T) {
 	hs.send(OpenPaneMsg{Start: hs.config().Start})
 	assert.False(t, hs.m.sideOpen, "a pane that opens takes focus, and the sidebar closes")
 }
+
+func TestSidebar_NoRoomNoFocus(t *testing.T) {
+	sb, outer := &fakeSidebar{available: true}, &fakeSidebar{available: true}
+	hs := newSplit(func(hs *harness) Config {
+		cfg := hs.config()
+		cfg.Sidebar, cfg.OuterSidebar, cfg.SidebarWidth = sb, outer, 30
+		return cfg
+	})
+	hs.send(tea.WindowSizeMsg{Width: 60, Height: 20})
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlB})
+	require.Equal(t, focusSidebar, hs.m.focus, "60 columns hold the sidebar...")
+	hs.send(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	assert.Equal(t, focusSidebar, hs.m.focus, "...but not the outer one beside it: focus stays")
+	assert.False(t, hs.m.outerOpen)
+	assert.Equal(t, tooNarrow, hs.m.flash)
+	hs.key("j")
+	assert.Equal(t, []string{"j"}, sb.keys, "keys reach the sidebar the user sees")
+	assert.Empty(t, outer.keys)
+
+	hs.send(tea.WindowSizeMsg{Width: 30, Height: 20})
+	assert.Equal(t, focusDiff, hs.m.focus, "a focused sidebar squeezed out gives focus back")
+	assert.False(t, hs.m.sideOpen)
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlB})
+	assert.Equal(t, focusDiff, hs.m.focus, "nor can it be shown")
+	hs.key("k")
+	assert.Equal(t, []string{"j"}, sb.keys)
+	assert.Contains(t, *hs.inner, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}, "the review keeps the keys")
+}

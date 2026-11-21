@@ -22,8 +22,8 @@ func (s sourceSetup) reverter(opts options) ui.Reverter {
 }
 
 // confirmPopup asks in the split's confirmation popup.
-func confirmPopup(title, detail, button string, yes tea.Cmd) tea.Cmd {
+func confirmPopup(title, detail, button string, yes, no tea.Cmd) tea.Cmd {
 	return func() tea.Msg {
-		return splitview.ConfirmMsg{Title: title, Detail: detail, Confirm: button, Yes: yes}
+		return splitview.ConfirmMsg{Title: title, Detail: detail, Confirm: button, Yes: yes, No: no}
 	}
 }

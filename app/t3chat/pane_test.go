@@ -48,12 +48,26 @@ func send(t *testing.T, p *chat.Pane, f *fakeServer, typed string) t3client.Comm
 	t.Helper()
 	p.SendText(typed + "\r")
 	cmd := nextCommand(t, f)
-	select {
-	case <-p.Updates():
-	case <-time.After(waitLimit):
-		t.Fatal("the pane never settled the request")
-	}
+	settle(t, p)
 	return cmd
+}
+
+// settle waits until the pane no longer waits on a request. Any redraw
+// will not do: one left over from an earlier change, such as a command
+// showing the conversation, comes before the request settles, and a send
+// typed then is turned down as busy. The hint row says "sending…" until
+// the request settled, and settling wakes the pane, so this needs no
+// timing.
+func settle(t *testing.T, p *chat.Pane) {
+	t.Helper()
+	deadline := time.After(waitLimit)
+	for strings.Contains(view(p), "sending…") {
+		select {
+		case <-p.Updates():
+		case <-deadline:
+			t.Fatal("the pane never settled the request")
+		}
+	}
 }
 
 func view(p *chat.Pane) string {

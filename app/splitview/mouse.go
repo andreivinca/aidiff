@@ -7,6 +7,9 @@ import tea "github.com/charmbracelet/bubbletea"
 const dragMain = -1
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.switcher.open {
+		return m.switcherMouse(msg)
+	}
 	if m.modal() {
 		return m, nil // modal: swallow
 	}
@@ -18,7 +21,12 @@ func (m Model) routeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	cols := m.leftCols()
 	msg.X -= cols // from here on x is relative to the area right of the sidebars
 	if m.dragging {
-		return m.dragMouse(msg)
+		if msg.Action != tea.MouseActionPress || tea.MouseEvent(msg).IsWheel() {
+			return m.dragMouse(msg)
+		}
+		// a fresh press: the drag's release was lost (it happened outside
+		// the window), so the drag ends and the press goes where it points
+		m.dragging = false
 	}
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
 	rects := m.termRects()

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +37,66 @@ func runStateScript(t *testing.T, state string) (string, int) {
 	}
 	require.NoError(t, err)
 	return string(out), 0
+}
+
+// TestServerRunningRule checks that LocalOrigin here and remoteStateScript on
+// an SSH host agree on whether the server a state file records is running:
+// another user's process (pid 1, unless the test runs as root) counts.
+func TestServerRunningRule(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		pid     int
+		running bool
+	}{
+		{"this process", os.Getpid(), true},
+		{"another user's process", 1, true},
+		{"no process", 999999999, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			state := `{"pid": ` + strconv.Itoa(tt.pid) + `, "port": 3773, "origin": "http://127.0.0.1:3773"}`
+			assert.Equal(t, tt.running, processRunning(tt.pid))
+
+			home := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(home, "userdata"), 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(home, "userdata", "server-runtime.json"), []byte(state), 0o600))
+			t.Setenv("T3CODE_HOME", home)
+			_, err := LocalOrigin()
+			assert.Equal(t, tt.running, err == nil, "locally: %v", err)
+
+			_, code := runStateScript(t, state)
+			assert.Equal(t, tt.running, code == 0, "on an SSH host: exit %d", code)
+		})
+	}
+}
+
+func TestSSHTunnel_StopKillsOnlyALiveTunnelOnce(t *testing.T) {
+	var kills atomic.Int32
+	kill := killGroup
+	killGroup = func(pgid int) error {
+		kills.Add(1)
+		return kill(pgid)
+	}
+	t.Cleanup(func() {
+		killGroup = kill
+	})
+
+	live := newTunnel(t.TempDir())
+	require.NoError(t, live.start([]string{"sleep", "30"}))
+	var wg sync.WaitGroup
+	for range 8 { // Session.Close from several places at once
+		wg.Go(live.stop)
+	}
+	wg.Wait()
+	live.stop()
+	assert.EqualValues(t, 1, kills.Load(), "killed once, however often stopped")
+	_, err := os.Stat(live.dir)
+	assert.ErrorIs(t, err, os.ErrNotExist, "its sockets are removed")
+
+	gone := newTunnel(t.TempDir())
+	require.NoError(t, gone.start([]string{"true"}))
+	<-gone.exited // reaped: its pid is free for another process to take
+	gone.stop()
+	assert.EqualValues(t, 1, kills.Load(), "a tunnel that exited is not killed")
 }
 
 func TestRemoteStateScript(t *testing.T) {
@@ -81,7 +143,7 @@ func TestSSHTunnel_CarriesTheConnectionThroughItsSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, tun.waitListening(ctx, time.Second))
-	c, err := dial(ctx, endpoint{origin: "http://127.0.0.1:3773", client: tun.httpClient()}, "tok")
+	c, err := dial(ctx, endpoint{base: "http://127.0.0.1:3773", client: tun.httpClient()}, "tok")
 	require.NoError(t, err)
 	defer func() {
 		_ = c.close()

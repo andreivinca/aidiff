@@ -27,7 +27,8 @@ type fakeServer struct {
 	fail       error  // what Dispatch returns
 	refuse     string // a command type Dispatch fails, as a server that does not know it
 	catalogErr error
-	catalogs   int // FetchCatalog calls
+	catalogs   int           // FetchCatalog calls
+	catalogNow chan struct{} // when set, FetchCatalog waits for it to close
 	persisted  []persistCall
 }
 
@@ -71,8 +72,14 @@ func (f *fakeServer) AnswerSecret(_ context.Context, threadID, itemID, secret st
 
 func (f *fakeServer) FetchCatalog(context.Context) (t3client.Catalog, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.catalogs++
+	hold := f.catalogNow
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.catalogErr != nil {
 		return t3client.Catalog{}, f.catalogErr
 	}

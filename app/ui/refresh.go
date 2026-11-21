@@ -27,7 +27,9 @@ type refreshState struct {
 // refreshAnchor is the view of the displayed file captured before a refresh.
 type refreshAnchor struct {
 	file       string       // the displayed file; the anchor applies to its reload only
+	fileLevel  bool         // the cursor is on the file-level annotation, above the lines; line is unset
 	line       lineAnchor   // the cursor's line
+	onAnnot    bool         // the cursor is on the annotation below its line
 	screenRow  int          // cursor row within the viewport
 	searchTerm string       // the submitted search, re-run on the reloaded lines
 	scrollX    int          // horizontal scroll offset
@@ -45,13 +47,13 @@ type lineAnchor struct {
 // CanRefresh reports whether a RefreshMsg is applied now. It is not while a
 // load is running (a refresh's included) or a mark-reviewed fingerprint is
 // pending, while a cross-file jump waits for its file, while the user is typing
-// an annotation or a search, or while a popup or prompt is open: a reload then
-// would undo or lose what is in progress. The sender holds the refresh and
+// an annotation or a search, or while a popup or prompt is open, a revert's
+// included: a reload then would undo or lose what is in progress. The sender holds the refresh and
 // retries after the next message.
 func (m Model) CanRefresh() bool {
 	loading := !m.filesLoaded || m.file.requestedPath != "" || len(m.reviewed.pending) > 0
 	jumping := m.pendingAnnotJump != nil || m.nav.pendingHunkJump != nil || m.nav.pendingBoundaryJump != nil
-	busy := m.annot.annotating || m.search.active || m.reload.pending || m.revert.pending || m.inConfirmDiscard ||
+	busy := m.annot.annotating || m.search.active || m.reload.pending || m.revert.pending || m.revert.asking || m.inConfirmDiscard ||
 		m.keys.chordPending != "" || m.overlay.Active()
 	return m.reload.applicable && !loading && !jumping && !busy
 }
@@ -82,15 +84,20 @@ func (m Model) refreshCurrent() bool {
 // captureRefreshAnchor records the displayed file's view, nil when no file
 // is displayed.
 func (m Model) captureRefreshAnchor() *refreshAnchor {
-	if m.file.name == "" || m.nav.diffCursor < 0 || m.nav.diffCursor >= len(m.file.lines) {
+	fileLevel := m.nav.diffCursor == -1
+	if m.file.name == "" || m.nav.diffCursor < -1 || m.nav.diffCursor >= len(m.file.lines) {
 		return nil
 	}
 	a := &refreshAnchor{
 		file:       m.file.name,
-		line:       m.lineAnchorAt(m.nav.diffCursor),
+		fileLevel:  fileLevel,
+		onAnnot:    m.annot.cursorOnAnnotation,
 		screenRow:  m.cursorViewportY() - m.layout.viewport.YOffset,
 		searchTerm: m.search.term,
 		scrollX:    m.layout.scrollX,
+	}
+	if !fileLevel {
+		a.line = m.lineAnchorAt(m.nav.diffCursor)
 	}
 	for _, start := range m.findHunks() {
 		if m.modes.collapsed.expandedHunks[start] {
@@ -98,6 +105,24 @@ func (m Model) captureRefreshAnchor() *refreshAnchor {
 		}
 	}
 	return a
+}
+
+// recaptureRefreshAnchor records the view again just before the displayed
+// file's reload replaces its lines (Update calls it ahead of
+// handleFileLoaded): keys are not blocked while a refresh loads, so the
+// cursor may have moved, or an annotation started on another line, since
+// the refresh began, and restoring the view from then would undo it. Once
+// another file is displayed the anchor no longer applies.
+func (m *Model) recaptureRefreshAnchor(msg fileLoadedMsg) {
+	a := m.refresh.anchor
+	if a == nil || msg.err != nil || msg.seq != m.file.loadSeq || msg.file != a.file {
+		return
+	}
+	if m.file.name != a.file {
+		m.refresh.anchor = nil
+		return
+	}
+	m.refresh.anchor = m.captureRefreshAnchor()
 }
 
 // refreshShownFile reloads the displayed file when a refresh's file list
@@ -139,16 +164,21 @@ func (m *Model) applyRefreshAnchor(msg fileLoadedMsg) bool {
 	return true
 }
 
-// restoreCursor puts the cursor back on its line and keeps it on the same
-// screen row. See findAnchoredLine for how the line is found.
+// restoreCursor puts the cursor back on its line, or on the file-level
+// annotation or a line's annotation when it was on one, and keeps it on the
+// same screen row. See findAnchoredLine for how the line is found.
 func (m *Model) restoreCursor(a *refreshAnchor) {
 	m.annot.cursorOnAnnotation = false
 	idx := m.findAnchoredLine(a)
-	if idx < 0 {
+	switch {
+	case a.fileLevel && m.hasFileAnnotation():
+		m.nav.diffCursor = -1
+	case a.fileLevel || idx < 0:
 		m.skipInitialDividers()
-	} else {
+	default:
 		m.nav.diffCursor = idx
 		m.adjustCursorIfHidden()
+		m.annot.cursorOnAnnotation = a.onAnnot && m.nav.diffCursor == idx && m.lineHasAnnotation(idx)
 	}
 	m.realignSearchCursor()
 	m.syncTOCActiveSection()
@@ -217,6 +247,12 @@ func (m *Model) restoreSearch(term string) {
 			m.search.matches = append(m.search.matches, i)
 		}
 	}
+}
+
+// lineHasAnnotation reports whether the diff line at idx carries an annotation.
+func (m Model) lineHasAnnotation(idx int) bool {
+	dl := m.file.lines[idx]
+	return m.store.Has(m.file.name, m.diffLineNum(dl), string(dl.ChangeType))
 }
 
 // lineAnchorAt describes the diff line at idx.

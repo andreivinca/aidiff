@@ -66,6 +66,7 @@ type Pane struct {
 	activity       activityView
 	stop           stopConfirmation
 	secret         secretInput // what is typed of a secret the agent asks for (secret.go)
+	secretGone     bool        // a secret request ended while the composer took it: keys are swallowed until enter or esc (secret.go)
 	input          editor
 	inputTop       int               // the draft's first row shown in the input box; it moves only to keep the cursor in view
 	sug            int               // the selected row of the slash-command popup, kept within it where shown
@@ -74,14 +75,16 @@ type Pane struct {
 	answersFor     string
 	questionTab    int
 	questionDrafts map[int]string
-	questionChoice int
+	questionChoice int            // the picker's highlighted row
+	choiceFor      string         // the prompt questionChoice is a row of; another resets it
 	showWork       bool           // /work: the agent's steps shown one per line instead of a summary
 	images         []pendingImage // images pasted into the input, each shown there as its token
 	imageSeq       int
-	reading        int    // clipboard and file reads in flight
-	busy           bool   // a request the composer waits on is in flight
-	note           string // the last failure or hint, shown until the next key
-	scroll         int    // lines scrolled up from the end of the transcript; 0 follows it
+	reading        int       // clipboard and file reads in flight
+	busy           bool      // a request the composer waits on is in flight
+	note           string    // the last failure or hint, shown until the next key
+	scroll         int       // lines scrolled up from the end of the transcript; 0 follows it
+	seen           seenLines // the transcript's size at the last frame, which a scroll up stays anchored against
 	width          int
 	height         int
 	gen            uint64 // bumps on every visible change
@@ -100,7 +103,8 @@ type frame struct {
 	valid  bool
 	gen    uint64
 	cursor bool
-	rows   []string // the pane's rows before the selection is drawn on them
+	rows   []string  // the pane's rows before the selection is drawn on them
+	meta   []rowMeta // how a copy reads each row
 	layout layout
 	out    string
 }
@@ -169,7 +173,7 @@ func (p *Pane) attachLocked(b Backend, title string) {
 	}
 	p.subID++
 	p.box.follow(p.subID)
-	p.backend, p.title = b, strings.TrimSpace(title)
+	p.backend, p.title = b, sanitize(strings.TrimSpace(title)) // the host names the thread as the server does
 	p.clearConversationLocked()
 	if b == nil || p.closed {
 		p.link = linkOffline
@@ -189,7 +193,10 @@ func (p *Pane) clearConversationLocked() {
 	p.pending = nil
 	p.activity, p.stop = activityView{}, stopConfirmation{}
 	p.answers, p.answersFor = nil, ""
-	p.scroll, p.note, p.busy, p.reading = 0, "", false, 0
+	p.questionChoice, p.choiceFor = 0, ""
+	p.secret = secretInput{runes: p.secret.runes[:0]}
+	p.secretGone = false
+	p.scroll, p.seen, p.note, p.busy, p.reading = 0, seenLines{}, "", false, 0
 	p.gen++
 }
 
@@ -217,10 +224,20 @@ func (p *Pane) showLocked(c Conversation) {
 	if p.link == linkConnecting {
 		p.link = ""
 	}
-	p.conv = c
-	p.activities = groupActivity(c.Activity)
+	asked := p.secretAskedLocked()
+	p.conv = sanitized(c)
+	p.activities = groupActivity(p.conv.Activity)
 	p.counts = countActivity(p.activities)
 	p.prunePendingLocked()
+	if asked != nil && !p.stillAskedLocked(asked) {
+		p.secretEndedLocked(asked)
+	}
+	if prompt := p.pendingQuestionsLocked(); prompt == nil || prompt.ID != p.choiceFor {
+		p.questionChoice, p.choiceFor = 0, "" // a new prompt's picker starts on its first option
+		if prompt != nil {
+			p.choiceFor = prompt.ID
+		}
+	}
 	p.gen++
 }
 
@@ -289,9 +306,12 @@ func (p *Pane) Render(showCursor bool) string {
 	if f := p.frame; f.valid && f.gen == p.gen && f.cursor == showCursor {
 		return f.out
 	}
-	rows, l := p.renderLocked(showCursor)
+	rows, meta, l := p.renderLocked(showCursor)
+	if s := p.selection; s.rows != nil && !s.dragging {
+		p.selection, _ = s.follow(rows, meta, l.headerH, l.textBottom) // released: it moves with its text, or goes with it
+	}
 	out := p.selection.draw(rows, p.width)
-	p.frame = frame{valid: true, gen: p.gen, cursor: showCursor, rows: rows, layout: l, out: out}
+	p.frame = frame{valid: true, gen: p.gen, cursor: showCursor, rows: rows, meta: meta, layout: l, out: out}
 	return out
 }
 

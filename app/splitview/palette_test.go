@@ -245,8 +245,9 @@ func TestSplit_RunCommandMsg(t *testing.T) {
 	hs := newCommandHarness(t, func() []Command {
 		return []Command{{Name: "T3: Diff View…", Run: func(tea.Model) tea.Cmd { return ran("diff") }}}
 	})
-	msg := tagMsg(1, RunCommandMsg{Suffix: "Diff View…"})
-	assert.Equal(t, RunCommandMsg{Suffix: "Diff View…"}, msg, "a model's command reaches the split, not the model")
+	msg := tagMsg(hs.m.wsID, RunCommandMsg{Suffix: "Diff View…"})
+	assert.Equal(t, scopedMsg{ws: hs.m.wsID, msg: RunCommandMsg{Suffix: "Diff View…"}}, msg,
+		"a model's command reaches the split, not the model, and acts on that model only")
 
 	cmd := hs.send(msg)
 	require.NotNil(t, cmd)

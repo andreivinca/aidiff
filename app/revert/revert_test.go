@@ -184,3 +184,159 @@ func TestRevertChange_CompactDiff(t *testing.T) {
 	require.NoError(t, Git{Root: dir}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[1][0], b[1][1]))
 	assert.Equal(t, "zero\none\ntwo\nthree\nfour\nfive\n", read(t, dir, "a.txt"))
 }
+
+// diffAgainst is the review's lines of name against ref, as the UI holds them.
+func diffAgainst(t *testing.T, dir, ref, name string) []diff.DiffLine {
+	t.Helper()
+	lines, err := diff.NewGit(dir).FileDiff(diff.FileDiffRequest{Ref: ref, Path: name})
+	require.NoError(t, err)
+	return lines
+}
+
+func TestRevertChange_AgainstHEADUnstagesTheBlock(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "a.txt", "ONE\ntwo\nthree\nfour\nFIVE\n")
+	run(t, dir, "add", "a.txt")
+	lines := diffAgainst(t, dir, "HEAD", "a.txt")
+	b := blocks(lines)
+	require.Len(t, b, 2)
+
+	g := Git{Root: dir, Ref: "HEAD"}
+	entry := diff.FileEntry{Path: "a.txt", Status: diff.FileModified}
+	require.NoError(t, g.RevertChange(entry, lines, b[0][0], b[0][1]))
+	assert.Equal(t, "one\ntwo\nthree\nfour\nFIVE\n", read(t, dir, "a.txt"))
+	assert.Equal(t, "M  a.txt\n", run(t, dir, "status", "--porcelain"), "staged and on disk alike: no MM")
+	assert.Equal(t, "one\ntwo\nthree\nfour\nFIVE\n", run(t, dir, "show", ":a.txt"), "the other block stays staged")
+
+	lines = diffAgainst(t, dir, "HEAD", "a.txt")
+	b = blocks(lines)
+	require.Len(t, b, 1)
+	require.NoError(t, g.RevertChange(entry, lines, b[0][0], b[0][1]))
+	assert.Empty(t, run(t, dir, "status", "--porcelain"), "nothing left to commit")
+}
+
+func TestRevertChange_AgainstHEADUnstagedBlockLeavesTheIndex(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n")
+	run(t, dir, "add", "a.txt")
+	write(t, dir, "a.txt", "ONE\ntwo\nthree\nfour\nFIVE\n") // the second block is not staged
+	lines := diffAgainst(t, dir, "HEAD", "a.txt")
+	b := blocks(lines)
+	require.Len(t, b, 2)
+	require.NoError(t, Git{Root: dir, Ref: "HEAD"}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[1][0], b[1][1]))
+	assert.Equal(t, "ONE\ntwo\nthree\nfour\nfive\n", read(t, dir, "a.txt"))
+	assert.Equal(t, "M  a.txt\n", run(t, dir, "status", "--porcelain"), "the staged block stays staged")
+}
+
+func TestRevertChange_AgainstHEADStagedOtherVersionChangesNothing(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "a.txt", "uno\ntwo\nthree\nfour\nfive\n")
+	run(t, dir, "add", "a.txt")
+	write(t, dir, "a.txt", "ONE\ntwo\nthree\nfour\nfive\n") // the index holds a third version of the block
+	lines := diffAgainst(t, dir, "HEAD", "a.txt")
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	err := Git{Root: dir, Ref: "HEAD"}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1])
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be unstaged")
+	assert.Equal(t, "ONE\ntwo\nthree\nfour\nfive\n", read(t, dir, "a.txt"), "the file is left as it was")
+	assert.Equal(t, "uno\ntwo\nthree\nfour\nfive\n", run(t, dir, "show", ":a.txt"), "and so is the index")
+}
+
+func TestRevertChange_AgainstHEADUnstagesOddNamesAndLastLines(t *testing.T) {
+	dir := repo(t)
+	name := "we\"ird\\na\tme.txt"
+	write(t, dir, name, "a\r\nb\r\nc")
+	run(t, dir, "add", ".")
+	run(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "odd")
+	write(t, dir, name, "a\r\nb\r\nC\r\nd\r\n")
+	run(t, dir, "add", ".")
+	lines := diffAgainst(t, dir, "HEAD", name)
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	require.NoError(t, Git{Root: dir, Ref: "HEAD"}.RevertChange(diff.FileEntry{Path: name, Status: diff.FileModified}, lines, b[0][0], b[0][1]))
+	assert.Equal(t, "a\r\nb\r\nc", read(t, dir, name))
+	assert.Empty(t, run(t, dir, "status", "--porcelain"))
+}
+
+func TestRevertChange_MixedLineEndingsKept(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "m.txt", "a\r\nb\nc\nd\n")
+	run(t, dir, "add", "m.txt")
+	write(t, dir, "m.txt", "a\r\nb\nC\nd\n")
+	lines := diffOf(t, dir, "m.txt")
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	require.NoError(t, Git{Root: dir}.RevertChange(diff.FileEntry{Path: "m.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1]))
+	assert.Equal(t, "a\r\nb\nc\nd\n", read(t, dir, "m.txt"), "each line keeps its own ending")
+}
+
+func TestRevertChange_RemovalOnlyBlockInAChangedFileIsRefused(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "a.txt", "one\ntwo\nfour\nfive\n") // "three" removed
+	lines := diffOf(t, dir, "a.txt")
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	write(t, dir, "a.txt", "new\nlines\none\ntwo\nfour\nfive\n") // an agent inserted lines above it since
+	err := Git{Root: dir}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1])
+	require.ErrorIs(t, err, ErrStale)
+	assert.Equal(t, "new\nlines\none\ntwo\nfour\nfive\n", read(t, dir, "a.txt"), "left as it is")
+
+	write(t, dir, "a.txt", "one\ntwo\nfour\nfive\n")
+	require.NoError(t, Git{Root: dir}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1]))
+	assert.Equal(t, "one\ntwo\nthree\nfour\nfive\n", read(t, dir, "a.txt"))
+}
+
+func TestRevertChange_EmptiedFileThatChangedIsRefused(t *testing.T) {
+	dir := repo(t)
+	write(t, dir, "a.txt", "")
+	lines := diffOf(t, dir, "a.txt")
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	write(t, dir, "a.txt", "written since\n")
+	err := Git{Root: dir}.RevertChange(diff.FileEntry{Path: "a.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1])
+	require.ErrorIs(t, err, ErrStale)
+}
+
+func TestRevertChange_FinalNewlineFollowsTheBase(t *testing.T) {
+	for _, tc := range []struct{ name, base, now string }{
+		{"missing in the base", "a\nb", "a\nb\nc\n"},
+		{"missing on disk", "a\nb\n", "a\nB"},
+		{"removed last line without one", "a\nb", "a\n"},
+		{"whole file", "a", "x\ny\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := repo(t)
+			write(t, dir, "e.txt", tc.base)
+			run(t, dir, "add", "e.txt")
+			write(t, dir, "e.txt", tc.now)
+			lines := diffOf(t, dir, "e.txt")
+			b := blocks(lines)
+			require.Len(t, b, 1)
+			require.NoError(t, Git{Root: dir}.RevertChange(diff.FileEntry{Path: "e.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1]))
+			assert.Equal(t, tc.base, read(t, dir, "e.txt"))
+		})
+	}
+}
+
+func TestSplitLines_RoundTrips(t *testing.T) {
+	for _, text := range []string{"", "a", "a\n", "a\r\nb\nc", "\n\n", "a\r\n\r\n"} {
+		assert.Equal(t, text, splitLines(text).String(), "%q", text)
+	}
+}
+
+func TestRevertChange_AgainstHEADUnstagesWithAutoCRLF(t *testing.T) {
+	dir := repo(t)
+	run(t, dir, "config", "core.autocrlf", "true")
+	write(t, dir, "w.txt", "a\r\nb\r\nc\r\n")
+	run(t, dir, "add", "w.txt")
+	run(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "crlf")
+	write(t, dir, "w.txt", "a\r\nB\r\nc\r\n")
+	run(t, dir, "add", "w.txt") // the index holds "a\nB\nc\n"
+	lines := diffAgainst(t, dir, "HEAD", "w.txt")
+	b := blocks(lines)
+	require.Len(t, b, 1)
+	require.NoError(t, Git{Root: dir, Ref: "HEAD"}.RevertChange(diff.FileEntry{Path: "w.txt", Status: diff.FileModified}, lines, b[0][0], b[0][1]))
+	assert.Equal(t, "a\r\nb\r\nc\r\n", read(t, dir, "w.txt"))
+	assert.Empty(t, run(t, dir, "status", "--porcelain"))
+}

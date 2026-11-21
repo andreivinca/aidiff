@@ -56,6 +56,18 @@ type Config struct {
 	// unnamed, so it closes once another one is switched to (see
 	// SwitchWorkspaceMsg).
 	Workspace string
+	// Sessions, when set, tells the session switcher (Keys.Switch) what each
+	// workspace is and puts it on screen the way the embedding program's
+	// own switches do. Without it the rows show the workspace keys and the
+	// switcher switches by itself.
+	Sessions Sessions
+	// Output, when set, writes an escape sequence to the terminal the
+	// program draws on, whole, in one write, while the program runs: the
+	// switcher asks the terminal to report key releases through it
+	// (keyreports.go). The program's renderer writes there too, so each
+	// sequence must reach the terminal in one piece. Without it the
+	// switcher never learns that a modifier was let go.
+	Output func(seq string)
 }
 
 // Keys are the keys the split handles before anything reaches the wrapped
@@ -70,6 +82,16 @@ type Keys struct {
 	// and alt+b by default, for terminals that keep ctrl+p or ctrl+b
 	PaletteAlt string
 	SidebarAlt string
+	// Switch opens the session switcher and, while it is open, selects the
+	// next session; SwitchBack opens it on the last one and selects the one
+	// before. ctrl+tab and ctrl+shift+tab by default, in ultraviolet's key
+	// notation: they arrive only from a terminal that reports modified keys
+	// (ReportModifiedKeys) and leaves the chord to the program.
+	Switch     string
+	SwitchBack string
+	// SwitchAlt does what Switch does in every terminal, its shifted form
+	// what SwitchBack does while the switcher is open; alt+s by default.
+	SwitchAlt string
 }
 
 // QuitText is what the quit dialog says.
@@ -122,6 +144,15 @@ func (k Keys) withDefaults() Keys {
 	}
 	if k.SidebarAlt == "" {
 		k.SidebarAlt = "alt+b"
+	}
+	if k.Switch == "" {
+		k.Switch = "ctrl+tab"
+	}
+	if k.SwitchBack == "" {
+		k.SwitchBack = "ctrl+shift+tab"
+	}
+	if k.SwitchAlt == "" {
+		k.SwitchAlt = "alt+s"
 	}
 	return k
 }

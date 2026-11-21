@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/splitview"
 )
 
@@ -27,11 +26,14 @@ func (v *viewSwitch) set(to func(inner tea.Model, files bool) tea.Cmd) {
 	v.to = to
 }
 
-// forSource is the toolbar's switch for a review of src, nil for a source
-// that has no changes to go back to or no folder to browse: stdin, a
-// compare pair, a plain folder outside git.
-func (v *viewSwitch) forSource(src sourceSetup) func(files bool) tea.Cmd {
-	if v == nil || (src.t3 == nil && src.vcsType != diff.VCSGit) {
+// forSource is the toolbar's switch for a review of src run with opts, nil
+// for a source that has no changes to go back to or no folder to browse:
+// stdin, a compare pair, a plain folder outside git, every file of a
+// repository (--all-files). A local review switches through its Diff View…,
+// so it has the switch exactly when it has one (hasLocalDiff); the file tree
+// Diff View… builds is one too, with a folder to go back from.
+func (v *viewSwitch) forSource(opts options, src sourceSetup) func(files bool) tea.Cmd {
+	if v == nil || (src.t3 == nil && !hasLocalDiff(opts, src)) {
 		return nil
 	}
 	return func(files bool) tea.Cmd {

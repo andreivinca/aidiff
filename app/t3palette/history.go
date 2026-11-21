@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -61,6 +62,7 @@ var historyHelp = []string{
 	" a            add project",
 	" ctrl/alt+b   show / hide",
 	" ctrl/alt+1…9 switch folder",
+	" alt+s        switch session",
 	" alt+← alt+→  move focus",
 }
 
@@ -81,17 +83,17 @@ func (t *Palette) LocalDir() string {
 	return t.local.Dir
 }
 
-// initLocalLocked loads the history, the folders gone from disk left out,
-// and puts the run's folder, when it reviews one, on top. mu must be held
-// or the palette not shared yet.
+// initLocalLocked loads the history and puts the run's folder, when it
+// reviews one, on top; the folders gone from disk are left out in the
+// background (pruneHistoryLocked). mu must be held or the palette not
+// shared yet.
 func (t *Palette) initLocalLocked() {
 	lc := t.cfg.Local
 	if lc.History != nil {
 		for _, d := range lc.History() {
-			if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-				t.history = appendDir(t.history, d)
-			}
+			t.history = appendDir(t.history, d)
 		}
+		t.pruneHistoryLocked(t.history)
 	}
 	if lc.Start == nil || t.onScreen != nil {
 		return
@@ -101,8 +103,51 @@ func (t *Palette) initLocalLocked() {
 	t.ws = localKey(start.Dir)
 	t.history = append([]string{start.Dir}, removeDir(t.history, start.Dir)...)
 	if lc.Remember != nil {
-		go lc.Remember(start.Dir)
+		t.queueLocked(func() {
+			lc.Remember(start.Dir)
+		})
 	}
+}
+
+// isFolder reports whether dir is a folder on disk; a variable for the
+// tests.
+var isFolder = func(dir string) bool {
+	fi, err := os.Stat(dir)
+	return err == nil && fi.IsDir()
+}
+
+// pruneHistoryLocked leaves the folders of dirs gone from disk out of the
+// history, in the background: a stat of a stale network mount can hang, and
+// it must not hold up the start, nor Close past loopsWait. The folder on
+// screen and the parked ones stay. mu must be held, or the palette not
+// shared yet.
+func (t *Palette) pruneHistoryLocked(dirs []string) {
+	dirs = slices.Clone(dirs)
+	t.loops.Go(func() {
+		gone := map[string]bool{}
+		for _, d := range dirs {
+			if t.ctx.Err() != nil {
+				return
+			}
+			if !isFolder(d) {
+				gone[d] = true
+			}
+		}
+		if len(gone) == 0 {
+			return
+		}
+		t.mu.Lock()
+		keep := t.localDirLocked()
+		// a new slice: the sidebar reads the old one without the lock
+		t.history = slices.DeleteFunc(slices.Clone(t.history), func(d string) bool {
+			return gone[d] && d != keep && t.parkedLocal[localKey(d)] == nil
+		})
+		p := t.program
+		t.mu.Unlock()
+		if p != nil {
+			p.Send(shellRefreshedMsg{}) // redraws the panel
+		}
+	})
 }
 
 // appendDir appends dir to dirs unless it is there already.
@@ -149,11 +194,12 @@ func (t *Palette) openLocal(dir string) tea.Cmd {
 	t.mu.Lock()
 	onScreen := t.ws == key
 	ws, parked := t.parkedLocal[key]
-	remember := t.cfg.Local.Remember
-	t.mu.Unlock()
-	if remember != nil && !onScreen {
-		go remember(dir)
+	if remember := t.cfg.Local.Remember; remember != nil && !onScreen {
+		t.queueLocked(func() {
+			remember(dir)
+		})
 	}
+	t.mu.Unlock()
 	switch {
 	case onScreen:
 		return nil
@@ -222,7 +268,7 @@ func (t *Palette) leaveLocked(sw splitview.WorkspaceSwitch) []note {
 	if prev != nil {
 		t.stores[reviewKey(prev)] = storeOf(sw.Left) // kept for coming back to it
 	}
-	notes := noteOf(prev, t.localDirLocked(), sw.Left, nil) // a safety net, parked or not
+	notes := t.unfiledLocked(sw.Left, noteOf(prev, t.localDirLocked(), sw.Left, nil)) // a safety net, parked or not
 	switch {
 	case sw.LeftKept && prev != nil:
 		t.parked[t.ws] = prev
@@ -231,6 +277,22 @@ func (t *Palette) leaveLocked(sw splitview.WorkspaceSwitch) []note {
 	default:
 		t.dropChatsLocked(t.ws) // the split closed them with their workspace
 	}
+	return notes
+}
+
+// unfiledLocked is notes, what model leaves to history, unless its store
+// filed the same annotations when it last left the screen: going back and
+// forth, as the session switcher does in passing, files them once, not on
+// every pass. mu must be held.
+func (t *Palette) unfiledLocked(model tea.Model, notes []note) []note {
+	m, ok := model.(annotated)
+	if !ok || len(notes) == 0 {
+		return notes
+	}
+	if t.filed[m.Store()] == notes[0].annotations {
+		return nil
+	}
+	t.filed[m.Store()] = notes[0].annotations
 	return notes
 }
 

@@ -168,3 +168,20 @@ func TestBackend_Unqueue(t *testing.T) {
 	assert.Equal(t, chat.AgentState("interrupted"), s.v.latest().State, "the last run that ran tells it")
 	require.EqualError(t, s.b.Unqueue(context.Background(), "m3"), "it is no longer queued")
 }
+
+func TestBackend_FailedSendKeepsTheFreshContext(t *testing.T) {
+	f := newFakeServer(fixture())
+	s := subscribe(t, f)
+	_, err := s.run(t, "/clear", "")
+	require.NoError(t, err)
+	f.set(errors.New("offline"), nil)
+	require.Error(t, s.b.Send(context.Background(), chat.Outgoing{ID: "a", Text: "start over"}))
+	assert.Equal(t, true, nextCommand(t, f)["freshContext"])
+	assert.Contains(t, s.v.latest().Settings.Details, "fresh context", "a message that failed does not use it up")
+	f.set(nil, nil)
+	require.NoError(t, s.b.Send(context.Background(), chat.Outgoing{ID: "a", Text: "start over"}))
+	assert.Equal(t, true, nextCommand(t, f)["freshContext"], "the retry starts the fresh session")
+	assert.NotContains(t, s.v.latest().Settings.Details, "fresh context", "used up once the message went out")
+	require.NoError(t, s.b.Send(context.Background(), chat.Outgoing{ID: "b", Text: "next"}))
+	assert.Nil(t, nextCommand(t, f)["freshContext"])
+}

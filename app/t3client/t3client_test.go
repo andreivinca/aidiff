@@ -38,8 +38,22 @@ func (f *fakeServer) socket() *websocket.Conn {
 	return f.ws
 }
 
+// rotate makes token the only one the server accepts, as when the one it
+// accepted expires.
+func (f *fakeServer) rotate(token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.token = token
+}
+
+func (f *fakeServer) accepts() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.token
+}
+
 func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+f.token {
+	if r.Header.Get("Authorization") != "Bearer "+f.accepts() {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -357,7 +371,11 @@ func TestFirstTokenSkipsLauncherNoise(t *testing.T) {
 	assert.Equal(t, "eyJ2Ijox.sig_-x", tok, "the first non-empty line, the noise after it ignored")
 
 	_, err = firstToken([]byte("[1115:ERROR] boom\n"))
-	require.ErrorContains(t, err, "where a token belongs")
+	require.ErrorContains(t, err, "unexpected output (17 bytes) where a token belongs")
+	assert.NotContains(t, err.Error(), "boom", "the output is never quoted")
+	_, err = firstToken([]byte("eyJ2Ijox.c2VjcmV0 \x1b[0m\n"))
+	require.Error(t, err, "a token with a stray character is no token")
+	assert.NotContains(t, err.Error(), "eyJ2Ijox", "and is never quoted: it is still a secret")
 	_, err = firstToken([]byte("Usage: t3 auth session issue\neyJ2Ijox.sig\n"))
 	require.Error(t, err, "a token is never searched for past a line that is not one")
 	_, err = firstToken([]byte("\n\n"))
@@ -370,11 +388,11 @@ func TestTokenStoreRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tok)
 
-	require.NoError(t, s.Put("HTTP://H:1/some/path", "a"))
+	require.NoError(t, s.Put("HTTP://H:1/", "a"))
 	require.NoError(t, s.Put("ssh://boxdev", "b"))
 	tok, err = s.Get("http://h:1")
 	require.NoError(t, err)
-	assert.Equal(t, "a", tok, "keys are normalized to the origin")
+	assert.Equal(t, "a", tok, "keys are spelled one way")
 
 	info, err := os.Stat(s.Path)
 	require.NoError(t, err)
@@ -447,12 +465,11 @@ func TestRendererListsEveryFileAndFetchesPatchesOnDemand(t *testing.T) {
 	assert.Equal(t, diff.FileAdded, files[1].Status)
 	assert.Equal(t, diff.FileRenamed, files[2].Status)
 	assert.Equal(t, "frontend/src/old.tsx", files[2].OldPath)
-	assert.False(t, r.cutShort(), "a listing is never cut short")
 	assert.Equal(t, 1, got.count())
 
 	lines, err := r.FileDiff(diff.FileDiffRequest{Path: "f.txt", ContextLines: patchContext})
 	require.NoError(t, err)
-	require.Len(t, lines, 2)
+	require.Len(t, lines, 2, "a listing marked truncated cuts no file's patch short")
 	assert.Equal(t, "b", lines[1].Content)
 	p := payloadOf(t, got.last())
 	file, _ := p["file"].(map[string]any)

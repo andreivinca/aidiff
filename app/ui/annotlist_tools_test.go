@@ -56,7 +56,7 @@ func TestAnnotListTools_DeleteAllAsksFirst(t *testing.T) {
 	m := toolsModel(t)
 	var title, button string
 	var yes tea.Cmd
-	m.revert.confirm = func(ti, _, b string, y tea.Cmd) tea.Cmd {
+	m.revert.confirm = func(ti, _, b string, y, _ tea.Cmd) tea.Cmd {
 		title, button, yes = ti, b, y
 		return func() tea.Msg { return "asking" }
 	}

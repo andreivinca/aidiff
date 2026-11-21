@@ -42,11 +42,13 @@ func (s sourceSetup) historyDir(opts options) string {
 }
 
 // folderOptions are the run's options for a folder opened from the history:
-// what the run was asked to compare, and the files it was narrowed to, are
-// the run's own folder's, so they are left out.
+// what the run was asked to compare (refs, --staged), and the files it was
+// narrowed to (--only, --include, --exclude), are the run's own folder's, so
+// they are left out.
 func folderOptions(opts options) options {
-	opts.Refs.Base, opts.Refs.Against = "", ""
+	opts.Refs.Base, opts.Refs.Against, opts.Staged = "", "", false
 	opts.Only, opts.AllFiles = nil, false
+	opts.Include, opts.Exclude = nil, nil
 	opts.Stdin, opts.StdinName = false, ""
 	opts.CompareOld, opts.CompareNew, opts.compareAbsOld, opts.compareAbsNew = "", "", "", ""
 	opts.T3, opts.T3Thread = "", ""
@@ -88,8 +90,11 @@ func (d *localDiffs) put(dir string, l *localDiff) {
 	d.byDir[dir] = l
 }
 
-// get is the Diff View… of dir, nil when it has none.
+// get is the Diff View… of dir, nil when it has none or d is nil.
 func (d *localDiffs) get(dir string) *localDiff {
+	if d == nil {
+		return nil
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.byDir[dir]
@@ -135,9 +140,9 @@ func newLocalConfig(deps reviewDeps, src sourceSetup, diffs *localDiffs, start *
 	}
 	startDir := src.historyDir(deps.opts)
 	cfg.SaveHistory = func(dir, annotations string, files []string) {
-		h, err := folderHistory(fdeps.opts, dir)
+		h, err := folderHistory(diffs.get(dir).compared(fdeps.opts), dir)
 		if dir == startDir {
-			h, err = src.history(deps.opts, nil), nil // compared as the run was asked to
+			h, err = src.history(diffs.get(dir).compared(deps.opts), nil), nil // the run's own source
 		}
 		if err != nil {
 			log.Printf("[WARN] history: %v", err)
@@ -176,15 +181,17 @@ func folderHistory(opts options, dir string) (histReq, error) {
 
 // exitHistory is how the annotations of the review on screen at exit are
 // filed: a T3 review's by its server, a folder opened from the history by
-// that folder, else as the run's own source.
-func (s sourceSetup) exitHistory(opts options, t3p *t3palette.Palette) histReq {
+// that folder, else as the run's own source; a local one compared as its
+// Diff View… in diffs last left it.
+func (s sourceSetup) exitHistory(opts options, t3p *t3palette.Palette, diffs *localDiffs) histReq {
 	if r := t3p.OnScreen(); r != nil {
 		return s.history(opts, r)
 	}
-	if dir := t3p.LocalDir(); dir != "" && dir != s.historyDir(opts) {
-		if h, err := folderHistory(folderOptions(opts), dir); err == nil {
+	startDir := s.historyDir(opts)
+	if dir := t3p.LocalDir(); dir != "" && dir != startDir {
+		if h, err := folderHistory(diffs.get(dir).compared(folderOptions(opts)), dir); err == nil {
 			return h
 		}
 	}
-	return s.history(opts, nil)
+	return s.history(diffs.get(startDir).compared(opts), nil)
 }

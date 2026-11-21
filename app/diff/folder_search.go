@@ -28,6 +28,7 @@ var errIndexFull = errors.New("folder index full")
 type folderIndex struct {
 	mu      sync.Mutex
 	files   []string
+	loaded  bool // files was listed at at; an empty folder lists nil
 	partial bool // the walk stopped at folderIndexMax
 	at      time.Time
 }
@@ -55,7 +56,7 @@ func (r *FolderReader) indexedFiles(ctx context.Context) ([]string, bool, error)
 	idx := &r.index
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	if idx.files != nil && time.Since(idx.at) < folderIndexTTL {
+	if idx.loaded && time.Since(idx.at) < folderIndexTTL {
 		return idx.files, idx.partial, nil
 	}
 	files, partial, err := r.listGitFiles(ctx)
@@ -71,22 +72,27 @@ func (r *FolderReader) indexedFiles(ctx context.Context) ([]string, bool, error)
 			kept = append(kept, f)
 		}
 	}
-	idx.files, idx.partial, idx.at = kept, partial, time.Now()
+	idx.files, idx.loaded, idx.partial, idx.at = kept, true, partial, time.Now()
 	return kept, partial, nil
 }
 
 // listGitFiles lists the files git knows of under the root, tracked or
-// untracked, ignored ones left out; an error outside a git work tree.
+// untracked, ignored ones left out; an error outside a git work tree. A
+// file with a merge conflict is listed once per stage, so names are
+// deduplicated here: ls-files --deduplicate needs git 2.31, and an older
+// git failing on it would fall back to walkFiles, which ignores .gitignore.
 func (r *FolderReader) listGitFiles(ctx context.Context) ([]string, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate")
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	cmd.Dir = r.root
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, false, fmt.Errorf("git ls-files: %w", err)
 	}
 	var files []string
+	seen := make(map[string]bool)
 	for name := range bytes.SplitSeq(out, []byte{0}) {
-		if len(name) > 0 {
+		if len(name) > 0 && !seen[string(name)] {
+			seen[string(name)] = true
 			files = append(files, string(name))
 		}
 	}

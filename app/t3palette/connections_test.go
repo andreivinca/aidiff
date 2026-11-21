@@ -103,3 +103,14 @@ func TestConnections_LocalT3CodeIsAServerOfItsOwn(t *testing.T) {
 	assert.True(t, rows[1].live)
 	assert.Contains(t, ansi.Strip(h.p.Sidebar().View(30, 14, false)), "Sabra2", "its projects show")
 }
+
+func TestConnections_KeyAfterTheListShrank(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	sb, ok := h.p.Connections().(*connectionsSidebar)
+	require.True(t, ok)
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'x'}}, {Type: tea.KeyEnter}, {Type: tea.KeyDown}} {
+		sb.sel = 7 // a row of a longer list, drawn before a connection went away
+		assert.NotPanics(t, func() { sb.HandleKey(key) }, key.String())
+		assert.Equal(t, len(h.p.connRows())-1, sb.sel, "the selection is back on the list")
+	}
+}

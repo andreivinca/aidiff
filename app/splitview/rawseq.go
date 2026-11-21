@@ -30,12 +30,17 @@ func rawSequence(msg tea.Msg) ([]byte, bool) {
 	return reflect.ValueOf(msg).Bytes(), true
 }
 
-// forwardRaw hands an unnamed escape sequence to the focused pane, or to the
-// wrapped model when it has focus or a popup is open.
+// forwardRaw hands an unnamed escape sequence to whatever has focus: the
+// focused pane, or the wrapped model. A popup or a sidebar has no use for
+// one, and it must not reach the review the user is not typing into, so it
+// is dropped then.
 func (m Model) forwardRaw(seq []byte, msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.focus < 0 || m.modal() {
-		return m.updateInner(msg)
+	switch {
+	case m.modal(), m.focus == focusSidebar, m.focus == focusOuter:
+		return m, nil
+	case m.focus >= 0:
+		m.terms[m.focus].SendText(string(seq))
+		return m, nil
 	}
-	m.terms[m.focus].SendText(string(seq))
-	return m, nil
+	return m.updateInner(msg)
 }

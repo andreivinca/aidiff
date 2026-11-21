@@ -607,7 +607,7 @@ func TestSplit_QuitDialogKeys(t *testing.T) {
 
 	hs.send(tea.KeyMsg{Type: tea.KeyCtrlQ})
 	hs.send(tea.KeyMsg{Type: tea.KeyLeft})
-	assert.Equal(t, quitButton, hs.m.quitSel)
+	assert.Equal(t, confirmButton, hs.m.quitSel)
 	cmd := hs.send(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, hs.run(cmd), "enter on Quit quits")
@@ -921,4 +921,35 @@ func TestSplit_EscapeAndCtrlBracketsDoNotNavigate(t *testing.T) {
 	assert.Equal(t, focusDiff, hs.m.focus)
 	assert.Len(t, *hs.inner, before+1)
 	assert.Equal(t, tea.KeyMsg{Type: tea.KeyEsc}, (*hs.inner)[before])
+}
+
+func TestSplit_PopupEndsADrag(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	leftW := hs.m.leftW
+	hs.send(tea.MouseMsg{X: leftW - 1, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	require.True(t, hs.m.dragging)
+	hs.send(tea.KeyMsg{Type: tea.KeyCtrlP}) // the palette opens mid-drag and takes the release
+	assert.False(t, hs.m.dragging, "a popup ends the drag")
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+
+	before := len(hs.term(0).mice)
+	hs.send(tea.MouseMsg{X: 80, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	hs.send(tea.MouseMsg{X: 40, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	assert.Equal(t, leftW, hs.m.leftW, "the next click does not move the divider")
+	assert.Greater(t, len(hs.term(0).mice), before, "it reaches what it points at")
+}
+
+func TestSplit_FreshPressEndsAStaleDrag(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	leftW := hs.m.leftW
+	hs.send(tea.MouseMsg{X: leftW - 1, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	hs.send(tea.MouseMsg{X: leftW - 1, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	assert.True(t, hs.m.dragging, "the wheel does not end a drag")
+
+	// the release happened outside the window and never came
+	hs.send(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	assert.False(t, hs.m.dragging, "a fresh press ends it")
+	assert.Equal(t, focusDiff, hs.m.focus, "and goes where it points")
+	assert.Equal(t, 10, lastMouse(t, *hs.inner).X)
+	assert.Equal(t, leftW, hs.m.leftW)
 }

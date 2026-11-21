@@ -20,6 +20,7 @@ type activityEntry struct {
 
 // activityBuilder joins the activity of a thread by the server's ids.
 type activityBuilder struct {
+	t       *thread // whose items' decoded texts it reads
 	entries map[string]activityEntry
 	aliases map[string]string
 }
@@ -31,7 +32,7 @@ type activityBuilder struct {
 // tracked on its own wins over its transcript row, so nothing is counted
 // twice.
 func (t *thread) activity() []chat.Activity {
-	b := activityBuilder{entries: map[string]activityEntry{}, aliases: map[string]string{}}
+	b := activityBuilder{t: t, entries: map[string]activityEntry{}, aliases: map[string]string{}}
 	for _, a := range t.subagents {
 		if a.RunID != nil && t.runs[*a.RunID].Status == "rolled_back" {
 			continue
@@ -154,7 +155,7 @@ func (b *activityBuilder) item(it t3client.TurnItem) {
 			return // the independently tracked subagent holds the latest progress
 		}
 	}
-	e := activityFromItem(it)
+	e := activityFromItem(it, b.t.texts(it))
 	b.entries[e.id] = e
 	b.alias(e.id, it.ID, nativeID)
 	if it.ChildThreadID != "" {
@@ -162,7 +163,9 @@ func (b *activityBuilder) item(it t3client.TurnItem) {
 	}
 }
 
-func activityFromItem(it t3client.TurnItem) activityEntry {
+// activityFromItem is the entry of a command or subagent item, whose JSON
+// fields read as texts.
+func activityFromItem(it t3client.TurnItem, texts *itemTexts) activityEntry {
 	e := activityEntry{id: "item:" + it.ID, kind: "process", status: it.Status, updated: it.UpdatedAt, ordinal: it.Ordinal}
 	if it.Title != nil {
 		e.title = *it.Title
@@ -180,9 +183,9 @@ func activityFromItem(it t3client.TurnItem) activityEntry {
 		e.kind = "monitor"
 	}
 	if e.title == "" {
-		e.title = firstLine(it.InputText())
+		e.title = firstLine(texts.in)
 	}
-	e.details = activityDetails(it.InputText(), activityOutput(it))
+	e.details = activityDetails(texts.in, activityOutput(it, texts))
 	if it.ExitCode != nil {
 		e.details = append(e.details, fmt.Sprintf("Exit code: %d", *it.ExitCode))
 	}
@@ -238,9 +241,9 @@ func activityDetails(parts ...string) []string {
 }
 
 // activityOutput is what a command printed, as far as T3 reported it.
-func activityOutput(it t3client.TurnItem) string {
+func activityOutput(it t3client.TurnItem, texts *itemTexts) string {
 	if it.OutputOmitted {
 		return "Output is not included in the live activity list."
 	}
-	return t3client.JSONText(it.Output)
+	return texts.outputText()
 }

@@ -23,6 +23,11 @@ type rpcError struct {
 	Method string
 	Tag    string // error tag, e.g. VcsRepositoryDetectionError; empty for defects
 	Detail string
+	// Failure and Operation refine some tags: ProjectReadFileError says
+	// which file failure (binary_file, operation_failed...) and, for a failed
+	// filesystem operation, which one (open, read...)
+	Failure   string
+	Operation string
 }
 
 func (e *rpcError) Error() string {
@@ -75,9 +80,11 @@ func failureError(method string, raw json.RawMessage) error {
 	switch c.Tag {
 	case "Fail":
 		var e struct {
-			Tag     string `json:"_tag"`
-			Detail  string `json:"detail"`
-			Message string `json:"message"`
+			Tag       string `json:"_tag"`
+			Detail    string `json:"detail"`
+			Message   string `json:"message"`
+			Failure   string `json:"failure"`
+			Operation string `json:"operation"`
 		}
 		_ = json.Unmarshal(c.Error, &e)
 		detail := e.Detail
@@ -87,7 +94,7 @@ func failureError(method string, raw json.RawMessage) error {
 		if detail == "" {
 			detail = string(c.Error)
 		}
-		return &rpcError{Method: method, Tag: e.Tag, Detail: detail}
+		return &rpcError{Method: method, Tag: e.Tag, Detail: detail, Failure: e.Failure, Operation: e.Operation}
 	case "Die":
 		var s string
 		if json.Unmarshal(c.Defect, &s) != nil {

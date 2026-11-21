@@ -1102,6 +1102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reviewStatsLoadedMsg:
 		return m.handleReviewStatsLoaded(msg)
 	case fileLoadedMsg:
+		m.recaptureRefreshAnchor(msg) // refresh.go
 		return m.handleFileLoaded(msg)
 	case reviewFingerprintLoadedMsg:
 		return m.handleReviewFingerprintLoaded(msg)
@@ -1127,6 +1128,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleOpenFile(msg)
 	case revertedMsg:
 		return m.handleReverted(msg)
+	case revertAskEndedMsg:
+		return m.handleRevertAskEnded(msg), nil
+	case dividerRenderMsg:
+		return m.handleDividerRender()
 	case deleteAllAnnotationsMsg:
 		return m.deleteAllAnnotations()
 	}
@@ -1164,7 +1169,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.reviewed.hint = ""
 	m.keys.hint = ""
 	m.vim.hint = ""
-	m.revert.hint = ""
+	m.revert.inputSeen() // revert.go
 
 	// flush any deferred wheel work (cursor pin + diff render) before the key
 	// action runs — m.nav.diffCursor must be at its final pinned position

@@ -13,8 +13,14 @@ import (
 
 func TestViewSwitch(t *testing.T) {
 	v := &viewSwitch{}
-	assert.Nil(t, v.forSource(sourceSetup{}), "stdin, a compare pair or a plain folder has no other view")
-	show := v.forSource(sourceSetup{vcsSetup: vcsSetup{vcsType: diff.VCSGit}})
+	git := sourceSetup{vcsSetup: vcsSetup{vcsType: diff.VCSGit}}
+	assert.Nil(t, v.forSource(options{}, sourceSetup{}), "stdin, a compare pair or a plain folder has no other view")
+	assert.Nil(t, v.forSource(options{AllFiles: true}, git), "--all-files has no Diff View… to switch through")
+	assert.Nil(t, newLocalDiff(reviewDeps{opts: options{AllFiles: true}}, git, ""), "the switch is offered exactly when Diff View… exists")
+	tree := git
+	tree.folder = diff.NewFolderReader(t.TempDir(), nil, nil)
+	assert.NotNil(t, v.forSource(options{}, tree), "Diff View…'s file tree switches back to the changes")
+	show := v.forSource(options{}, git)
 	require.NotNil(t, show)
 
 	run, ok := show(true)().(splitview.RunMsg)

@@ -8,6 +8,7 @@
 package watch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,9 +28,11 @@ type Config struct {
 	Root    string   // worktree root
 	GitDir  string   // absolute git directory; "" to skip
 	Ignored []string // absolute directories to skip (git-ignored trees)
-	// IsIgnored decides for directories created after startup. Nil means only
-	// Ignored and .git are skipped.
-	IsIgnored func(dir string) bool
+	// CheckIgnored returns those of dirs the VCS ignores, for directories
+	// created after startup: a new tree is asked about a level at a time, a
+	// level in one call. It runs off the event loop; ctx ends with the
+	// watcher. Nil means only Ignored and .git are skipped.
+	CheckIgnored func(ctx context.Context, dirs []string) []string
 	// Settle is how long changes must stop before they are reported, so a
 	// burst (a checkout, a build, an editor's save) is one notification
 	// rather than many. Zero reports every change at once.
@@ -44,6 +47,15 @@ type Watcher struct {
 
 	addWarning sync.Once // a directory that cannot be watched is logged once
 
+	// directories created after startup wait in newDirs for grow, which
+	// watches them off the event loop and reports through grown
+	newMu   sync.Mutex
+	newDirs []string
+	newDir  chan struct{} // holds a value while newDirs has work
+	grown   chan struct{}
+	ctx     context.Context // ends with Close, for CheckIgnored
+	cancel  context.CancelFunc
+
 	notify    chan struct{}
 	done      chan struct{}
 	exited    chan struct{}
@@ -51,8 +63,10 @@ type Watcher struct {
 	closeErr  error
 }
 
-// New starts watching. Close it when done.
-func New(cfg Config) (*Watcher, error) {
+// New starts watching. ctx bounds the setup, a walk of the whole worktree
+// that takes a while in a large one: once ctx ends, New stops walking and
+// returns its error. Close the watcher when done.
+func New(ctx context.Context, cfg Config) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("fsnotify: %w", err)
@@ -61,6 +75,8 @@ func New(cfg Config) (*Watcher, error) {
 		cfg:     cfg,
 		fsw:     fsw,
 		ignored: make(map[string]struct{}, len(cfg.Ignored)),
+		newDir:  make(chan struct{}, 1),
+		grown:   make(chan struct{}, 1),
 		notify:  make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		exited:  make(chan struct{}),
@@ -68,7 +84,7 @@ func New(cfg Config) (*Watcher, error) {
 	for _, d := range cfg.Ignored {
 		w.ignored[filepath.Clean(d)] = struct{}{}
 	}
-	if err := w.watchRoot(); err != nil {
+	if err := w.watchRoot(ctx); err != nil {
 		_ = fsw.Close()
 		return nil, err
 	}
@@ -78,9 +94,13 @@ func New(cfg Config) (*Watcher, error) {
 			_ = fsw.Close()
 			return nil, fmt.Errorf("watch %s: %w", cfg.GitDir, err)
 		}
-		_ = w.addTree(filepath.Join(cfg.GitDir, "refs", "heads"))
+		_ = w.addTree(ctx, filepath.Join(cfg.GitDir, "refs", "heads"))
 	}
+	w.ctx, w.cancel = context.WithCancel(context.Background())
 	go w.loop()
+	if !cfg.Shallow {
+		go w.grow()
+	}
 	return w, nil
 }
 
@@ -94,6 +114,7 @@ func (w *Watcher) Changes() <-chan struct{} {
 func (w *Watcher) Close() error {
 	w.closeOnce.Do(func() {
 		close(w.done)
+		w.cancel()
 		if err := w.fsw.Close(); err != nil {
 			w.closeErr = fmt.Errorf("close watcher: %w", err)
 		}
@@ -120,9 +141,9 @@ func (w *Watcher) SetDirectories(dirs []string) {
 
 // watchRoot starts watching the root: the whole tree, or only the root itself
 // in shallow mode, where SetDirectories adds what is browsed below it.
-func (w *Watcher) watchRoot() error {
+func (w *Watcher) watchRoot(ctx context.Context) error {
 	if !w.cfg.Shallow {
-		return w.addTree(w.cfg.Root)
+		return w.addTree(ctx, w.cfg.Root)
 	}
 	if err := w.fsw.Add(w.cfg.Root); err != nil {
 		return fmt.Errorf("watch %s: %w", w.cfg.Root, err)
@@ -155,6 +176,8 @@ func (w *Watcher) loop() {
 			if errors.Is(err, fsnotify.ErrEventOverflow) {
 				w.changed(settle) // events were dropped: force a full refresh
 			}
+		case <-w.grown:
+			w.changed(settle)
 		case <-settle.C:
 			w.signal()
 		}
@@ -189,23 +212,121 @@ func (w *Watcher) handle(ev fsnotify.Event) bool {
 			return false // git's transient lock files
 		}
 		if ev.Has(fsnotify.Create) && within(ev.Name, filepath.Join(w.cfg.GitDir, "refs", "heads")) && isDir(ev.Name) {
-			_ = w.addTree(ev.Name) // new branch namespace, e.g. refs/heads/feature/
+			_ = w.addTree(context.Background(), ev.Name) // new branch namespace, e.g. refs/heads/feature/
 		}
 		return true // HEAD, index or a branch ref: git state changed
 	}
 	if !w.cfg.Shallow && ev.Has(fsnotify.Create) && isDir(ev.Name) {
-		if w.skipNewDir(ev.Name) {
-			return false
+		if !w.skipKnown(ev.Name) {
+			w.queueNewDir(ev.Name)
 		}
-		_ = w.addTree(ev.Name)
+		return false // grow reports it once watched, unless it is ignored
 	}
 	return filepath.Clean(ev.Name) != filepath.Clean(w.cfg.Root) && within(ev.Name, w.cfg.Root)
 }
 
-// addTree watches dir and every directory below it that is not skipped. Only
-// a failure on dir itself is an error; one below it is logged once and skipped.
-func (w *Watcher) addTree(dir string) error {
+// queueNewDir hands a directory created after startup to grow.
+func (w *Watcher) queueNewDir(dir string) {
+	w.newMu.Lock()
+	w.newDirs = append(w.newDirs, dir)
+	w.newMu.Unlock()
+	select {
+	case w.newDir <- struct{}{}:
+	default: // grow already has work waiting
+	}
+}
+
+// grow watches the directories created after startup, every one queued
+// since its last pass in one go, and reports a change once a tree is
+// watched. It runs apart from the event loop, which must not wait for the
+// VCS: a checkout creates folders by the hundred.
+func (w *Watcher) grow() {
+	for {
+		select {
+		case <-w.done:
+			return
+		case <-w.newDir:
+		}
+		w.newMu.Lock()
+		dirs := w.newDirs
+		w.newDirs = nil
+		w.newMu.Unlock()
+		if w.addNewTrees(dirs) {
+			select {
+			case w.grown <- struct{}{}:
+			default: // a report is already pending
+			}
+		}
+	}
+}
+
+// addNewTrees watches the new directories dirs and the directories below
+// them that are neither skipped nor ignored, reporting whether it watched
+// any. It goes a level at a time, asking about each level in one
+// CheckIgnored call before going below it, so an ignored tree moved in
+// whole, node_modules say, is neither watched nor walked.
+func (w *Watcher) addNewTrees(dirs []string) bool {
+	watched := false
+	for level := dirs; len(level) > 0; {
+		var next []string
+		for _, dir := range w.dropIgnored(level) {
+			select {
+			case <-w.done:
+				return watched
+			default:
+			}
+			if err := w.fsw.Add(dir); err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsnotify.ErrClosed) {
+					w.warnUnwatched(dir, err) // gone already: nothing to watch, nothing to say
+				}
+				continue
+			}
+			watched = true
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if sub := filepath.Join(dir, e.Name()); e.IsDir() && !w.skipKnown(sub) { // IsDir: symlinks are not followed
+					next = append(next, sub)
+				}
+			}
+		}
+		level = next
+	}
+	return watched
+}
+
+// dropIgnored is dirs without the ones the VCS ignores.
+func (w *Watcher) dropIgnored(dirs []string) []string {
+	if w.cfg.CheckIgnored == nil {
+		return dirs
+	}
+	ignored := w.cfg.CheckIgnored(w.ctx, dirs)
+	if len(ignored) == 0 {
+		return dirs
+	}
+	skip := make(map[string]bool, len(ignored))
+	for _, d := range ignored {
+		skip[filepath.Clean(d)] = true
+	}
+	kept := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if !skip[filepath.Clean(d)] {
+			kept = append(kept, d)
+		}
+	}
+	return kept
+}
+
+// addTree watches dir and every directory below it that is not skipped,
+// until ctx ends. Only a failure on dir itself is an error, and ctx ending;
+// one below it is logged once and skipped.
+func (w *Watcher) addTree(ctx context.Context, dir string) error {
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr //nolint:wrapcheck // wrapped below with the walk
+		}
 		if err != nil {
 			if path == dir {
 				return err
@@ -248,14 +369,6 @@ func (w *Watcher) skipKnown(dir string) bool {
 	}
 	_, ok := w.ignored[filepath.Clean(dir)]
 	return ok
-}
-
-// skipNewDir also asks the VCS about directories that did not exist at startup.
-func (w *Watcher) skipNewDir(dir string) bool {
-	if w.skipKnown(dir) {
-		return true
-	}
-	return w.cfg.IsIgnored != nil && w.cfg.IsIgnored(dir)
 }
 
 // within reports whether path is dir or lies below it.

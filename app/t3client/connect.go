@@ -18,6 +18,10 @@ type ConnectOptions struct {
 	Store TokenStore
 	Token string // explicit bearer token; skips the store
 	Pair  string // pairing credential or `t3 pair` link to exchange first
+
+	// kept is a token the session obtained but could not save; a redial
+	// uses it as it would a saved one
+	kept string
 }
 
 // Session is a live connection plus whatever was started to reach it.
@@ -40,8 +44,9 @@ func (s *Session) Label() string {
 	return s.server.label
 }
 
-// SSHHost is the SSH host the session tunnels through, empty for a local or
-// HTTP session.
+// SSHHost is the SSH host the session tunnels through, [user@]host[:port],
+// empty for a local or HTTP session. ssh reads no port from it: SSHArgs
+// turns it into the end of an ssh command line.
 func (s *Session) SSHHost() string {
 	return s.server.sshHost
 }
@@ -60,7 +65,7 @@ func (s *Session) SSHControlPath() string {
 // Local reports whether the server runs on this machine: "local", or a URL
 // on loopback. An SSH session's tunnel ends here, but its server does not.
 func (s *Session) Local() bool {
-	return s.server.kind == serverLocal || (s.server.kind == serverHTTP && isLoopback(s.server.origin))
+	return s.server.kind == serverLocal || (s.server.kind == serverHTTP && isLoopback(s.server.base))
 }
 
 // MachineName identifies the connected host, preserving SSH aliases and avoiding
@@ -70,7 +75,7 @@ func (s *Session) MachineName() string {
 		name, _ := os.Hostname()
 		return name
 	}
-	// the label is ssh://host or the server's origin
+	// the label is ssh://host or the server's base URL
 	if u, err := url.Parse(s.server.label); err == nil && u.Hostname() != "" {
 		return u.Hostname()
 	}
@@ -86,7 +91,10 @@ func (s *Session) Notices() []string {
 
 // Redial connects again to the same server, with the options this session
 // was made with. A pairing credential is spent by the first exchange, so a
-// session made by pairing redials with the token that pairing produced.
+// session made by pairing redials with the token it saved, read back like
+// any saved token: one that has expired is then replaced by a fresh one
+// where the server can issue it (local, ssh://). A token that could not be
+// saved is kept for the redial instead.
 func (s *Session) Redial(ctx context.Context) (*Session, error) {
 	return connect(ctx, s.server, s.opts)
 }
@@ -115,12 +123,14 @@ const (
 // server is a T3 server as the user named it.
 type server struct {
 	kind    serverKind
-	label   string // local, ssh://host or the server's origin; tokens are saved under it
+	label   string // local, ssh://host or the server's base URL; tokens are saved under it
 	sshHost string // serverSSH only, validated for the ssh command line
-	origin  string // serverHTTP only
+	base    string // serverHTTP only: its serverBase
 }
 
-// parseServer reads a server spec: "local", "ssh://host" or "http(s)://host[:port]".
+// parseServer reads a server spec: "local", "ssh://host" or
+// "http(s)://host[:port][/path]". The path is kept: a server behind a
+// reverse proxy is served under it.
 func parseServer(spec string) (server, error) {
 	spec = strings.TrimSpace(spec)
 	switch {
@@ -133,8 +143,12 @@ func parseServer(spec string) (server, error) {
 		}
 		return server{kind: serverSSH, label: "ssh://" + host, sshHost: host}, nil
 	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
-		origin := normalizeURL(spec)
-		return server{kind: serverHTTP, label: origin, origin: origin}, nil
+		u, err := url.Parse(spec)
+		if err != nil || u.Host == "" {
+			return server{}, fmt.Errorf("invalid T3 server URL %q", spec)
+		}
+		base := serverBase(u)
+		return server{kind: serverHTTP, label: base, base: base}, nil
 	}
 	return server{}, fmt.Errorf("unknown T3 server %q: use local, ssh://host or http(s)://host:port", spec)
 }
@@ -143,7 +157,8 @@ func parseServer(spec string) (server, error) {
 //   - "local": the server this user runs here, found through its runtime state file
 //   - "ssh://host": the server on host, reached through an SSH port forward; the
 //     token is issued on host by its t3 CLI over the same SSH login
-//   - "http(s)://host[:port]": a server reached directly (LAN, Tailscale, tunnel)
+//   - "http(s)://host[:port][/path]": a server reached directly (LAN, Tailscale,
+//     tunnel, a reverse proxy serving it under path)
 //
 // An empty spec means the server a pairing link names, else local.
 func Connect(ctx context.Context, spec string, o ConnectOptions) (*Session, error) {
@@ -170,25 +185,25 @@ func connect(ctx context.Context, srv server, o ConnectOptions) (*Session, error
 		return connectSSH(ctx, srv, o)
 	default: // serverHTTP
 		var issue issuer
-		if isLoopback(srv.origin) {
+		if isLoopback(srv.base) {
 			issue = issueLocal
 		}
-		return connectHTTP(ctx, srv, directEndpoint(srv.origin), o, issue)
+		return connectHTTP(ctx, srv, directEndpoint(srv.base), o, issue)
 	}
 }
 
 // issuer mints a token without user help.
 type issuer func(context.Context) (string, error)
 
-// endpoint is how to reach a T3 server's HTTP origin.
+// endpoint is how to reach a T3 server over HTTP.
 type endpoint struct {
-	origin string       // http(s)://host[:port], what requests are addressed to
+	base   string       // http(s)://host[:port][/path], what requests are addressed below
 	client *http.Client // carries them; never follows a redirect
 }
 
-// directEndpoint reaches origin over the network.
-func directEndpoint(origin string) endpoint {
-	return endpoint{origin: origin, client: &http.Client{CheckRedirect: refuseRedirect}}
+// directEndpoint reaches base over the network.
+func directEndpoint(base string) endpoint {
+	return endpoint{base: base, client: &http.Client{CheckRedirect: refuseRedirect}}
 }
 
 // refuseRedirect keeps a redirect from carrying a credential to another URL;
@@ -202,8 +217,8 @@ func refuseRedirect(*http.Request, []*http.Request) error {
 // revoked or expired.
 func connectHTTP(ctx context.Context, srv server, ep endpoint, o ConnectOptions, issue issuer) (*Session, error) {
 	s := &Session{server: srv, opts: o}
-	if srv.kind == serverHTTP && !strings.HasPrefix(ep.origin, "https://") && !isLoopback(ep.origin) {
-		s.notice("the T3 token travels unencrypted to %s; use https:// or ssh:// to protect it", ep.origin)
+	if srv.kind == serverHTTP && !strings.HasPrefix(ep.base, "https://") && !isLoopback(ep.base) {
+		s.notice("the T3 token travels unencrypted to %s; use https:// or ssh:// to protect it", ep.base)
 	}
 	token, fromStore, err := s.resolveToken(ctx, ep, issue)
 	if err != nil {
@@ -227,7 +242,8 @@ func connectHTTP(ctx context.Context, srv server, ep endpoint, o ConnectOptions,
 }
 
 // resolveToken picks the token to dial with: an explicit one, a pairing
-// exchange, a saved one, or a freshly issued one, in that order.
+// exchange, a saved (or kept) one, or a freshly issued one, in that order.
+// fromStore marks a token obtained earlier, which may since have expired.
 func (s *Session) resolveToken(ctx context.Context, ep endpoint, issue issuer) (token string, fromStore bool, err error) {
 	o := s.opts
 	if o.Token != "" {
@@ -238,9 +254,15 @@ func (s *Session) resolveToken(ctx context.Context, ep endpoint, issue issuer) (
 		if token, err = pair(ctx, ep, cred); err != nil {
 			return "", false, err
 		}
-		s.opts.Pair, s.opts.Token = "", token // the credential is spent
+		// the credential is spent; a redial reads the token back from the
+		// store rather than holding it as an explicit one, which would rule
+		// out replacing it once it expires
+		s.opts.Pair = ""
 		s.save(token)
 		return token, false, nil
+	}
+	if o.kept != "" {
+		return o.kept, true, nil
 	}
 	if token, err = o.Store.Get(s.server.label); err != nil {
 		return "", false, err
@@ -260,11 +282,14 @@ func (s *Session) resolveToken(ctx context.Context, ep endpoint, issue issuer) (
 
 // save keeps a freshly obtained token for later sessions. Failing to save
 // does not fail this one, which holds the token already, so it becomes a
-// notice.
+// notice, and the token is kept for this session's redials.
 func (s *Session) save(token string) {
 	if err := s.opts.Store.Put(s.server.label, token); err != nil {
+		s.opts.kept = token
 		s.notice("the T3 token for %s was not saved, so the next connection needs a new one: %v", s.server.label, err)
+		return
 	}
+	s.opts.kept = ""
 }
 
 func (s *Session) notice(format string, args ...any) {
@@ -298,10 +323,17 @@ func LocalOrigin() (string, error) {
 	if err := json.Unmarshal(b, &st); err != nil || st.Origin == "" {
 		return "", fmt.Errorf("unreadable T3 runtime state %s", path)
 	}
-	if st.PID > 0 {
-		if err := syscall.Kill(st.PID, 0); err != nil && !errors.Is(err, syscall.EPERM) {
-			return "", errors.New("T3 Code is not running; start it or pass its URL to --t3")
-		}
+	if st.PID > 0 && !processRunning(st.PID) {
+		return "", errors.New("T3 Code is not running; start it or pass its URL to --t3")
 	}
 	return st.Origin, nil
+}
+
+// processRunning reports whether a process with pid exists, another user's
+// (EPERM) included. The check only trades a refused connection for a clearer
+// error, so it must never turn away a server that is up; remoteStateScript
+// follows the same rule on an SSH host.
+func processRunning(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

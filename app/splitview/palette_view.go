@@ -41,7 +41,7 @@ func (m Model) paletteView() string {
 
 	var lines []string
 	if p.title != "" {
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(fitLine(" "+p.title, inner)))
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(fitLine(" "+cleanLine(p.title), inner)))
 	}
 	lines = append(lines, m.inputLine(inner, dim))
 	if p.mode == modePrompt {
@@ -72,7 +72,7 @@ func (m Model) paletteView() string {
 		used++
 	}
 	if note != "" {
-		lines = append(lines, dim.Render(fitLine("  "+note, inner)))
+		lines = append(lines, dim.Render(fitLine("  "+cleanLine(note), inner)))
 	}
 	return m.styles.box.Render(strings.Join(lines, "\n"))
 }
@@ -102,7 +102,7 @@ func (p palette) firstShown(budget int) int {
 
 // groupLine is a group's title, set off by a rule.
 func groupLine(title string, inner int, dim lipgloss.Style) string {
-	head := " " + title + " "
+	head := " " + cleanLine(title) + " "
 	return dim.Render(fitLine(head+strings.Repeat("─", max(0, inner-ansi.StringWidth(head))), inner))
 }
 
@@ -113,7 +113,7 @@ func groupLine(title string, inner int, dim lipgloss.Style) string {
 func (m Model) inputLine(inner int, dim lipgloss.Style) string {
 	p := m.palette
 	prefix := " > "
-	placeholder := p.placeholder
+	placeholder := cleanLine(p.placeholder)
 	if m.cfg.Files != nil && p.mode == modeCommands {
 		prefix = " "
 		placeholder = "file name · > for commands"
@@ -121,7 +121,7 @@ func (m Model) inputLine(inner int, dim lipgloss.Style) string {
 	if p.query == "" && placeholder != "" {
 		return fitLine(prefix+"█"+dim.Render(placeholder), inner)
 	}
-	q := p.query
+	q := cleanLine(p.query) // a paste may carry escapes
 	if room := inner - ansi.StringWidth(prefix) - 1; ansi.StringWidth(q) > room && room > 1 {
 		q = promptTailMarker + ansi.TruncateLeft(q, ansi.StringWidth(q)-room+1, "")
 	}
@@ -131,22 +131,22 @@ func (m Model) inputLine(inner int, dim lipgloss.Style) string {
 // rowLine renders one row: label left, detail right, reversed when selected.
 // The label keeps its width; a long detail is shortened to the room left.
 func rowLine(r row, inner int, selected bool, dim lipgloss.Style) string {
-	label := "  " + r.label
+	label := "  " + cleanLine(r.label)
 	line := fitLine(label, inner)
-	if r.detail != "" {
+	if detail := cleanLine(r.detail); detail != "" {
 		labelW := ansi.StringWidth(label)
 		room := inner - labelW - rowDetailGap
 		if room < rowMinDetail {
 			room = min(rowMinDetail, max(1, inner-rowMinLabel))
 			labelW = inner - room - rowDetailGap
 		}
-		plain := ansi.Truncate(r.detail, room, "…")
+		plain := ansi.Truncate(detail, room, "…")
 		pad := max(1, inner-labelW-ansi.StringWidth(plain)-1)
-		detail := plain
+		shown := plain
 		if !selected {
-			detail = dim.Render(plain)
+			shown = dim.Render(plain)
 		}
-		line = fitLine(fitLine(label, labelW)+strings.Repeat(" ", pad)+detail+" ", inner)
+		line = fitLine(fitLine(label, labelW)+strings.Repeat(" ", pad)+shown+" ", inner)
 	}
 	if selected {
 		line = lipgloss.NewStyle().Reverse(true).Render(line)

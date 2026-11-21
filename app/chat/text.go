@@ -7,16 +7,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// maxNoteRows bounds a wrapped note, so /help fits a narrow pane.
-const maxNoteRows = 4
-
-// noteRows wraps a note under the input line.
+// noteRows wraps a note under the input line, all of it: a note may be the
+// only word of what failed.
 func noteRows(note string, w int, st lipgloss.Style) []string {
-	rows := strings.Split(ansi.Wrap(note, max(1, w), ""), "\n")
-	if len(rows) > maxNoteRows {
-		rows = rows[:maxNoteRows]
-		rows[maxNoteRows-1] = ansi.Truncate(rows[maxNoteRows-1], max(1, w-1), "") + "…"
-	}
+	rows := strings.Split(ansi.Wrap(sanitize(note), max(1, w), ""), "\n") // a note may carry the backend's words
 	for i := range rows {
 		rows[i] = st.Render(rows[i])
 	}
@@ -29,24 +23,14 @@ func firstLine(s string) string {
 	return strings.TrimSpace(line)
 }
 
-// wrapLines wraps text to the pane, inset, one string per row.
-func wrapLines(text string, w int) []string {
-	text = strings.TrimRight(text, "\n")
-	if text == "" {
-		return nil
+// wrapLines wraps text to the pane, inset, each line on rows of its own.
+func wrapLines(text string, w int) block {
+	if strings.TrimRight(text, "\n") == "" {
+		return block{}
 	}
-	limit := max(1, w-len(inset))
-	var out []string
-	for para := range strings.SplitSeq(text, "\n") {
-		if strings.TrimSpace(para) == "" {
-			out = append(out, "")
-			continue
-		}
-		for l := range strings.SplitSeq(ansi.Wrap(para, limit, ""), "\n") {
-			out = append(out, inset+l)
-		}
-	}
-	return out
+	return wrapText("", text, w, false).styled(func(r string) string {
+		return inset + r
+	})
 }
 
 // fit forces a row to exactly w cells.

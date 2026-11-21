@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -63,11 +64,47 @@ func TestExitDeadline_ExpiresWithDump(t *testing.T) {
 	td.mu.Lock()
 	defer td.mu.Unlock()
 	assert.Equal(t, []int{1}, td.codes)
-	path := filepath.Join(td.dir, "aidiff-shutdown-"+strconv.Itoa(os.Getpid())+".txt")
-	assert.Contains(t, td.log.String(), path)
-	data, err := os.ReadFile(path) //nolint:gosec // test temp dir
+	dumps, err := filepath.Glob(filepath.Join(td.dir, "aidiff-shutdown-*.txt"))
+	require.NoError(t, err)
+	require.Len(t, dumps, 1)
+	assert.Contains(t, td.log.String(), dumps[0], "the note names the file")
+	data, err := os.ReadFile(dumps[0])
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(data), "goroutine 1"))
+}
+
+func TestExitDeadline_DumpFollowsNoPlantedLink(t *testing.T) {
+	td := newTestDeadline(t)
+	victim := filepath.Join(t.TempDir(), "victim")
+	require.NoError(t, os.WriteFile(victim, []byte("keep"), 0o600))
+	// the name the dump once had, predictable from the pid
+	require.NoError(t, os.Symlink(victim, filepath.Join(td.dir, "aidiff-shutdown-"+strconv.Itoa(os.Getpid())+".txt")))
+	td.expireNow()
+	<-td.exited
+	data, err := os.ReadFile(victim) //nolint:gosec // test temp dir
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(data), "the dump goes to a new file of its own")
+}
+
+func TestExitDeadline_ExitsWithTheCodeFinalizeComputed(t *testing.T) {
+	td := newTestDeadline(t)
+	code, err := td.result(exitCodeAnnotations, nil)
+	require.NoError(t, err)
+	assert.Equal(t, exitCodeAnnotations, code, "the result is passed on")
+	td.expireNow() // a close after finalize hung
+	<-td.exited
+	td.mu.Lock()
+	assert.Equal(t, []int{exitCodeAnnotations}, td.codes, "-o is written: the launcher still reads annotations")
+	td.mu.Unlock()
+
+	td = newTestDeadline(t)
+	_, err = td.result(0, errors.New("write output: disk full"))
+	require.Error(t, err)
+	td.expireNow()
+	<-td.exited
+	td.mu.Lock()
+	defer td.mu.Unlock()
+	assert.Equal(t, []int{1}, td.codes, "a failed finalize exits 1")
 }
 
 func TestExitDeadline_DisarmPreventsExit(t *testing.T) {

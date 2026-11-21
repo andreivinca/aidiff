@@ -104,7 +104,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		NoStatusBar:          opts.NoStatusBar,
 		Toolbar:              !opts.NoToolbar,
 		Compare:              openDiffView,
-		ShowFiles:            d.views.forSource(src),
+		ShowFiles:            d.views.forSource(d.opts, src), // d.opts: opts above counts a folder as every file
 		NoConfirmDiscard:     opts.NoConfirmDiscard,
 		NoConfirmReload:      opts.NoConfirmReload,
 		NoTree:               opts.NoTree,

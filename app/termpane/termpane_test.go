@@ -243,3 +243,36 @@ func TestPane_UpdatesClosedAfterClose(t *testing.T) {
 		}
 	}
 }
+
+func TestChildEnv_LeavesTheHostTerminalOut(t *testing.T) {
+	env := childEnv([]string{
+		"PATH=/bin", "TMUX=/tmp/tmux-1/default,1,0", "TMUX_PANE=%1", "ZELLIJ=0", "ZELLIJ_PANE_ID=3",
+		"HERDR_ENV=1", "HERDR_PANE_ID=p", "AGTERM_PANE=left", "HC_TERMINAL_ID=t", "KITTY_WINDOW_ID=2",
+		"WEZTERM_PANE=4", "CMUX_SURFACE_ID=s", "TERM_PROGRAM=ghostty", "TERM=xterm-ghostty", "COLORTERM=24bit",
+		"HOME=/home/u", "TMUXINATOR_CONFIG=/x",
+	})
+	assert.Equal(t, []string{
+		"PATH=/bin", "HOME=/home/u", "TMUXINATOR_CONFIG=/x",
+		"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=" + termProgram,
+	}, env, "a name that only starts like one of an exact entry stays")
+}
+
+func TestPane_ChildDoesNotSeeTheHostMultiplexer(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1/default,1,0")
+	t.Setenv("HERDR_PANE_ID", "p1")
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	p, err := Start([]string{"sh", "-c", `echo "T=${TMUX-unset} H=${HERDR_PANE_ID-unset} P=$TERM_PROGRAM"; sleep 5`}, t.TempDir(), 60, 3)
+	require.NoError(t, err)
+	defer p.Close()
+	waitFor(t, p, "T=unset H=unset P="+termProgram)
+}
+
+func TestPane_ResizeReachesThePty(t *testing.T) {
+	p, err := Start([]string{"sh", "-c", "echo READY; read x; stty size; sleep 5"}, t.TempDir(), 40, 6)
+	require.NoError(t, err)
+	defer p.Close()
+	waitFor(t, p, "READY")
+	p.Resize(33, 9)
+	p.SendText("\r")
+	waitFor(t, p, "9 33")
+}

@@ -76,7 +76,12 @@ func (p *Pane) sendMessageLocked(text string) error {
 			return nil
 		},
 		finish: func(err error) {
-			p.sentLocked(m, pasted, err)
+			p.sentLocked(m, err)
+		},
+		keep: func(err error) {
+			if err != nil {
+				p.restoreLocked(m.Text, pasted)
+			}
 		},
 	})
 	if err != nil {
@@ -87,26 +92,39 @@ func (p *Pane) sendMessageLocked(text string) error {
 	return nil
 }
 
-// sentLocked settles a message's card once the backend answered. A message
-// that failed goes back into an empty input, images included. mu must be
-// held.
-func (p *Pane) sentLocked(m Outgoing, pasted []pendingImage, err error) {
+// sentLocked settles a message's card once the backend answered; the card
+// of one that failed goes, its text back in the input (restoreLocked). mu
+// must be held.
+func (p *Pane) sentLocked(m Outgoing, err error) {
 	for i := range p.pending {
 		if p.pending[i].id == m.ID {
 			p.pending[i].sending = false
 		}
 	}
-	if err == nil {
+	if err != nil {
+		p.removePendingLocked(m.ID)
+	}
+}
+
+// restoreLocked puts text the backend did not take back into the input,
+// with the images it names: in place of an empty draft, else ahead of what
+// was typed since, on a line of its own, so neither is lost. mu must be
+// held.
+func (p *Pane) restoreLocked(text string, pasted []pendingImage) {
+	p.images = append(p.images, pasted...)
+	for _, img := range pasted {
+		p.input.addAtom(img.token)
+	}
+	if p.input.empty() {
+		p.input.insert(text)
+		p.inputChanged()
 		return
 	}
-	p.removePendingLocked(m.ID)
-	if p.input.empty() {
-		p.images = append(p.images, pasted...)
-		for _, img := range pasted {
-			p.input.addAtom(img.token)
-		}
-		p.input.insert(m.Text)
-	}
+	cur := p.input.cur
+	p.input.moveTo(0, false)
+	p.input.insert(text + "\n")
+	p.input.moveTo(cur+p.input.cur, false) // the cursor stays where it was in the draft
+	p.inputChanged()
 }
 
 // request is a call to the backend the composer waits on; one runs at a
@@ -115,6 +133,11 @@ type request struct {
 	run    func(ctx context.Context) error // off the lock; its error says what failed
 	done   string                          // the note once it succeeded, if any
 	finish func(err error)                 // with mu held once run returned, before the note; may be nil
+	// keep, with mu held once run returned, gives the user back text the
+	// backend did not take. It runs even when the pane follows another
+	// backend by then, unlike finish: that text belongs to the draft, which
+	// outlives the conversation (Follow). May be nil.
+	keep func(err error)
 }
 
 // requestLocked starts r, unless the pane is not connected or waits on
@@ -127,15 +150,24 @@ func (p *Pane) requestLocked(r request) error {
 		return errBusy
 	}
 	p.busy = true
-	p.goLocked(func() func() {
+	sub := p.subID
+	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
 		err := r.run(ctx)
-		return func() {
+		p.lock()
+		defer p.mu.Unlock()
+		if r.keep != nil {
+			r.keep(err)
+		}
+		if sub == p.subID {
 			p.busy = false
 			p.settleLocked(r, err)
+		} else if err != nil && r.keep != nil {
+			p.note = err.Error() // what came back into the input says why
 		}
-	})
+		p.changedLocked()
+	}()
 	return nil
 }
 

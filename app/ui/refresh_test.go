@@ -239,3 +239,80 @@ func TestNearestLine_PrefersBelowAtEqualDistance(t *testing.T) {
 	}))
 	assert.Equal(t, 0, m.nearestLine(0, match))
 }
+
+func keyRunes(t *testing.T, m Model, keys string) Model {
+	t.Helper()
+	for _, r := range keys {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	return m
+}
+
+func TestRefresh_KeepsCursorMovedWhileLoading(t *testing.T) {
+	lines := []string{"l0", "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9"}
+	diffs := map[string][]diff.DiffLine{"a.go": contextLines(lines...), "b.go": contextLines("bee")}
+	m := refreshTestModel(t, []string{"a.go", "b.go"}, diffs)
+	m.layout.focus = paneDiff
+	m.nav.diffCursor = 3
+
+	m, cmd := refresh(t, m)
+	m = keyRunes(t, m, "jjjjj") // moved while the reload runs
+	require.Equal(t, 8, m.nav.diffCursor)
+	m = runLoads(t, m, cmd)
+	assert.Equal(t, 8, m.nav.diffCursor, "the reload does not undo the moves")
+}
+
+func TestRefresh_AnnotationStartedWhileLoadingKeepsItsLine(t *testing.T) {
+	lines := []string{"l0", "l1", "l2", "l3", "l4", "l5", "l6"}
+	diffs := map[string][]diff.DiffLine{"a.go": contextLines(lines...), "b.go": contextLines("bee")}
+	m := refreshTestModel(t, []string{"a.go", "b.go"}, diffs)
+	m.layout.focus = paneDiff
+	m.nav.diffCursor = 1
+
+	diffs["a.go"] = contextLines(append([]string{"new0", "new1"}, lines...)...) // two lines above, written meanwhile
+	m, cmd := refresh(t, m)
+	m = keyRunes(t, m, "jjjja") // to l5, then annotate it while the reload runs
+	require.True(t, m.annot.annotating)
+	m = keyRunes(t, m, "note")
+	m = runLoads(t, m, cmd)
+
+	require.True(t, m.annot.annotating, "the annotation being typed survives the refresh")
+	assert.Equal(t, "note", m.annot.input.Value())
+	assert.Equal(t, "l5", m.file.lines[m.nav.diffCursor].Content, "on the line it was started on")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	got := m.store.Get("a.go")
+	require.Len(t, got, 1)
+	assert.Equal(t, 8, got[0].Line, "l5's line number after the reload")
+}
+
+func TestRefresh_KeepsCursorOnFileAnnotation(t *testing.T) {
+	diffs := map[string][]diff.DiffLine{"a.go": contextLines("one", "two", "three"), "b.go": contextLines("bee")}
+	m := refreshTestModel(t, []string{"a.go", "b.go"}, diffs)
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 0, Comment: "file note"})
+	m.nav.diffCursor = -1
+	m.search.term = "two"
+	m.search.matches = []int{1}
+
+	diffs["a.go"] = contextLines("zero", "one", "two", "three")
+	m, cmd := refresh(t, m)
+	m = runLoads(t, m, cmd)
+	assert.Equal(t, -1, m.nav.diffCursor, "still on the file-level annotation")
+	assert.Equal(t, "two", m.search.term, "the search survives")
+	assert.Equal(t, []int{2}, m.search.matches)
+}
+
+func TestRefresh_KeepsCursorOnLineAnnotation(t *testing.T) {
+	diffs := map[string][]diff.DiffLine{"a.go": contextLines("one", "two", "three"), "b.go": contextLines("bee")}
+	m := refreshTestModel(t, []string{"a.go", "b.go"}, diffs)
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 2, Type: " ", Comment: "note"})
+	m.nav.diffCursor = 1
+	m.annot.cursorOnAnnotation = true
+
+	diffs["a.go"] = contextLines("one", "two", "three", "four") // a line below
+	m, cmd := refresh(t, m)
+	m = runLoads(t, m, cmd)
+	assert.Equal(t, 1, m.nav.diffCursor)
+	assert.True(t, m.annot.cursorOnAnnotation, "still on the annotation, not its line")
+}

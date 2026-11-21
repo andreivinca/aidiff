@@ -122,7 +122,7 @@ func TestRevert_AsksInThePopup(t *testing.T) {
 	m := revertModel(r, 2)
 	var title, detail, button string
 	var yes tea.Cmd
-	m.revert.confirm = func(t, d, b string, y tea.Cmd) tea.Cmd {
+	m.revert.confirm = func(t, d, b string, y, _ tea.Cmd) tea.Cmd {
 		title, detail, button, yes = t, d, b, y
 		return func() tea.Msg { return nil }
 	}
@@ -143,4 +143,107 @@ func TestRevert_AsksInThePopup(t *testing.T) {
 	_, _ = pressKey(t, m, "X")
 	assert.Equal(t, "Revert a.go?", title)
 	assert.Equal(t, "Revert", button)
+}
+
+// popupRevertModel is revertModel asking in a popup, refreshes otherwise
+// allowed; *yes is the popup's confirm command once asked.
+func popupRevertModel(t *testing.T, r Reverter, yes *tea.Cmd) Model {
+	t.Helper()
+	m := revertModel(r, 2)
+	m.reload.applicable, m.filesLoaded = true, true
+	m.revert.confirm = func(_, _, _ string, y, _ tea.Cmd) tea.Cmd {
+		*yes = y
+		return func() tea.Msg { return nil }
+	}
+	require.True(t, m.CanRefresh())
+	return m
+}
+
+func TestRevert_PopupHoldsRefreshesUntilAnswered(t *testing.T) {
+	var yes tea.Cmd
+	m, cmd := pressKey(t, popupRevertModel(t, &fakeReverter{}, &yes), "x")
+	require.NotNil(t, cmd)
+	assert.False(t, m.CanRefresh(), "the lines asked about stay on screen while the popup is open")
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok, "the popup and the wait's expiry")
+	assert.Len(t, batch, 2)
+
+	out, _ := m.Update(yes()) // confirmed: the revert reports back
+	assert.True(t, out.(Model).CanRefresh())
+}
+
+func TestRevert_PopupHoldEndsWhenTheReviewGetsInputAgain(t *testing.T) {
+	var yes tea.Cmd
+	asked, _ := pressKey(t, popupRevertModel(t, &fakeReverter{}, &yes), "x")
+	require.False(t, asked.CanRefresh())
+
+	m, _ := pressKey(t, asked, "j") // the popup took the cancel; this key reached the review
+	assert.True(t, m.CanRefresh(), "a key")
+
+	out, _ := asked.Update(tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	assert.True(t, out.(Model).CanRefresh(), "a mouse event")
+}
+
+func TestRevert_PopupCancelEndsTheHoldAtOnce(t *testing.T) {
+	var no []tea.Cmd
+	m := revertModel(&fakeReverter{}, 2)
+	m.reload.applicable, m.filesLoaded = true, true
+	m.revert.confirm = func(_, _, _ string, _, n tea.Cmd) tea.Cmd {
+		no = append(no, n)
+		return func() tea.Msg { return nil }
+	}
+	asked, _ := pressKey(t, m, "x")
+	require.False(t, asked.CanRefresh())
+	require.Len(t, no, 1)
+	require.NotNil(t, no[0], "the popup is told how to say no")
+
+	out, _ := asked.Update(no[0]())
+	assert.True(t, out.(Model).CanRefresh(), "cancelled: refreshes go on without waiting for the expiry")
+
+	again, _ := pressKey(t, out.(Model), "x")
+	require.Len(t, no, 2)
+	out, _ = again.Update(no[0]())
+	assert.False(t, out.(Model).CanRefresh(), "the first popup's no ends nothing of the second")
+	out, _ = again.Update(no[1]())
+	assert.True(t, out.(Model).CanRefresh())
+}
+
+func TestRevert_PopupHoldExpires(t *testing.T) {
+	var yes tea.Cmd
+	m, _ := pressKey(t, popupRevertModel(t, &fakeReverter{}, &yes), "x")
+	out, _ := m.Update(revertAskEndedMsg{seq: m.revert.askSeq - 1})
+	assert.False(t, out.(Model).CanRefresh(), "an earlier popup's expiry ends nothing")
+	out, _ = m.Update(revertAskEndedMsg{seq: m.revert.askSeq})
+	assert.True(t, out.(Model).CanRefresh(), "dismissed unseen, a workspace switch say: the wait ends anyway")
+}
+
+func TestRevert_NamesAreSanitized(t *testing.T) {
+	r := &fakeReverter{}
+	m := revertModel(r, 2)
+	name := "a\x1b[31m\nb.go"
+	m.tree = testNewFileTree([]string{name})
+	m.file.name = name
+	var title, detail string
+	var yes tea.Cmd
+	m.revert.confirm = func(t, d, _ string, y, _ tea.Cmd) tea.Cmd {
+		title, detail, yes = t, d, y
+		return nil
+	}
+	m, _ = pressKey(t, m, "X")
+	assert.Equal(t, "Revert a[31mb.go?", title)
+	assert.NotContains(t, detail, "\x1b")
+	assert.NotContains(t, detail, "\n")
+	out, _ := m.handleReverted(yes().(revertedMsg))
+	assert.Equal(t, "Reverted a[31mb.go", out.(Model).transientHint())
+
+	m.revert.confirm = nil
+	m, _ = pressKey(t, m, "X")
+	assert.NotContains(t, m.transientHint(), "\x1b", "the status-bar question too")
+}
+
+func TestRevert_MouseClearsTheHint(t *testing.T) {
+	m := revertModel(&fakeReverter{}, 2)
+	m.revert.hint = "Reverted a.go"
+	out, _ := m.Update(tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	assert.Empty(t, out.(Model).revert.hint)
 }

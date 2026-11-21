@@ -92,6 +92,20 @@ func (m Model) View() string {
 // handleToolbarAndMouse gives a mouse event to the toolbar, then to the
 // review one row higher, in its own coordinates.
 func (m Model) handleToolbarAndMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	m.revert.asking = false // an open revert popup would have taken the event
+	if m.divider.dragging {
+		// a drag takes the mouse wherever the pointer is: a release over
+		// the toolbar row, dropped below, would leave it stuck
+		shifted := msg
+		if m.toolbarShown() {
+			shifted.Y--
+		}
+		model, cmd, handled := m.treeDividerMouse(shifted)
+		if handled {
+			return model, cmd
+		}
+		m = model // a press ended a drag whose release was lost: it goes on as any other
+	}
 	if !m.toolbarShown() {
 		return m.handleMouse(msg)
 	}
@@ -212,10 +226,16 @@ func (m Model) contextMenu() []tbItem {
 			label = "1 line"
 		}
 		items = append(items, tbItem{label: label, checked: m.modes.compact && m.modes.compactContext == n,
-			run: func(m Model) (tea.Model, tea.Cmd) { return m, m.setCompactContext(n) }})
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				cmd := m.setCompactContext(n) // before m is read: the order within a return is unspecified
+				return m, cmd
+			}})
 	}
 	more := func(more bool) func(m Model) (tea.Model, tea.Cmd) {
-		return func(m Model) (tea.Model, tea.Cmd) { return m, m.changeCompactContext(more) }
+		return func(m Model) (tea.Model, tea.Cmd) {
+			cmd := m.changeCompactContext(more)
+			return m, cmd
+		}
 	}
 	return append(items, tbItem{sep: true},
 		tbItem{label: "One more line", key: m.toolbarKey(keymap.ActionMoreContext), disabled: !m.modes.compact, keepOpen: true, run: more(true)},
@@ -467,11 +487,17 @@ func (m Model) composeMenu(screen string) string {
 }
 
 // openToolbar activates button, its first item highlighted, and gives the
-// diff pane focus: the tools act on the diff.
+// diff pane focus: the tools act on the diff. The diff is repainted when it
+// gains focus, as switchPane does, since its cursor is drawn with the focus.
 func (m *Model) openToolbar(button int) tea.Cmd {
 	m.clearPendingInputState()
 	m.toolbar.open, m.toolbar.button, m.toolbar.item = true, button, -1
-	m.layout.focus = paneDiff
+	if m.layout.focus != paneDiff {
+		m.layout.focus = paneDiff
+		if m.filesLoaded {
+			m.layout.viewport.SetContent(m.renderDiff())
+		}
+	}
 	m.moveMenuItem(1)
 	return nil
 }

@@ -352,3 +352,33 @@ func TestPalette_OpenOnAClosedSessionIsRefused(t *testing.T) {
 	assert.Contains(t, flashes(msgs), "T3: open thread: the connection was closed meanwhile")
 	assert.Nil(t, h.p.OnScreen())
 }
+
+func TestPalette_ConnectLandingAfterAnotherChoiceIsNotUsed(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	a := newFakeSession("ssh://a", testShell())
+	h.dials["ssh://a"] = a
+	slow := h.p.connect("ssh://a") // asked for; its dial lands below
+	h.p.useLocal()                 // the user picks this machine meanwhile
+	msgs := run(slow)
+	assert.Equal(t, "T3: ssh://a answered after another connection was chosen; not used", flashes(msgs)[len(flashes(msgs))-1])
+	assert.Nil(t, h.p.liveSession(), "this machine stays selected")
+	h.settle()
+	assert.Equal(t, 1, a.closes())
+
+	b, c := newFakeSession("ssh://b", testShell()), newFakeSession("ssh://c", testShell())
+	h.dials["ssh://b"], h.dials["ssh://c"] = b, c
+	first, second := h.p.connect("ssh://b"), h.p.connect("ssh://c")
+	run(second)
+	run(first) // the first asked for lands last
+	assert.Same(t, c, h.p.liveSession(), "the last connection asked for wins, not the last to answer")
+	h.settle()
+	assert.Equal(t, 1, b.closes())
+	assert.Zero(t, c.closes())
+
+	d := newFakeSession("ssh://d", testShell())
+	h.dials["ssh://d"] = d
+	slow = h.p.connect("ssh://d")
+	require.True(t, h.p.useLive(c), "picking a connection already there counts too")
+	run(slow)
+	assert.Same(t, c, h.p.liveSession())
+}

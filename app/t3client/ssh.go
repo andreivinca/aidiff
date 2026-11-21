@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -29,11 +30,13 @@ const (
 
 // remoteStateScript prints the remote runtime state, exiting with
 // exitNoState when there is none and with exitNotRunning when the server
-// process it records is gone, so one SSH login answers both.
+// process it records is gone, so one SSH login answers both. Another user's
+// process counts as running, as in processRunning: kill -0 fails for it
+// (EPERM) just as for a process that is gone, so ps settles which it is.
 var remoteStateScript = `f="${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json"; ` +
 	`[ -r "$f" ] || { echo "no T3 server state at $f" >&2; exit ` + strconv.Itoa(exitNoState) + `; }; ` +
 	`pid=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" | head -n 1); ` +
-	`if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then exit ` + strconv.Itoa(exitNotRunning) + `; fi; ` +
+	`if [ -n "$pid" ] && ! { kill -0 "$pid" 2>/dev/null || ps -p "$pid" >/dev/null 2>&1; }; then exit ` + strconv.Itoa(exitNotRunning) + `; fi; ` +
 	`cat "$f"`
 
 // sshOptions apply to every ssh command: no prompts, and a dead link is
@@ -42,7 +45,8 @@ var sshOptions = []string{"-o", "BatchMode=yes", "-o", "ServerAliveInterval=15",
 
 // validSSHHost accepts a host for the ssh command line: [user@]host[:port]
 // spelled with letters, digits and . _ @ : -, not starting with a dash, so
-// it can be neither an option nor shell syntax.
+// it can be neither an option nor shell syntax, and with a port of 1-65535
+// when it has one (see splitSSHHost).
 func validSSHHost(host string) error {
 	if host == "" || strings.HasPrefix(host, "-") {
 		return fmt.Errorf("invalid ssh host %q", host)
@@ -52,7 +56,42 @@ func validSSHHost(host string) error {
 			return fmt.Errorf("invalid ssh host %q", host)
 		}
 	}
+	dest, port := splitSSHHost(host)
+	if dest == "" || strings.HasSuffix(dest, "@") {
+		return fmt.Errorf("invalid ssh host %q: no host name", host)
+	}
+	if dest != host { // a port was split off
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("invalid ssh host %q: bad port", host)
+		}
+	}
 	return nil
+}
+
+// splitSSHHost splits [user@]host[:port] into ssh's destination
+// ([user@]host) and port ("" for ssh's default). ssh reads no port from its
+// destination itself: given box:2222 it looks for a host named "box:2222"
+// on port 22. A host with more than one colon is an IPv6 literal, with no
+// port.
+func splitSSHHost(host string) (dest, port string) {
+	at := strings.LastIndex(host, "@") + 1 // 0 without a user
+	name, port, found := strings.Cut(host[at:], ":")
+	if !found || strings.Contains(port, ":") {
+		return host, ""
+	}
+	return host[:at] + name, port
+}
+
+// SSHArgs ends an ssh command line that reaches host, a [user@]host[:port]
+// such as Session.SSHHost returns: its port as -p, then "--" and the
+// destination, so nothing after the options can be read as one. The script
+// to run, if any, follows.
+func SSHArgs(host string) []string {
+	dest, port := splitSSHHost(host)
+	if port == "" {
+		return []string{"--", dest}
+	}
+	return []string{"-p", port, "--", dest}
 }
 
 func sshHostRune(r rune) bool {
@@ -87,7 +126,7 @@ func connectSSH(ctx context.Context, srv server, o ConnectOptions) (*Session, er
 		return runIssue(sshCommand(ctx, host, remoteT3+" "+strings.Join(issueArgs, " ")))
 	}
 	// requests name the server's own address, as a client on its host would
-	ep := endpoint{origin: "http://" + remoteAddr, client: tun.httpClient()}
+	ep := endpoint{base: "http://" + remoteAddr, client: tun.httpClient()}
 	s, err := connectHTTP(ctx, srv, ep, o, issue)
 	if err != nil {
 		tun.stop()
@@ -116,8 +155,13 @@ func remoteState(ctx context.Context, host string) (runtimeState, error) {
 
 // sshCommand runs script on host.
 func sshCommand(ctx context.Context, host, script string) *exec.Cmd {
-	args := append(append([]string{}, sshOptions...), "--", host, script)
-	return exec.CommandContext(ctx, "ssh", args...) //nolint:gosec // host validated by validSSHHost
+	return exec.CommandContext(ctx, "ssh", sshArgv(host, script)...) //nolint:gosec // host validated by validSSHHost
+}
+
+// sshArgv is the arguments of an ssh command running script on host.
+func sshArgv(host, script string) []string {
+	args := append(append([]string{}, sshOptions...), SSHArgs(host)...)
+	return append(args, script)
 }
 
 func sshOutput(ctx context.Context, host, script string) ([]byte, error) {
@@ -149,6 +193,12 @@ type sshTunnel struct {
 	stderr    *strings.Builder
 	exited    chan struct{}
 	err       error // valid once exited is closed
+	stopOnce  sync.Once
+}
+
+// killGroup kills the process group pgid; a variable so tests can watch it.
+var killGroup = func(pgid int) error {
+	return syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
 // tunnelWatchdog runs the tunnel's ssh ("$@") and kills it once the shell's
@@ -177,33 +227,52 @@ func startTunnel(host, remoteAddr string) (*sshTunnel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create ssh tunnel directory: %w", err)
 	}
-	socket := filepath.Join(dir, "t3.sock")
-	control := filepath.Join(dir, "ssh.ctl")
-	// ClearAllForwardings=no: a host block that clears forwardings would
-	// otherwise drop -L silently and the socket would never open.
-	// ControlMaster=yes with our own ControlPath, never the user's: the
-	// connection must be this tunnel's, ending with it.
-	args := append(append([]string{"-N"}, sshOptions...),
+	t := newTunnel(dir)
+	if err := t.start(tunnelArgv(host, remoteAddr, t.socket, t.control)); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
+	}
+	return t, nil
+}
+
+// newTunnel is a tunnel, not yet started, with its sockets in dir.
+func newTunnel(dir string) *sshTunnel {
+	t := &sshTunnel{dir: dir, socket: filepath.Join(dir, "t3.sock"), control: filepath.Join(dir, "ssh.ctl"),
+		stderr: &strings.Builder{}, exited: make(chan struct{})}
+	t.transport = &http.Transport{DialContext: t.dialSocket}
+	return t
+}
+
+// tunnelArgv is the tunnel's ssh command line, forwarding socket to
+// remoteAddr through host and serving other ssh commands at control.
+//
+// ClearAllForwardings=no: a host block that clears forwardings would
+// otherwise drop -L silently and the socket would never open.
+// ControlMaster=yes with our own ControlPath, never the user's: the
+// connection must be this tunnel's, ending with it.
+func tunnelArgv(host, remoteAddr, socket, control string) []string {
+	args := append(append([]string{"ssh", "-N"}, sshOptions...),
 		"-o", "ClearAllForwardings=no", "-o", "ExitOnForwardFailure=yes", "-o", "StreamLocalBindUnlink=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no", "-o", "ControlPath="+control,
-		"-L", socket+":"+remoteAddr, "--", host)
-	cmd := exec.Command("/bin/sh", append([]string{"-c", tunnelWatchdog, "sh", "ssh"}, args...)...) //nolint:gosec,noctx // host validated by validSSHHost; lives for the session
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}                                           // keep terminal signals away from it
-	t := &sshTunnel{cmd: cmd, dir: dir, socket: socket, control: control, stderr: &strings.Builder{}, exited: make(chan struct{})}
-	t.transport = &http.Transport{DialContext: t.dialSocket}
+		"-L", socket+":"+remoteAddr)
+	return append(args, SSHArgs(host)...)
+}
+
+// start runs argv under tunnelWatchdog, in a process group of its own.
+func (t *sshTunnel) start(argv []string) error {
+	cmd := exec.Command("/bin/sh", append([]string{"-c", tunnelWatchdog, "sh"}, argv...)...) //nolint:gosec,noctx // host validated by validSSHHost; lives for the session
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}                                    // keep terminal signals away from it
 	cmd.Stderr = t.stderr
 	lifeline, err := cmd.StdinPipe()
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
+		return fmt.Errorf("open lifeline: %w", err)
 	}
-	t.lifeline = lifeline
 	if err := cmd.Start(); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("start ssh tunnel to %s: %w", host, err)
+		return fmt.Errorf("run ssh: %w", err)
 	}
+	t.cmd, t.lifeline = cmd, lifeline
 	go t.wait()
-	return t, nil
+	return nil
 }
 
 func (t *sshTunnel) wait() {
@@ -224,12 +293,21 @@ func (t *sshTunnel) controlPath() string {
 
 // stop ends the tunnel, waits for ssh to exit and removes its socket. The
 // watchdog shell leads ssh's process group, so killing the group ends both.
+// A tunnel that has exited is not killed: its shell is reaped, so its pid,
+// the group's id, may already belong to another process. Only the first call
+// does anything.
 func (t *sshTunnel) stop() {
-	t.transport.CloseIdleConnections()
-	_ = t.lifeline.Close()
-	_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
-	<-t.exited
-	_ = os.RemoveAll(t.dir)
+	t.stopOnce.Do(func() {
+		t.transport.CloseIdleConnections()
+		select {
+		case <-t.exited:
+		default:
+			_ = killGroup(t.cmd.Process.Pid)
+		}
+		_ = t.lifeline.Close() // ends the watchdog, should ssh outlive its shell
+		<-t.exited
+		_ = os.RemoveAll(t.dir)
+	})
 }
 
 // dialSocket connects to the tunnel's socket, whatever address is asked for.

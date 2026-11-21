@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -21,7 +22,7 @@ const (
 // held.
 func (p *Pane) transcriptLocked(w int) []string {
 	lines, _ := p.transcriptPanelsLocked(w)
-	return lines
+	return lines.rows
 }
 
 // panelSpan is where one of the user's messages sits in the transcript's
@@ -32,54 +33,71 @@ type panelSpan struct {
 
 // transcriptPanelsLocked is the transcript's rows and where the user's
 // messages sit in them, in order; mu must be held.
-func (p *Pane) transcriptPanelsLocked(w int) ([]string, []panelSpan) {
+func (p *Pane) transcriptPanelsLocked(w int) (block, []panelSpan) {
 	defer p.rowCache.sweep()
-	var out []string
-	var spans []panelSpan
+	type part struct {
+		rows       block
+		user, work bool // a user's message; a run of steps, which follows what is above it without a blank row
+	}
+	var parts []part
 	var work []Step
+	n := 0
+	add := func(b block, user, work bool) {
+		if len(b.rows) == 0 {
+			return
+		}
+		parts = append(parts, part{rows: b, user: user, work: work})
+		n += len(b.rows) + 1
+	}
 	for _, e := range p.conv.Entries {
 		if s, ok := e.(Step); ok {
 			work = append(work, s)
 			continue
 		}
-		out = append(out, p.workRows(work, w)...)
+		add(p.workRows(work, w), false, true)
 		work = nil
-		lines := p.entryRowsLocked(e, w)
-		if len(lines) == 0 {
-			continue
-		}
-		if len(out) > 0 {
-			out = append(out, "")
-		}
-		if _, user := e.(UserMessage); user {
-			spans = append(spans, panelSpan{start: len(out), n: len(lines)})
-		}
-		out = append(out, lines...)
+		_, user := e.(UserMessage)
+		add(p.entryRowsLocked(e, w), user, false)
 	}
-	return append(out, p.workRows(work, w)...), spans
+	add(p.workRows(work, w), false, true)
+	// the rows are gathered first and copied once: a frame builds the whole transcript
+	out := block{rows: make([]string, 0, n), meta: make([]rowMeta, 0, n)}
+	var spans []panelSpan
+	for i, pt := range parts {
+		if i > 0 && !pt.work {
+			out.plain("")
+		}
+		if pt.user {
+			spans = append(spans, panelSpan{start: len(out.rows), n: len(pt.rows.rows)})
+		}
+		out.join(pt.rows)
+	}
+	return out, spans
 }
 
 // entryRowsLocked turns one entry other than a step into rows of at most w
-// cells; mu must be held.
-func (p *Pane) entryRowsLocked(e Entry, w int) []string {
+// cells, wrapped, never cut; mu must be held.
+func (p *Pane) entryRowsLocked(e Entry, w int) block {
 	st := p.styles
 	switch e := e.(type) {
 	case UserMessage:
-		return p.rowCache.rows(rowKey{kind: 'u', text: e.Text, w: w}, func() []string {
+		return p.rowCache.rows(rowKey{kind: 'u', text: e.Text, w: w}, func() block {
 			return userPanel(e.Text, w, st)
 		})
 	case AgentMessage:
 		text := e.Markdown
 		if e.Streaming {
-			text += "▍"
+			text += streamCursor
 		}
-		return p.rowCache.rows(rowKey{kind: 'a', text: text, w: w}, func() []string {
+		return p.rowCache.rows(rowKey{kind: 'a', text: text, w: w}, func() block {
 			return markdownRows(text, w, st)
 		})
 	case Plan:
-		return p.rowCache.rows(rowKey{kind: 'p', text: e.Markdown, w: w}, func() []string {
-			head := st.heading.Render(inset + "Plan")
-			return append([]string{head}, markdownRows(e.Markdown, w, st)...)
+		return p.rowCache.rows(rowKey{kind: 'p', text: e.Markdown, w: w}, func() block {
+			var b block
+			b.plain(st.heading.Render(inset + "Plan"))
+			b.join(markdownRows(e.Markdown, w, st))
+			return b
 		})
 	case TodoList:
 		return todoRows(e, w, st)
@@ -101,25 +119,34 @@ func (p *Pane) entryRowsLocked(e Entry, w int) []string {
 		}
 		return questionPromptRows(e, w, st, answered, tab, p.questionChoice)
 	case Failure:
-		return []string{st.bad.Render(ansi.Truncate(inset+"✗ "+firstLine(e.Text), w, "…"))}
+		return insetRows(wrapText("✗ ", strings.TrimSpace(e.Text), w, false), st.bad) // the whole error: it may be all the user learns
 	}
-	return nil
+	return block{}
 }
 
-// workRows shows a run of the agent's steps: one quiet summary line, or a
-// line per step after /work.
-func (p *Pane) workRows(work []Step, w int) []string {
+// insetRows is rows of wrapText drawn in style behind the inset.
+func insetRows(b block, style lipgloss.Style) block {
+	return b.styled(func(r string) string {
+		return style.Render(inset + r)
+	})
+}
+
+// workRows shows a run of the agent's steps: one quiet summary line, or
+// each step in full after /work.
+func (p *Pane) workRows(work []Step, w int) block {
+	var b block
 	if len(work) == 0 {
-		return nil
+		return b
 	}
 	if !p.showWork {
-		return []string{p.styles.muted.Render(ansi.Truncate(inset+workSummary(work), w, "…"))}
+		b.plain(p.styles.muted.Render(ansi.Truncate(inset+workSummary(work), w, "…"))) // a count; /work shows the steps
+		return b
 	}
-	rows := make([]string, 0, len(work))
 	for _, s := range work {
-		rows = append(rows, p.styles.muted.Render(ansi.Truncate(inset+s.line(), w, "…")))
+		lead, text := s.line()
+		b.join(insetRows(wrapText(lead, text, w, false), p.styles.muted))
 	}
-	return rows
+	return b
 }
 
 // stepNouns are what the work summary counts, in its order.
@@ -170,36 +197,37 @@ func workSummary(work []Step) string {
 	return mark + " " + strings.Join(parts, ", ") + " · /work shows them"
 }
 
-// line sums up the step in a line, with OpenCode's glyphs: $ for a command,
-// ✎ an edit, ✱ a search, ◈ the web, → a tool.
-func (s Step) line() string {
-	text := firstLine(s.Text)
+// line is the step as /work shows it, with OpenCode's glyphs: $ for a
+// command, ✎ an edit, ✱ a search, ◈ the web, → a tool. The glyph leads,
+// and the text, all of it, hangs under itself as it wraps.
+func (s Step) line() (lead, text string) {
+	text = strings.TrimSpace(s.Text)
 	switch s.Kind {
 	case StepThought:
 		if s.State.going() {
-			return "· thinking… " + text
+			return "· ", "thinking… " + text
 		}
-		return "· thought"
+		return "· ", "thought"
 	case StepNotice:
-		return "ℹ " + text
+		return "ℹ ", text
 	case StepInterrupt:
-		return "■ " + text
+		return "■ ", text
 	case StepCompaction:
-		return "⇅ " + text
+		return "⇅ ", text
 	case StepCommand:
-		return "$ " + text + s.suffix()
+		return "$ ", text + s.suffix()
 	case StepEdit:
-		return "✎ " + text + s.suffix()
+		return "✎ ", text + s.suffix()
 	case StepSearch:
-		return "✱ " + text + s.suffix()
+		return "✱ ", text + s.suffix()
 	case StepWeb:
-		return "◈ " + text + s.suffix()
+		return "◈ ", text + s.suffix()
 	case StepTool:
-		return "→ " + text + s.suffix()
+		return "→ ", text + s.suffix()
 	case StepSubagent:
-		return "↳ " + text + s.suffix()
+		return "↳ ", text + s.suffix()
 	default:
-		return "· " + text + s.suffix()
+		return "· ", text + s.suffix()
 	}
 }
 
@@ -218,27 +246,36 @@ func (s Step) suffix() string {
 
 // userPanel is the user's message as OpenCode draws it: a raised panel with
 // a rail in the agent's color, one blank row above and below the text.
-func userPanel(text string, w int, st styles) []string {
-	rows := panelLines(text, w)
-	for i, r := range rows {
-		rows[i] = st.rail.Render(rail) + st.panel.Render(panelText(r, w))
+func userPanel(text string, w int, st styles) block {
+	lines := panelBlock(text, w)
+	for i, r := range lines.rows {
+		lines.rows[i] = st.rail.Render(rail) + st.panel.Render(panelText(r, w))
 	}
-	return rows
+	return lines
 }
 
-// panelLines is the user's message wrapped for a panel w cells wide, one
+// panelTextStart is the column a panel row's text starts at: past the rail
+// and two cells of padding.
+const panelTextStart = 3
+
+// panelBlock is the user's message wrapped for a panel w cells wide, one
 // blank row above and below it, without styles.
-func panelLines(text string, w int) []string {
+func panelBlock(text string, w int) block {
 	inner := max(1, w-4)
-	rows := []string{""}
+	var b block
+	b.plain("")
 	for para := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
-		if strings.TrimSpace(para) == "" {
-			rows = append(rows, "")
-			continue
+		for _, pc := range wrapLine(para, inner, inner, false) {
+			b.add(pc.text, rowMeta{start: panelTextStart, end: panelTextStart + ansi.StringWidth(pc.text), cont: pc.cont, joint: pc.joint})
 		}
-		rows = append(rows, strings.Split(ansi.Wrap(para, inner, ""), "\n")...)
 	}
-	return append(rows, "")
+	b.plain("")
+	return b
+}
+
+// panelLines is the rows of panelBlock.
+func panelLines(text string, w int) []string {
+	return panelBlock(text, w).rows
 }
 
 // panelText is one row of a panel's text, indented and filling the panel,
@@ -247,8 +284,8 @@ func panelText(r string, w int) string {
 	return fit("  "+r, max(1, w-1))
 }
 
-func todoRows(list TodoList, w int, st styles) []string {
-	out := make([]string, 0, len(list.Steps))
+func todoRows(list TodoList, w int, st styles) block {
+	var b block
 	for _, s := range list.Steps {
 		mark := "☐"
 		switch s.State {
@@ -258,45 +295,48 @@ func todoRows(list TodoList, w int, st styles) []string {
 			mark = "▸"
 		default:
 		}
-		out = append(out, st.muted.Render(ansi.Truncate(inset+mark+" "+firstLine(s.Text), w, "…")))
+		b.join(insetRows(wrapText(mark+" ", strings.TrimSpace(s.Text), w, false), st.muted))
 	}
-	return out
+	return b
 }
 
-func approvalRows(a Approval, w int, st styles) []string {
+// approvalRows shows what the agent asks to do in full, wrapped: a command
+// to approve has to be read whole, and so does one approved already.
+func approvalRows(a Approval, w int, st styles) block {
+	prompt := strings.TrimSpace(a.Prompt)
 	if !a.Pending {
-		return []string{st.muted.Render(ansi.Truncate(inset+"approval: "+firstLine(a.Prompt), w, "…"))}
+		return insetRows(wrapText("", "approval: "+prompt, w, false), st.muted)
 	}
-	out := []string{st.warn.Render(ansi.Truncate(inset+"⚠ approval needed: "+firstLine(a.Prompt), w, "…"))}
+	b := insetRows(wrapText("⚠ ", "approval needed: "+prompt, w, false), st.warn)
 	if a.Reason != "" {
-		out = append(out, wrapLines(a.Reason, w)...)
+		b.join(wrapLines(a.Reason, w))
 	}
-	return append(out, st.muted.Render(ansi.Truncate(inset+"  type /accept or /decline", w, "…")))
+	b.plain(st.muted.Render(ansi.Truncate(inset+"  type /accept or /decline", w, "…")))
+	return b
 }
 
 // questionRows lists the agent's questions with numbered options. Once a
-// prompt is answered or dropped it collapses to a line.
-func questionRows(q Questions, w int, st styles, answered map[string]Answer) []string {
+// prompt is answered or dropped it shrinks to its questions, each in full.
+func questionRows(q Questions, w int, st styles, answered map[string]Answer) block {
+	var out block
 	if !q.Pending {
-		return []string{st.muted.Render(ansi.Truncate(inset+"question: "+firstQuestion(q), w, "…"))}
+		for _, question := range q.Questions {
+			out.join(insetRows(wrapText("", "question: "+strings.TrimSpace(question.Text), w, false), st.muted))
+		}
+		return out
 	}
-	var out []string
 	for _, question := range q.Questions {
 		mark := "? "
 		if _, ok := answered[question.ID]; ok {
 			mark = "✓ "
 		}
-		for _, row := range wrapLines(mark+question.Text, w) {
-			out = append(out, st.warn.Render(row))
-		}
+		out.join(insetRows(wrapText(mark, question.Text, w, false), st.warn))
 		for i, o := range question.Options {
-			line := fmt.Sprintf("    %d) %s", i+1, o.Label)
+			line := fmt.Sprintf("%d) %s", i+1, o.Label)
 			if o.Description != "" {
 				line += " — " + o.Description
 			}
-			for _, row := range wrapLines(line, w) {
-				out = append(out, st.muted.Render(row))
-			}
+			out.join(insetRows(wrapText("    ", line, w, false), st.muted))
 		}
 	}
 	hint := "  /1, /2… picks an option"
@@ -311,15 +351,8 @@ func questionRows(q Questions, w int, st styles, answered map[string]Answer) []s
 			hint += " · /answer <text> for your own"
 		}
 	}
-	for _, row := range wrapLines(hint+"\n  Type a number or your own answer, then Enter.\n  /dismiss skips the question.", w) {
-		out = append(out, st.muted.Render(row))
-	}
+	out.join(wrapLines(hint+"\n  Type a number or your own answer, then Enter.\n  /dismiss skips the question.", w).styled(func(r string) string {
+		return st.muted.Render(r)
+	}))
 	return out
-}
-
-func firstQuestion(q Questions) string {
-	if len(q.Questions) == 0 {
-		return ""
-	}
-	return firstLine(q.Questions[0].Text)
 }

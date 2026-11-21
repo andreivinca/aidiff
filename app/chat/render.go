@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -22,12 +23,15 @@ type layout struct {
 }
 
 // renderLocked lays the pane out: header, transcript, queued messages,
-// status line and composer. The transcript sticks to the bottom like a chat.
-// It changes nothing; mu must be held.
-func (p *Pane) renderLocked(showCursor bool) ([]string, layout) {
+// status line and composer, with how a copy reads each row. The transcript
+// sticks to the bottom like a chat. It changes nothing shown, but it moves
+// the input box's window to keep the cursor in view (inputWindowLocked) and
+// drops what was typed for a secret request no longer pending
+// (secretLocked); mu must be held.
+func (p *Pane) renderLocked(showCursor bool) ([]string, []rowMeta, layout) {
 	w, h := p.width, p.height
 	if p.stop.turn != "" {
-		return p.stopRowsLocked(w, h), layout{}
+		return p.stopRowsLocked(w, h), make([]rowMeta, h), layout{}
 	}
 	var l layout
 	gapH := 0
@@ -47,17 +51,23 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, layout) {
 	l.bodyH = max(0, h-l.headerH-gapH-sepH-len(footer)-len(pending))
 	l.textBottom = l.headerH + l.bodyH + len(pending)
 	var body []string
+	var bodyMeta []rowMeta
 	if p.activity.open {
 		body, l.activityScroll = p.activityRowsLocked(w, l.bodyH)
 	} else {
-		body, l.scroll, l.maxScroll = p.transcriptWindowLocked(w, l.bodyH)
+		body, bodyMeta, l.scroll, l.maxScroll = p.transcriptWindowLocked(w, l.bodyH)
 	}
 
 	rows := make([]string, 0, h)
+	meta := make([]rowMeta, l.headerH, h) // the header's
 	if l.headerH > 0 {
 		rows = append(rows, p.headerLocked(w, l.scroll))
 	}
 	rows = append(rows, body...)
+	if bodyMeta == nil {
+		bodyMeta = make([]rowMeta, len(body))
+	}
+	meta = append(meta, bodyMeta...)
 	rows = append(rows, pending...)
 	if sepH > 0 {
 		rows = append(rows, "")
@@ -66,7 +76,10 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, layout) {
 		rows = append(rows, p.styles.muted.Render(ansi.Truncate(inset+p.activityStatusLocked(), w, "…")))
 	}
 	rows = append(rows, footer...)
-	return fitRows(rows, w, h), l
+	for len(meta) < h {
+		meta = append(meta, rowMeta{})
+	}
+	return fitRows(rows, w, h), meta[:h], l
 }
 
 // fitRows forces rows to exactly h rows of exactly w cells.
@@ -86,18 +99,43 @@ func fitRows(rows []string, w, h int) []string {
 // scroll it shows within the most there is. The user's message the rows
 // below it answer stays on top once it scrolled out of view (see
 // stickyRows). mu must be held.
-func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, scroll, maxScroll int) {
+func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, meta []rowMeta, scroll, maxScroll int) {
 	lines, spans := p.transcriptPanelsLocked(w)
-	maxScroll = max(0, len(lines)-h)
+	n := len(lines.rows)
+	p.anchorScrollLocked(w, n)
+	maxScroll = max(0, n-h)
 	scroll = min(p.scroll, maxScroll)
-	end := len(lines) - scroll
+	end := n - scroll
 	start := max(0, end-h)
 	rows = make([]string, h-(end-start), h)
-	rows = append(rows, lines[start:end]...)
-	if sticky := p.stickyLocked(lines, spans, start, w); len(sticky) > 0 && len(sticky)+minBelowSticky <= h {
-		copy(rows, sticky)
+	rows = append(rows, lines.rows[start:end]...)
+	meta = make([]rowMeta, h-(end-start), h)
+	meta = append(meta, lines.meta[start:end]...)
+	if sticky := p.stickyLocked(lines, spans, start, w); len(sticky.rows) > 0 && len(sticky.rows)+minBelowSticky <= h {
+		copy(rows, sticky.rows)
+		copy(meta, sticky.meta)
+		if k := len(sticky.rows); k < len(meta) {
+			meta[k].cont = false // the row under the sticky message no longer goes on from the one above it
+		}
 	}
-	return rows, scroll, maxScroll
+	return rows, meta, scroll, maxScroll
+}
+
+// seenLines is the transcript's size as the last frame laid it out.
+type seenLines struct {
+	w, n int
+}
+
+// anchorScrollLocked keeps a transcript scrolled up on the text the reader
+// is on: the scroll counts lines from the end, so output arriving under it
+// would slide the text up, a line a line. It grows by what the transcript
+// grew since the last frame, at the same width (a resize wraps every line
+// again). mu must be held.
+func (p *Pane) anchorScrollLocked(w, n int) {
+	if p.scroll > 0 && p.seen.w == w && p.seen.n > 0 {
+		p.scroll = max(0, p.scroll+n-p.seen.n)
+	}
+	p.seen = seenLines{w: w, n: n}
 }
 
 // Sticky message sizes: the lines a compact sticky message keeps from its
@@ -108,16 +146,17 @@ const (
 )
 
 // stickyLocked is the user's message to keep on top of a window whose first
-// row is transcript row top: the last one whose panel starts above it. nil
-// when none does. mu must be held.
-func (p *Pane) stickyLocked(lines []string, spans []panelSpan, top, w int) []string {
+// row is transcript row top: the last one whose panel starts above it. No
+// rows when none does. mu must be held.
+func (p *Pane) stickyLocked(lines block, spans []panelSpan, top, w int) block {
 	for i := len(spans) - 1; i >= 0; i-- {
 		s := spans[i]
 		if s.start < top {
-			return stickyRows(lines[s.start:s.start+s.n], top-s.start, w, p.styles)
+			panel := block{rows: lines.rows[s.start : s.start+s.n], meta: lines.meta[s.start : s.start+s.n]}
+			return stickyRows(panel, top-s.start, w, p.styles)
 		}
 	}
-	return nil
+	return block{}
 }
 
 // stickyRows is a user's message kept on top of the transcript, its text
@@ -127,19 +166,25 @@ func (p *Pane) stickyLocked(lines []string, spans []panelSpan, top, w int) []str
 // Scrolling back to it brings its end in under the "…", one line a row, as
 // its lines really come into view, until nothing is left out and the whole
 // message shows. The panel's first and last rows are padding.
-func stickyRows(panel []string, off, w int, st styles) []string {
-	n := len(panel)
-	text := panel[1 : n-1]
+func stickyRows(panel block, off, w int, st styles) block {
+	n := len(panel.rows)
+	text := block{rows: panel.rows[1 : n-1], meta: panel.meta[1 : n-1]}
+	k := len(text.rows)
 	tail := max(0, n-1-off) // its lines in view below the window's top
-	out := make([]string, 0, len(text)+1)
-	if len(text) <= stickyHead+1 || stickyHead+1+tail >= len(text) {
-		out = append(out, text...)
+	var out block
+	if k <= stickyHead+1 || stickyHead+1+tail >= k {
+		out.join(text)
 	} else {
-		out = append(out, text[:stickyHead]...)
-		out = append(out, st.rail.Render(rail)+st.panel.Render(fit("  …", max(1, w-1))))
-		out = append(out, text[len(text)-tail:]...)
+		out.join(block{rows: text.rows[:stickyHead], meta: text.meta[:stickyHead]})
+		out.plain(st.rail.Render(rail) + st.panel.Render(fit("  …", max(1, w-1))))
+		rest := block{rows: text.rows[k-tail:], meta: slices.Clone(text.meta[k-tail:])}
+		if len(rest.meta) > 0 {
+			rest.meta[0].cont = false // it follows the gap, not the line it was wrapped from
+		}
+		out.join(rest)
 	}
-	return append(out, "") // apart from the transcript under it
+	out.plain("") // apart from the transcript under it
+	return out
 }
 
 // headerLocked is the title and the agent's state, with how far the

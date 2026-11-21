@@ -14,10 +14,77 @@ type leftCache struct {
 	w, h  int
 	lines []string
 
+	cut []string // lines cut one column short for the main grip; nil until needed
+
 	footerValid bool // footer is the wrapped model's status line at footerW columns
 	footerW     int
 	footerHints [][2]string // the pane hints footer shows
 	footer      string
+}
+
+// paneCache keeps each column's fitted block from the frames before, keyed
+// by what it was fitted from, and the status line with its focus mark: a
+// frame redrawn because one pane changed then measures that pane alone.
+// Like leftCache it is shared across copies of the Model.
+type paneCache struct {
+	slots []fitSlot // slotOuter, slotSide, then slotTerms+i for terminal i
+
+	markValid bool
+	markKey   markKey
+	mark      string
+}
+
+// paneCache slots
+const (
+	slotOuter = iota
+	slotSide
+	slotTerms
+)
+
+// fitSlot is one column's fitted block and what it was fitted from.
+type fitSlot struct {
+	valid bool
+	src   string
+	w, h  int
+	lines []string
+}
+
+// markKey is what the status line's focus mark is drawn from.
+type markKey struct {
+	line             string
+	winW, from, to   int
+	colorBg, colorFg string
+}
+
+// fitted is src fitted by fit to w by h, one line per row, reused from slot
+// i while src and the size stay the same. The lines must not be changed.
+func (m Model) fitted(i int, src string, w, h int, fit func(src string, w, h int) []string) []string {
+	c := m.panes
+	if c == nil {
+		return fit(src, w, h)
+	}
+	for len(c.slots) <= i {
+		c.slots = append(c.slots, fitSlot{})
+	}
+	if sl := c.slots[i]; sl.valid && sl.w == w && sl.h == h && sl.src == src {
+		return sl.lines
+	}
+	lines := fit(src, w, h)
+	c.slots[i] = fitSlot{valid: true, src: src, w: w, h: h, lines: lines}
+	return lines
+}
+
+// dropSlotsFrom forgets the fitted blocks of slots i and above.
+func (m Model) dropSlotsFrom(i int) {
+	if c := m.panes; c != nil && len(c.slots) > i {
+		clear(c.slots[i:])
+		c.slots = c.slots[:i]
+	}
+}
+
+// fitLines is fitBlock split into its lines.
+func fitLines(src string, w, h int) []string {
+	return strings.Split(fitBlock(src, w, h), "\n")
 }
 
 // View implements tea.Model.
@@ -28,6 +95,9 @@ func (m Model) View() string {
 	view := m.columnView(m.leftBlock())
 	if m.palette.open {
 		view = overlayCenter(view, m.paletteView(), m.winW, m.height)
+	}
+	if m.switcher.open {
+		view = m.switcherView(view)
 	}
 	switch {
 	case m.quitDialog:
@@ -47,9 +117,22 @@ func (m Model) leftBlock() []string {
 	c := m.leftCache
 	if !c.valid || c.w != m.leftW || c.h != m.height {
 		c.lines = strings.Split(fitBlock(m.inner.View(), m.leftW, m.height), "\n")
-		c.valid, c.w, c.h = true, m.leftW, m.height
+		c.valid, c.w, c.h, c.cut = true, m.leftW, m.height, nil
 	}
 	return c.lines
+}
+
+// leftCut is leftBlock with each line one column short, for the rows the
+// main grip is drawn over; cached with it.
+func (m Model) leftCut() []string {
+	lines, c := m.leftBlock(), m.leftCache
+	if c.cut == nil {
+		c.cut = make([]string, len(lines))
+		for y, l := range lines {
+			c.cut[y] = ansi.Cut(l, 0, max(0, m.leftW-1))
+		}
+	}
+	return c.cut
 }
 
 // dropLeftCache forgets the fitted view once the wrapped model has changed.
@@ -58,46 +141,49 @@ func (m Model) dropLeftCache() {
 	m.leftCache.footerValid = false
 }
 
-// columnView renders the sidebar, when shown, the wrapped model's lines and
+// columnView renders the sidebars, when shown, the wrapped model's lines and
 // the terminals side by side, with a vertical line between neighbors.
 func (m Model) columnView(left []string) string {
-	var side []string
+	var outer, side []string
 	if m.outerW() > 0 {
-		side = m.outerLines()
+		outer = m.outerLines()
 	}
 	if m.sideW() > 0 {
-		lines := m.sidebarLines()
-		if side == nil {
-			side = lines
-		} else {
-			for y := range side {
-				side[y] += lines[y]
-			}
-		}
+		side = m.sidebarLines()
 	}
 	rects := m.termRects()
 	blocks := make([][]string, len(rects))
 	for i, r := range rects {
 		showCursor := m.focus == i && !m.palette.open
-		blocks[i] = strings.Split(fitBlock(m.terms[i].Render(showCursor), r.w, r.h), "\n")
+		blocks[i] = m.fitted(slotTerms+i, m.terms[i].Render(showCursor), r.w, r.h, fitLines)
 	}
+	m.dropSlotsFrom(slotTerms + len(rects)) // closed panes' frames
+	var cut []string
+	if len(m.terms) > 0 {
+		cut = m.leftCut()
+	}
+	grips := m.gripGlyphs()
 	rows := make([]string, m.bodyH())
 	for y := range rows {
 		var b strings.Builder
+		b.Grow(2 * m.winW)
+		if outer != nil {
+			b.WriteString(outer[y])
+		}
 		if side != nil {
 			b.WriteString(side[y])
 		}
 		if m.mainGripAt(y) {
 			// our own divider over the wrapped model's last column; its
 			// content has no border of its own
-			b.WriteString(ansi.Cut(left[y], 0, max(0, m.leftW-1)))
-			b.WriteString(m.resizeGrip(y, dragMain))
+			b.WriteString(cut[y])
+			b.WriteString(grips.at(m, y, dragMain))
 		} else {
 			b.WriteString(left[y])
 		}
 		for i := range blocks {
 			if i > 0 {
-				b.WriteString(m.resizeGrip(y, i-1))
+				b.WriteString(grips.at(m, y, i-1))
 			}
 			b.WriteString(blocks[i][y])
 		}
@@ -109,20 +195,56 @@ func (m Model) columnView(left []string) string {
 	return strings.Join(rows, "\n")
 }
 
-// resizeGrip marks each wrapper-owned divider and highlights a grabbed one.
-func (m Model) resizeGrip(y, divider int) string {
-	glyph := "│"
-	if y == m.height/2 {
-		glyph = "↔"
-	}
-	if m.dragging && m.dragSep == divider {
-		return m.styles.gripActive.Render(glyph)
-	}
-	return m.styles.grip.Render(glyph)
+// sidebarBlock is a sidebar's view, drawn by the embedding program and so
+// cleaned of escapes other than its colors (cleanView), fitted to w by h
+// with the separator after each row; reused while the view is the same.
+func (m Model) sidebarBlock(slot int, view string, w, h int) []string {
+	return m.fitted(slot, view, w, h, func(src string, w, h int) []string {
+		lines := fitLines(cleanView(src), w, h)
+		sep := m.styles.grip.Render("│")
+		for i := range lines {
+			lines[i] += sep
+		}
+		return lines
+	})
 }
 
+// gripGlyphs are a divider's cells, rendered once a frame rather than once
+// a row.
+type gripGlyphs struct {
+	line, mid, activeLine, activeMid string
+}
+
+// gripGlyphs renders the divider cells for this frame.
+func (m Model) gripGlyphs() gripGlyphs {
+	return gripGlyphs{
+		line:       m.styles.grip.Render("│"),
+		mid:        m.styles.grip.Render("↔"),
+		activeLine: m.styles.gripActive.Render("│"),
+		activeMid:  m.styles.gripActive.Render("↔"),
+	}
+}
+
+// at marks each wrapper-owned divider on row y and highlights a grabbed one.
+func (g gripGlyphs) at(m Model, y, divider int) string {
+	active := m.dragging && m.dragSep == divider
+	switch {
+	case y == m.height/2 && active:
+		return g.activeMid
+	case y == m.height/2:
+		return g.mid
+	case active:
+		return g.activeLine
+	}
+	return g.line
+}
+
+// replaceLastLine draws text, cleaned (it may come from the remote side),
+// over the last line of view. Text wider than the window is cut, not
+// wrapped onto lines the window does not have.
 func replaceLastLine(view, text string, width int) string {
 	lines := strings.Split(view, "\n")
+	text = ansi.Truncate(cleanLine(text), width, "")
 	lines[len(lines)-1] = lipgloss.NewStyle().Reverse(true).Width(width).MaxWidth(width).Render(text)
 	return strings.Join(lines, "\n")
 }
@@ -136,8 +258,7 @@ func overlayCenter(base, box string, width, height int) string {
 	for _, l := range boxLines {
 		bw = max(bw, ansi.StringWidth(l))
 	}
-	x0 := max(0, (width-bw)/2)
-	y0 := max(0, (height-len(boxLines))/3)
+	x0, y0 := boxOrigin(bw, len(boxLines), width, height)
 	for i, bl := range boxLines {
 		y := y0 + i
 		if y >= len(baseLines) {
@@ -149,6 +270,11 @@ func overlayCenter(base, box string, width, height int) string {
 		baseLines[y] = left + ansi.ResetStyle + fitLine(bl, bw) + ansi.ResetStyle + right
 	}
 	return strings.Join(baseLines, "\n")
+}
+
+// boxOrigin is where overlayCenter draws a box w by h: its top left cell.
+func boxOrigin(w, h, width, height int) (x0, y0 int) {
+	return max(0, (width-w)/2), max(0, (height-h)/3)
 }
 
 // fitBlock forces s to exactly w columns by h rows, so panes line up even if

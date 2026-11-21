@@ -8,20 +8,24 @@ import (
 	"github.com/umputun/revdiff/app/t3client"
 )
 
-// conversationLocked is the thread as the pane shows it; mu must be held.
+// conversationLocked is the thread as the pane shows it. It runs for every
+// event, a streamed token included, so what more than one part reads (the
+// pending secret, the activity) is derived once; mu must be held.
 func (b *Backend) conversationLocked() chat.Conversation {
 	t := &b.thread
 	queued := b.withPendingLocked(t.queue())
+	secret := t.pendingSecret()
+	activity := t.activity()
 	return chat.Conversation{
 		Title:     t.title,
-		State:     t.state(),
-		Running:   t.activeRuns(),
+		State:     t.stateWith(secret),
+		Running:   t.activeRunsWith(activity),
 		Entries:   t.entries(queued),
 		Queued:    queued,
 		Delivered: t.delivered(),
-		Activity:  t.activity(),
+		Activity:  activity,
 		Settings:  b.settingsLocked(),
-		Secret:    t.pendingSecret(),
+		Secret:    secret,
 	}
 }
 
@@ -29,7 +33,7 @@ func (b *Backend) conversationLocked() chat.Conversation {
 // item of the thread, nil when there is none.
 func (t *thread) pendingSecret() *chat.SecretRequest {
 	var latest *t3client.TurnItem
-	for id := range t.allItems {
+	for id := range t.secrets {
 		it := t.allItems[id]
 		if !secretPending(it) || (it.RunID != nil && t.runs[*it.RunID].Status == "rolled_back") {
 			continue
@@ -47,7 +51,12 @@ func (t *thread) pendingSecret() *chat.SecretRequest {
 
 // state derives what the agent does from its runs and open requests.
 func (t *thread) state() chat.AgentState {
-	if t.pendingSecret() != nil {
+	return t.stateWith(t.pendingSecret())
+}
+
+// stateWith is state, given the pending secret request.
+func (t *thread) stateWith(secret *chat.SecretRequest) chat.AgentState {
+	if secret != nil {
 		return chat.AgentWaiting // the agent's tool call blocks until the user answers
 	}
 	for _, r := range t.requests {
@@ -84,17 +93,23 @@ func (t *thread) state() chat.AgentState {
 // background commands), the latest run that started stands for it, so the
 // user can still stop the agent.
 func (t *thread) activeRuns() []string {
+	return t.activeRunsWith(nil)
+}
+
+// activeRunsWith is activeRuns, given the thread's activity when it is
+// known already; nil derives it if it is needed.
+func (t *thread) activeRunsWith(activity []chat.Activity) []string {
 	var running, queued []t3client.Run
 	var latest *t3client.Run
 	for id := range t.runs {
 		r := t.runs[id]
 		switch {
-		case r.Status == "queued":
+		case notStarted(r):
 			queued = append(queued, r)
 		case r.Active():
 			running = append(running, r)
 		}
-		if r.Status != "queued" && (latest == nil || r.Ordinal > latest.Ordinal) {
+		if !notStarted(r) && (latest == nil || r.Ordinal > latest.Ordinal) {
 			latest = &r
 		}
 	}
@@ -103,7 +118,7 @@ func (t *thread) activeRuns() []string {
 	}
 	slices.SortFunc(running, newest)
 	slices.SortFunc(queued, newest)
-	if len(running) == 0 && latest != nil && t.backgroundWork() {
+	if len(running) == 0 && latest != nil && t.backgroundWork(activity) {
 		running = append(running, *latest)
 	}
 	ids := make([]string, 0, len(running)+len(queued))
@@ -114,11 +129,22 @@ func (t *thread) activeRuns() []string {
 }
 
 // backgroundWork reports whether work of the agent's goes on outside a run:
-// a subagent, a background command or a monitor not done yet.
-func (t *thread) backgroundWork() bool {
-	return slices.ContainsFunc(t.activity(), func(a chat.Activity) bool {
+// a subagent, a background command or a monitor not done yet. activity is
+// the thread's, derived here when nil.
+func (t *thread) backgroundWork(activity []chat.Activity) bool {
+	if activity == nil {
+		activity = t.activity()
+	}
+	return slices.ContainsFunc(activity, func(a chat.Activity) bool {
 		return a.State == chat.Pending || a.State == chat.Running || a.State == chat.Waiting
 	})
+}
+
+// notStarted reports a run that has not started: queued, or preparing to
+// start. Its message is queued, the stop dialog lists it after the runs
+// actually running, and ↑ can take it back.
+func notStarted(r t3client.Run) bool {
+	return r.Status == "queued" || r.Status == "preparing"
 }
 
 // queue is what the server holds queued: the messages of runs not started
@@ -126,7 +152,7 @@ func (t *thread) backgroundWork() bool {
 func (t *thread) queue() []chat.Queued {
 	var runs []t3client.Run
 	for _, r := range t.runs {
-		if r.Status == "queued" || r.Status == "preparing" {
+		if notStarted(r) {
 			runs = append(runs, r)
 		}
 	}
@@ -150,16 +176,34 @@ func (t *thread) queue() []chat.Queued {
 // unreadSteers are the messages sent into the running turn that the agent
 // has not read yet, oldest first.
 func (t *thread) unreadSteers() []chat.Queued {
-	var out []chat.Queued
+	var steers []t3client.TurnItem
+	agent := t.agentOrdinal()
 	for _, it := range t.items {
-		if t.unreadSteer(it) {
-			out = append(out, chat.Queued{ID: it.MessageID, Text: it.Text, Steer: true})
+		if t.unreadSteer(it, agent) {
+			steers = append(steers, it)
 		}
 	}
-	slices.SortStableFunc(out, func(a, b chat.Queued) int {
-		return cmp.Compare(t.ordinalOf(a.ID), t.ordinalOf(b.ID))
+	slices.SortStableFunc(steers, func(a, b t3client.TurnItem) int {
+		return cmp.Compare(a.Ordinal, b.Ordinal)
 	})
+	out := make([]chat.Queued, 0, len(steers))
+	for _, it := range steers {
+		out = append(out, chat.Queued{ID: it.MessageID, Text: it.Text, Steer: true})
+	}
 	return out
+}
+
+// agentOrdinal is the transcript position of the agent's latest thought or
+// reply, 0 when there is none: a steer before it has been read. Derived
+// once per pass, as the steers are checked one by one against it.
+func (t *thread) agentOrdinal() int {
+	latest := 0
+	for _, o := range t.items {
+		if o.Type == "assistant_message" || o.Type == "reasoning" {
+			latest = max(latest, o.Ordinal)
+		}
+	}
+	return latest
 }
 
 // unreadSteer reports a message sent into the running turn that the agent
@@ -167,8 +211,8 @@ func (t *thread) unreadSteers() []chat.Queued {
 // row pending until then. Claude's says nothing: the row is complete as soon
 // as the message is handed over, and the agent reads it at its next step,
 // so the message counts as read once the agent starts thinking or writing
-// after it, or its run ends.
-func (t *thread) unreadSteer(it t3client.TurnItem) bool {
+// after it (agent is agentOrdinal), or its run ends.
+func (t *thread) unreadSteer(it t3client.TurnItem, agent int) bool {
 	if it.Type != "user_message" || it.MessageID == "" || (it.InputIntent != "steer" && it.InputIntent != "promoted_queued_to_steer") {
 		return false
 	}
@@ -184,25 +228,13 @@ func (t *thread) unreadSteer(it t3client.TurnItem) bool {
 			return false
 		}
 	}
-	return !slices.ContainsFunc(t.items, func(o t3client.TurnItem) bool {
-		return o.Ordinal > it.Ordinal && (o.Type == "assistant_message" || o.Type == "reasoning")
-	})
-}
-
-// ordinalOf is the transcript position of the user message messageID.
-func (t *thread) ordinalOf(messageID string) int {
-	for _, it := range t.items {
-		if it.MessageID == messageID {
-			return it.Ordinal
-		}
-	}
-	return 0
+	return agent <= it.Ordinal
 }
 
 // holdsQueue reports any queued message, its text known or not.
 func (t *thread) holdsQueue() bool {
 	for _, r := range t.runs {
-		if r.Status == "queued" || r.Status == "preparing" {
+		if notStarted(r) {
 			return true
 		}
 	}
@@ -213,13 +245,13 @@ func (t *thread) holdsQueue() bool {
 // started, "" when there is none.
 func (t *thread) queuedRunOf(messageID string) string {
 	for _, r := range t.runs {
-		if r.UserMessageID == messageID && r.Status == "queued" {
+		if r.UserMessageID == messageID && notStarted(r) {
 			return r.ID
 		}
 	}
 	for _, it := range t.items {
 		if it.MessageID == messageID && t.queuedTurn(it) && it.RunID != nil {
-			if r, ok := t.runs[*it.RunID]; !ok || r.Status == "queued" {
+			if r, ok := t.runs[*it.RunID]; !ok || notStarted(r) {
 				return *it.RunID
 			}
 		}
@@ -253,8 +285,9 @@ func (t *thread) queuedTurn(it t3client.TurnItem) bool {
 // them, or their run ended. A message is known by its id, never by its text.
 func (t *thread) delivered() []string {
 	var out []string
+	agent := t.agentOrdinal()
 	for _, it := range t.items {
-		if it.Type == "user_message" && it.MessageID != "" && !t.unreadSteer(it) {
+		if it.Type == "user_message" && it.MessageID != "" && !t.unreadSteer(it, agent) {
 			out = append(out, it.MessageID)
 		}
 	}
@@ -275,7 +308,7 @@ func (t *thread) entries(queued []chat.Queued) []chat.Entry {
 	}
 	out := make([]chat.Entry, 0, len(t.items))
 	for _, it := range t.items {
-		if it.Type == "checkpoint" || (it.Type == "user_message" && (waiting[it.MessageID] || t.cancelledBeforeStart(it))) {
+		if it.Type == "checkpoint" || !t.visible(it) || (it.Type == "user_message" && (waiting[it.MessageID] || t.cancelledBeforeStart(it))) {
 			continue
 		}
 		out = append(out, t.entry(it))

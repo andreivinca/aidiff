@@ -70,3 +70,32 @@ func TestModel_ChangeCompactContext_WholeFilesUnchanged(t *testing.T) {
 	assert.Equal(t, 5, m.CompactContext())
 	assert.NotEmpty(t, m.compact.hint)
 }
+
+func TestModel_SetCompactContext_KeepsTheCursorThroughTheToggle(t *testing.T) {
+	lines := []diff.DiffLine{
+		{OldNum: 1, NewNum: 1, Content: "a", ChangeType: diff.ChangeContext},
+		{NewNum: 2, Content: "b", ChangeType: diff.ChangeAdd},
+	}
+	m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
+	m.compact.applicable = true
+	m.modes.compactContext = 5
+	m.file.name, m.file.lines = "a.go", lines
+	m.nav.diffCursor = 1
+
+	for _, compact := range []bool{false, true} {
+		m.modes.compact = compact
+		size := m.modes.compactContext + 1
+		cmd := m.setCompactContext(size)
+		require.NotNil(t, cmd, "the file is fetched again")
+		assert.True(t, m.modes.compact)
+		assert.Equal(t, size, m.modes.compactContext)
+		require.NotNil(t, m.compact.pendingAnchor, "the cursor's line is restored after the fetch")
+		assert.Equal(t, m.file.loadSeq, m.compact.pendingAnchor.seq)
+		assert.Equal(t, 2, m.compact.pendingAnchor.srcLine)
+	}
+
+	m.file.requestedPath = "b.go" // another file is loading: refused, nothing changes
+	assert.Nil(t, m.setCompactContext(20))
+	assert.True(t, m.modes.compact)
+	assert.Equal(t, 7, m.modes.compactContext)
+}

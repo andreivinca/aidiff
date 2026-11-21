@@ -12,17 +12,17 @@ type rowKey struct {
 // not change once written, so a scroll or a keystroke does not render the
 // whole conversation again: only a new message, one still streaming, or a
 // resize does. Each transcript render keeps the rows it used and drops the
-// rest, so it holds no more than the conversation on screen. The rows are
-// the cache's own; callers must not change them.
+// rest, so it holds no more than the conversation on screen. The rows, and
+// how a copy reads them, are the cache's own; callers must not change them.
 type rowCache struct {
-	used, prev map[rowKey][]string
+	used, prev map[rowKey]block
 }
 
 // rows is the rows of key, rendered by render when the cache does not hold
 // them.
-func (c *rowCache) rows(key rowKey, render func() []string) []string {
+func (c *rowCache) rows(key rowKey, render func() block) block {
 	if c.used == nil {
-		c.used = map[rowKey][]string{}
+		c.used = map[rowKey]block{}
 	}
 	if r, ok := c.used[key]; ok {
 		return r

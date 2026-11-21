@@ -27,10 +27,10 @@ type workspace struct {
 
 // SwitchWorkspaceMsg puts the workspace Key on screen. A workspace not seen
 // before starts with Model as its wrapped model and no panes; for one that
-// exists, Model replaces its wrapped model when Replace is set and is not
-// used otherwise. With Key already on screen, Model (when set) replaces the
-// wrapped model, as ReplaceInnerMsg does. Done, when set, learns what
-// happened, on the UI goroutine, once the workspace is on screen.
+// exists, on screen already or not, Model replaces its wrapped model when
+// Replace is set (as ReplaceInnerMsg does) and is not used otherwise. Done,
+// when set, learns what happened, on the UI goroutine, once the workspace is
+// on screen.
 type SwitchWorkspaceMsg struct {
 	Key     string
 	Model   tea.Model
@@ -60,17 +60,31 @@ func (m Model) Workspace() string {
 	return m.wsKey
 }
 
-// switchWorkspace carries out a SwitchWorkspaceMsg.
+// switchWorkspace carries out a SwitchWorkspaceMsg: the workspace it
+// leaves on screen counts as used (switcher.go). One that lands while the
+// switcher is open, such as a project opening that the user asked for
+// before, takes over from it.
 func (m Model) switchWorkspace(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
+	m.switcher = switcherState{}
+	model, cmd := m.switchTo(msg)
+	next := model.(Model)
+	next.mru = next.openOrder(used(next.mru, next.wsKey))
+	return next, cmd
+}
+
+// switchTo is switchWorkspace leaving the order of use alone, as the
+// switcher does while the user moves through it.
+func (m Model) switchTo(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
 	if msg.Key == m.wsKey {
-		sw := WorkspaceSwitch{Unused: msg.Model == nil}
-		if msg.Model == nil {
+		if msg.Model == nil || !msg.Replace {
+			// the review keeps its state; Model, never initialized, is
+			// left to Done, as for a parked workspace
 			if msg.Done != nil {
-				msg.Done(sw)
+				msg.Done(WorkspaceSwitch{Unused: true})
 			}
 			return m, nil
 		}
-		sw.Replaced = m.inner
+		sw := WorkspaceSwitch{Replaced: m.inner}
 		return m.replaceInner(ReplaceInnerMsg{Model: msg.Model, Retire: func(tea.Model) {
 			if msg.Done != nil {
 				msg.Done(sw)
@@ -239,35 +253,133 @@ func tagCmd(id int, cmd tea.Cmd) tea.Cmd {
 }
 
 // tagMsg addresses msg to wrapped model id; a batch or sequence has each of
-// its commands tagged instead.
+// its commands tagged instead. The split's own messages go to the split,
+// scoped to the model (see scopedMsg).
 func tagMsg(id int, msg tea.Msg) tea.Msg {
 	if msg == nil {
 		return nil
 	}
-	v := reflect.ValueOf(msg)
-	if v.Kind() == reflect.Slice && v.Type().Elem() == cmdType {
-		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len()) // the same, possibly unexported, type
-		for i := range v.Len() {
-			c, _ := reflect.TypeAssert[tea.Cmd](v.Index(i))
-			out.Index(i).Set(reflect.ValueOf(tagCmd(id, c)))
-		}
-		return out.Interface()
+	if out, ok := mapBatch(msg, func(c tea.Cmd) tea.Cmd { return tagCmd(id, c) }); ok {
+		return out
 	}
-	t := v.Type()
+	t := reflect.TypeOf(msg)
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.PkgPath() == teaPackage {
 		return msg
 	}
-	switch msg := msg.(type) {
-	case RunCommandMsg, RunMsg:
-		return msg // addressed to the split, not back to the model
-	case ConfirmMsg:
-		msg.Yes = tagCmd(id, msg.Yes) // the popup is the split's, its answer the model's
-		return msg
+	if c, ok := msg.(ConfirmMsg); ok {
+		c.Yes, c.No = tagCmd(id, c.Yes), tagCmd(id, c.No) // the popup is the split's, its answer the model's
+		msg = c
+	}
+	if _, ok := msg.(splitMsg); ok {
+		return scopeMsg(id, msg)
 	}
 	return innerMsg{ws: id, msg: msg}
+}
+
+// mapBatch applies f to every command of msg when msg is a Bubble Tea batch
+// or sequence, and reports whether it is one.
+func mapBatch(msg tea.Msg, f func(tea.Cmd) tea.Cmd) (tea.Msg, bool) {
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice || v.Type().Elem() != cmdType {
+		return nil, false
+	}
+	out := reflect.MakeSlice(v.Type(), v.Len(), v.Len()) // the same, possibly unexported, type
+	for i := range v.Len() {
+		c, _ := reflect.TypeAssert[tea.Cmd](v.Index(i))
+		out.Index(i).Set(reflect.ValueOf(f(c)))
+	}
+	return out.Interface(), true
+}
+
+// The commands the split runs for a wrapped model (a palette command, a
+// picker's pick, a sidebar's key, RunMsg's Run) and the wrapped model's own
+// commands may report after the user switched workspace, or after the
+// model was replaced. The split messages among their replies that act on
+// the model, or ask the user about it, are therefore scoped to it: a
+// ReplaceInnerMsg replaces that model, on screen or parked, and a RunMsg,
+// RunCommandMsg, picker, prompt, confirmation or file list is dropped once
+// the model is off screen, as it would act on, or ask about, another one.
+// The other split messages (a flash, a workspace switch, a pane to open) are
+// for whatever is on screen when they arrive, as are messages from the
+// split's commands to the wrapped model: some, such as the machine a new
+// connection reached, are meant for the review on screen.
+
+// scopedMsg is a split message for wrapped model ws.
+type scopedMsg struct {
+	ws  int
+	msg tea.Msg
+}
+
+// scoped makes the split messages cmd produces that act on the wrapped
+// model on screen stay with it.
+func (m Model) scoped(cmd tea.Cmd) tea.Cmd {
+	return scopeCmd(m.wsID, cmd)
+}
+
+// scopeCmd makes the split messages cmd produces that act on wrapped model
+// id stay with it.
+func scopeCmd(id int, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return scopeMsg(id, cmd())
+	}
+}
+
+// scopeMsg scopes msg to wrapped model id when it acts on that model; a
+// batch or sequence has each of its commands scoped instead.
+func scopeMsg(id int, msg tea.Msg) tea.Msg {
+	if out, ok := mapBatch(msg, func(c tea.Cmd) tea.Cmd { return scopeCmd(id, c) }); ok {
+		return out
+	}
+	switch msg.(type) {
+	case ReplaceInnerMsg, RunMsg, RunCommandMsg, ShowPickerMsg, ShowPromptMsg, ConfirmMsg, FilesMsg:
+		return scopedMsg{ws: id, msg: msg}
+	}
+	return msg
+}
+
+// routeScoped carries out a scoped split message (see scopedMsg).
+func (m Model) routeScoped(msg scopedMsg) (tea.Model, tea.Cmd) {
+	if r, ok := msg.msg.(ReplaceInnerMsg); ok {
+		return m.replaceInnerOf(msg.ws, r)
+	}
+	if msg.ws != m.wsID {
+		if c, ok := msg.msg.(ConfirmMsg); ok {
+			return m, c.No // asked unseen: the asker learns there is no answer coming
+		}
+		return m, nil // its model is off screen
+	}
+	return m.update(msg.msg)
+}
+
+// replaceInnerOf carries out a ReplaceInnerMsg for wrapped model ws, on
+// screen or parked. A parked newcomer starts loading in the background and
+// gets its size once its workspace is back; Config.Carry is not asked, as
+// it carries over what the screen showed. When ws is gone for good, nothing
+// is replaced and the newcomer is dropped: it was never initialized, so it
+// started nothing.
+func (m Model) replaceInnerOf(ws int, msg ReplaceInnerMsg) (tea.Model, tea.Cmd) {
+	if ws == m.wsID {
+		return m.replaceInner(msg)
+	}
+	for key, w := range m.parked {
+		if w.id != ws || msg.Model == nil {
+			continue
+		}
+		if msg.Retire != nil {
+			msg.Retire(w.inner)
+		}
+		w.inner, w.id = msg.Model, nextWorkspaceID() // the old model's replies are dropped
+		m.parked = maps.Clone(m.parked)
+		m.parked[key] = w
+		return m, tagCmd(w.id, w.inner.Init())
+	}
+	return m, nil
 }
 
 // routeInner delivers a wrapped model's message to that model: on screen,

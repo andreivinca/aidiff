@@ -112,6 +112,7 @@ type fakeServer struct {
 	mu       sync.Mutex
 	shell    t3client.Shell
 	fetchErr error
+	fetches  int      // the listings fetched
 	watching []string // the threads watched, in order
 	sent     []string // the messages sent
 	launches []t3client.LaunchRequest
@@ -123,7 +124,22 @@ type fakeServer struct {
 func (f *fakeServer) FetchShell(context.Context) (t3client.Shell, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.fetches++
 	return f.shell, f.fetchErr
+}
+
+// fetched is how many listings were fetched so far.
+func (f *fakeServer) fetched() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fetches
+}
+
+// failFetches makes the listing fail with err, or answer again with nil.
+func (f *fakeServer) failFetches(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fetchErr = err
 }
 
 func (f *fakeServer) WatchThread(ctx context.Context, threadID string, _ func(t3client.Thread)) error {

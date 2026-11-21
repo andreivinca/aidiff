@@ -91,12 +91,11 @@ type Backend struct {
 	// newThread starts the thread /clear asks for; nil arms a fresh session
 	newThread func(NewThread)
 
-	mu      sync.Mutex
-	sub     uint64      // the current subscription; events of older ones are dropped
-	viewer  chat.Viewer // the current subscription's; nil before the first
-	thread  thread
-	loading bool // a catalog fetch of this backend's is in flight
-	fresh   bool // /clear: the next message starts a fresh provider session
+	mu     sync.Mutex
+	sub    uint64      // the current subscription; events of older ones are dropped
+	viewer chat.Viewer // the current subscription's; nil before the first
+	thread thread
+	fresh  bool // /clear: the next message starts a fresh provider session
 	// chosen is the model selection /model or /effort set from here, which
 	// every message sent from here carries, as T3's own client does: a
 	// message queued earlier keeps the selection it was queued with, and
@@ -107,6 +106,9 @@ type Backend struct {
 	// work, nil when none does (selection.go)
 	pending *pendingSelection
 	sent    bool // a message went out from here
+
+	instanceMu sync.Mutex
+	instance   string // the provider instance of selectionLocked as showLocked saw it last, which Commands reads without mu
 }
 
 // newBackend is the backend of threadID on srv, sharing catalog.
@@ -117,16 +119,15 @@ func newBackend(srv server, cat *catalog, threadID string) *Backend {
 }
 
 // Subscribe follows the thread for v until ctx ends or the connection
-// drops, and fetches the catalog the first time the server is asked.
+// drops, and fetches the catalog the first time the server is asked, or
+// waits for the fetch another backend started.
 func (b *Backend) Subscribe(ctx context.Context, v chat.Viewer) error {
 	b.mu.Lock()
 	b.sub++
 	sub := b.sub
 	b.viewer = v
 	b.thread = newThread(b.threadID)
-	if b.catalog.unknown() && !b.loading {
-		b.fetchCatalogLocked()
-	}
+	b.catalog.request(b.srv, false, b.catalogArrived)
 	b.mu.Unlock()
 	return b.srv.SubscribeThread(ctx, b.threadID, b.events(sub)) //nolint:wrapcheck // the pane shows the connection's own words
 }
@@ -220,7 +221,10 @@ func (b *Backend) settleChoiceLocked() {
 }
 
 // showLocked shows the pane the conversation as it stands; mu must be held.
+// Every change of the thread or of the selection chosen from here ends in
+// it.
 func (b *Backend) showLocked() {
+	b.instanceLocked()
 	if b.viewer == nil {
 		return
 	}

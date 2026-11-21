@@ -72,7 +72,10 @@ type RunCommandMsg struct {
 
 // RunMsg runs Run with the wrapped model on screen, for a model's command
 // that acts on the split's level, such as rebuilding the review in
-// another view; its command's messages go where any command's do.
+// another view. Sent by a command of the split or of a wrapped model, it
+// runs only while that model is on screen, and its command is the split's,
+// scoped to that model (see scopedMsg). Sent from outside the program
+// (Program.Send), it runs with whatever model is on screen.
 type RunMsg struct {
 	Run func(inner tea.Model) tea.Cmd
 }
@@ -104,3 +107,27 @@ type quitRequestMsg struct{}
 // gone, so a dialog would never be answered and the program would run on
 // unseen.
 type ForceQuitMsg struct{}
+
+// splitMsg marks the messages addressed to the split itself. A wrapped
+// model's command may produce them too (a flash, a picker, a replacement),
+// and tagMsg hands every marked message to the split instead of back to the
+// model. TestSplitMessagesAreMarked fails for a message type left unmarked.
+type splitMsg interface {
+	splitMsg()
+}
+
+func (FilesChangedMsg) splitMsg()    {}
+func (OpenPaneMsg) splitMsg()        {}
+func (OpenTerminalMsg) splitMsg()    {}
+func (ShowPickerMsg) splitMsg()      {}
+func (ShowPromptMsg) splitMsg()      {}
+func (RunCommandMsg) splitMsg()      {}
+func (RunMsg) splitMsg()             {}
+func (FlashMsg) splitMsg()           {}
+func (ReplaceInnerMsg) splitMsg()    {}
+func (ForceQuitMsg) splitMsg()       {}
+func (ConfirmMsg) splitMsg()         {}
+func (FilesMsg) splitMsg()           {}
+func (ShowSidebarMsg) splitMsg()     {}
+func (HideSidebarMsg) splitMsg()     {}
+func (SwitchWorkspaceMsg) splitMsg() {}

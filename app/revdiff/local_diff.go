@@ -29,6 +29,7 @@ type localDiff struct {
 	compact bool               // changed blocks only, kept when Diff View… rebuilds the review
 	context int                // lines around each change, kept the same way (alt+= / alt+-)
 	last    *localChoice       // the comparison shown last, nil for the run's own
+	shown   *localChoice       // what the review on screen compares, its ref resolved; nil for the run's own
 	project *diff.FolderReader // every file of the repository, for the palette's search (palette_files.go)
 }
 
@@ -58,11 +59,34 @@ type compacter interface {
 // folder, every file, or a T3 thread.
 func newLocalDiff(deps reviewDeps, src sourceSetup, description string) *localDiff {
 	opts := deps.opts
-	if src.vcsType != diff.VCSGit || src.folder != nil || src.t3 != nil || opts.Stdin || opts.AllFiles || opts.CompareOld != "" {
+	if src.folder != nil || !hasLocalDiff(opts, src) {
 		return nil
 	}
 	return &localDiff{deps: deps, src: src, description: description, git: localGit{dir: src.workDir}, label: runLabel(opts), compact: opts.Compact,
 		context: opts.CompactContext}
+}
+
+// hasLocalDiff reports whether a review of src run with opts belongs to a
+// Diff View…: a git repository's, not stdin, a compare pair, every file
+// (--all-files) or a T3 thread. The toolbar's View switch asks it too
+// (viewSwitch.forSource), so it offers no switch that has nothing to run.
+func hasLocalDiff(opts options, src sourceSetup) bool {
+	return src.vcsType == diff.VCSGit && src.t3 == nil && !opts.Stdin && !opts.AllFiles && opts.CompareOld == ""
+}
+
+// compared is opts comparing what the review on screen compares, for filing
+// its annotations: Diff View… may have changed it since the run began. A nil
+// l leaves opts as they are.
+func (l *localDiff) compared(opts options) options {
+	if l == nil {
+		return opts
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.shown != nil {
+		opts.Refs.Base, opts.Refs.Against, opts.Staged = l.shown.ref, "", l.shown.staged
+	}
+	return opts
 }
 
 // runLabel names what the run's own review compares.
@@ -139,13 +163,19 @@ func (l *localDiff) onPick(store *annotation.Store) func(it splitview.PickerItem
 // toolbar; how inner shows its files is kept for the reviews Diff View…
 // builds, since C, alt+= / alt+- and that dropdown may have changed it.
 func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
+	l.keepCompact(inner)
+	return []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
+}
+
+// keepCompact records how inner shows its files, whole or the changed blocks
+// only, for the reviews Diff View… builds next.
+func (l *localDiff) keepCompact(inner tea.Model) {
 	if c, ok := inner.(compacter); ok && c.CompactApplicable() {
 		l.mu.Lock()
 		l.compact = c.Compact()
 		l.context = c.CompactContext()
 		l.mu.Unlock()
 	}
-	return []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
 }
 
 // showTree rebuilds the review as a browser of every file in the
@@ -164,6 +194,7 @@ func (l *localDiff) showTree(store *annotation.Store) tea.Cmd {
 		}
 		l.mu.Lock()
 		l.label = "file tree"
+		l.shown = &localChoice{label: l.label} // every file as it is now: the working tree
 		l.mu.Unlock()
 		return splitview.ReplaceInnerMsg{Model: model}
 	})
@@ -238,6 +269,7 @@ func (l *localDiff) show(c localChoice, store *annotation.Store) tea.Cmd {
 		l.mu.Lock()
 		l.label = c.label
 		l.last = &c
+		l.shown = &localChoice{ref: ref, staged: c.staged, label: c.label}
 		l.mu.Unlock()
 		return splitview.ReplaceInnerMsg{Model: model}
 	})
@@ -247,6 +279,7 @@ func (l *localDiff) show(c localChoice, store *annotation.Store) tea.Cmd {
 // changes again, compared as they were last.
 func (l *localDiff) showView(inner tea.Model, files bool) tea.Cmd {
 	store := reviewStore(inner)
+	l.keepCompact(inner) // C, alt+= / alt+- or the context dropdown may have changed it
 	if files {
 		return l.showTree(store)
 	}
@@ -270,6 +303,7 @@ func (l *localDiff) showView(inner tea.Model, files bool) tea.Cmd {
 		}
 		l.mu.Lock()
 		l.label = runLabel(l.deps.opts)
+		l.shown = nil
 		l.mu.Unlock()
 		return splitview.ReplaceInnerMsg{Model: model}
 	})

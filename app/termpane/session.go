@@ -30,6 +30,19 @@ func (p *Pane) killSession() {
 	signalSession(sid, syscall.SIGKILL)
 }
 
+// exitPoll is how often pollExited looks whether the child still runs.
+const exitPoll = 100 * time.Millisecond
+
+// pollExited blocks until pid no longer runs (running), looking every
+// exitPoll. It is waitExited's fallback when the system cannot watch the
+// child (no descriptor left for a kqueue, ECHILD from waitid): reporting an
+// exit then would remove a pane whose shell still runs.
+func pollExited(pid int) {
+	for running(pid) {
+		time.Sleep(exitPoll)
+	}
+}
+
 // signalSession sends sig to every live process in session sid and reports
 // how many it found.
 func signalSession(sid int, sig syscall.Signal) int {

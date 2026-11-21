@@ -6,6 +6,7 @@ package t3palette
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -64,9 +65,12 @@ type dialFunc func(ctx context.Context, spec string) (Session, error)
 // on screen changes only where the split switches workspaces (switched), so it
 // always matches what the user sees.
 type Palette struct {
-	cfg  Config
-	dial dialFunc
-	bg   sync.WaitGroup // background work: thread watches, closing sessions, stopping refreshes, saving history
+	cfg    Config
+	dial   dialFunc
+	bg     sync.WaitGroup     // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
+	loops  sync.WaitGroup     // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
+	ctx    context.Context    // canceled by Close: ends the loops, the reconnects' dials and the background fetches
+	cancel context.CancelFunc // cancels ctx
 
 	mu          sync.Mutex
 	closed      bool
@@ -79,6 +83,9 @@ type Palette struct {
 	chats       []*openChat                  // open chat panes; they follow the thread on screen
 	shell       t3client.Shell               // the live server's projects and threads, from the last fetch
 	shellAt     time.Time                    // when shell was fetched
+	shellErr    error                        // why the last background fetch of shell failed; nil after a good one
+	shellFails  int                          // background fetches of shell failed in a row
+	shellRetry  time.Time                    // no background fetch of shell before then, after a failure
 	refreshing  Session                      // the session a background fetch of shell runs for
 	project     *t3client.Project            // the live server's project new threads start in; nil until chosen
 	diff        diffChoice                   // what T3: Diff View… chose for the reviews of its folder
@@ -91,6 +98,14 @@ type Palette struct {
 	connected   map[Session]bool             // the newest connection to each server the user connected to; they stay open
 	saved       []SavedServer                // the servers connected to in this run or saved before (saved.go)
 	stores      map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
+	filed       map[*annotation.Store]string // what each store last filed in history as its review left the screen
+	chosen      uint64                       // bumped by every choice of connection: a connect asked for before lands without taking over
+	retrying    map[Session]bool             // the sessions a reconnect runs for
+	incoming    map[Session]bool             // sessions a reconnect reached, on their way to takeOver; Close closes them
+	stale       map[*Review]bool             // parked reviews whose model reads over a session a reconnect replaced; rebuilt when back
+	forgotten   map[string]bool              // servers forgotten in this run: saved again only once the user connects to them
+	saveQ       []func()                     // writes of the saved servers and folders, in order (saved.go)
+	saving      bool                         // a goroutine drains saveQ
 }
 
 // New builds the palette. start is the T3 review the run opens with, nil for
@@ -105,9 +120,12 @@ func New(cfg Config, start *Review) *Palette {
 
 // newPalette is New with the way palette connections are made.
 func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
+	ctx, cancel := context.WithCancel(context.Background())
 	t := &Palette{
 		cfg:         cfg,
 		dial:        dial,
+		ctx:         ctx,
+		cancel:      cancel,
 		held:        map[Session]bool{},
 		pending:     map[*Review]bool{},
 		stop:        noop,
@@ -115,6 +133,11 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 		parkedLocal: map[string]*LocalWorkspace{},
 		connected:   map[Session]bool{},
 		stores:      map[string]*annotation.Store{},
+		filed:       map[*annotation.Store]string{},
+		retrying:    map[Session]bool{},
+		incoming:    map[Session]bool{},
+		stale:       map[*Review]bool{},
+		forgotten:   map[string]bool{},
 	}
 	if start != nil {
 		t.held[start.Session] = true
@@ -155,27 +178,47 @@ func (t *Palette) Start(p Program, localStop func()) {
 }
 
 // Close stops the live refresh, ends every session the palette holds, and
-// waits for the work it left running in the background. Whatever lands
-// afterwards closes its own session.
+// waits for the work it left running in the background; the reconnects it
+// cancels it waits for up to loopsWait. Whatever lands afterwards closes its
+// own session.
 func (t *Palette) Close() {
 	t.mu.Lock()
 	t.closed = true
+	t.cancel()
 	stop := t.stop
 	t.stop = noop
-	sessions := make([]Session, 0, len(t.held))
+	sessions := make([]Session, 0, len(t.held)+len(t.incoming))
 	for s := range t.held {
 		sessions = append(sessions, s)
+	}
+	for s := range t.incoming {
+		sessions = append(sessions, s) // left in incoming: adopt must not close it again
 	}
 	clear(t.held)
 	clear(t.connected)
 	clear(t.pending)
 	clear(t.parked)
 	clear(t.parkedLocal)
+	clear(t.stale)
 	t.live = nil
 	t.mu.Unlock()
 	stop()
 	closeAll(sessions)
 	t.bg.Wait()
+	waitAWhile(&t.loops, loopsWait)
+}
+
+// waitAWhile waits for wg, for d at most.
+func waitAWhile(wg *sync.WaitGroup, d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }
 
 // OnScreen is the T3 review on screen, nil while the run's local review is.
@@ -190,6 +233,7 @@ type state struct {
 	live     Session
 	onScreen *Review
 	shell    t3client.Shell
+	shellErr error
 	project  *t3client.Project
 }
 
@@ -197,7 +241,7 @@ type state struct {
 func (t *Palette) state() state {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return state{live: t.live, onScreen: t.onScreen, shell: t.shell, project: t.project}
+	return state{live: t.live, onScreen: t.onScreen, shell: t.shell, shellErr: t.shellErr, project: t.project}
 }
 
 // liveSession is the session the commands use, nil before the first
@@ -208,27 +252,100 @@ func (t *Palette) liveSession() Session {
 	return t.live
 }
 
-// adopt makes s the live session, with sh as its cached listing. With
-// replacing set (a reconnect), s takes the place of that session only: when
-// another one became live meanwhile, s is closed instead and adopt reports
-// false. It reports false too, closing s, once the palette is closed.
+// adopt puts s, a reconnect's new session to replacing's server, in
+// replacing's place, with sh as its cached listing: live, and under what
+// still came over replacing (repointLocked). When another session became
+// live meanwhile, s is closed instead and adopt reports false. It reports
+// false too, closing s unless Close did, once the palette is closed.
 func (t *Palette) adopt(s Session, sh t3client.Shell, replacing Session) bool {
 	t.mu.Lock()
-	if t.closed || (replacing != nil && t.live != replacing) {
+	if t.closed {
+		closedByClose := t.incoming[s]
+		t.mu.Unlock()
+		if !closedByClose {
+			_ = s.Close()
+		}
+		return false
+	}
+	delete(t.incoming, s)
+	if t.live != replacing {
 		t.mu.Unlock()
 		_ = s.Close()
 		return false
 	}
 	defer t.mu.Unlock()
+	t.adoptLocked(s, sh)
+	t.repointLocked(replacing, s, sh)
+	t.closeLaterLocked(t.takeUnusedLocked())
+	return true
+}
+
+// adoptChosen makes s, which the user asked to connect to with choice
+// (chooseLocked), the live session, with sh as its cached listing. When the user
+// chose another connection since, s is closed instead and stale reports it;
+// once the palette is closed, s is closed and both report false.
+func (t *Palette) adoptChosen(s Session, sh t3client.Shell, choice uint64) (ok, stale bool) {
+	t.mu.Lock()
+	if t.closed || choice != t.chosen {
+		closed := t.closed
+		t.mu.Unlock()
+		_ = s.Close()
+		return false, !closed
+	}
+	defer t.mu.Unlock()
+	delete(t.forgotten, s.Label()) // the user connected to it again: it is saved again
+	t.adoptLocked(s, sh)
+	t.closeLaterLocked(t.takeUnusedLocked())
+	return true, false
+}
+
+// adoptLocked makes s the live session, with sh as its cached listing, and
+// records it as its server's connection. mu must be held and the palette
+// open.
+func (t *Palette) adoptLocked(s Session, sh t3client.Shell) {
 	if t.live == nil || t.live.Label() != s.Label() {
 		t.project = nil // a project belongs to its server
 	}
 	t.held[s] = true
 	t.live = s
 	t.connectLocked(s)
-	t.shell, t.shellAt = sh, time.Now()
-	t.closeLaterLocked(t.takeUnusedLocked())
-	return true
+	t.setShellLocked(sh)
+}
+
+// chooseLocked records that the user chose a connection, so that a connect
+// asked for before it does not take over when it lands; it returns the
+// choice. mu must be held.
+func (t *Palette) chooseLocked() uint64 {
+	t.chosen++
+	return t.chosen
+}
+
+// repointLocked moves what still came over old to s, the session that
+// replaced it: the parked reviews, whose models read over old and so are
+// rebuilt over s when they come back on screen (switched, openProject), and
+// the chat panes, at once. Nothing but the review on screen keeps old open
+// then, until its own rebuild lands. mu must be held.
+func (t *Palette) repointLocked(old, s Session, sh t3client.Shell) {
+	for key, r := range t.parked {
+		if r.Session != old {
+			continue
+		}
+		next := *r
+		next.Session = s
+		t.parked[key] = &next
+		delete(t.stale, r)
+		t.stale[&next] = true
+	}
+	for _, c := range t.liveChatsLocked() {
+		if c.session != old {
+			continue
+		}
+		th := c.th
+		if i := slices.IndexFunc(sh.Threads, func(x t3client.Thread) bool { return x.ID == th.ID }); i >= 0 {
+			th = sh.Threads[i] // as it is now
+		}
+		c.followOn(s, th)
+	}
 }
 
 // connectLocked records s as the connection to its server, in place of an
@@ -316,6 +433,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 		if sw.Replaced != nil {
 			if on != nil {
 				t.stores[reviewKey(on)] = storeOf(sw.Replaced)
+				delete(t.stale, on)
 			}
 			notes = append(notes, noteOf(on, "", sw.Replaced, store)...)
 		}
@@ -332,9 +450,14 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 	if on.Session == t.live {
 		t.project = &on.Target.Project
 	}
-	if on == r {
+	switch p := t.program; {
+	case on == r:
 		t.followChatsLocked(r)
-	} else if p := t.program; p != nil {
+	case p != nil && t.stale[on]: // back over a replaced session, not by openProject: rebuild it
+		t.laterLocked(func() {
+			p.Send(splitview.RunMsg{Run: func(tea.Model) tea.Cmd { return t.rebuildParked(on) }})
+		})
+	case p != nil:
 		t.laterLocked(func() {
 			p.Send(splitview.FilesChangedMsg{}) // back from the background: catch up
 		})

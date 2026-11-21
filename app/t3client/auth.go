@@ -19,14 +19,30 @@ import (
 // maxErrorBody bounds how much of a failed response an error quotes.
 const maxErrorBody = 200
 
-// normalizeURL reduces a server URL to its origin (scheme://host[:port]),
-// the key tokens are saved under.
-func normalizeURL(baseURL string) string {
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || u.Host == "" {
-		return strings.TrimRight(strings.TrimSpace(baseURL), "/")
+// serverBase is where an http(s) server is served: its origin
+// (scheme://host[:port]) and any path a reverse proxy serves it under, with
+// no query, fragment or trailing slash. Requests (/ws, /oauth/token) are
+// addressed below it. The scheme and host are lowercased; a path is not.
+func serverBase(u *url.URL) string {
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/")
+}
+
+// tokenKey is the key a server's token is saved under: its label, spelled
+// one way. An ssh:// label keeps its user, since alice@box and bob@box are
+// different accounts with tokens of their own; only its host is lowercased,
+// so a label without a user keys as it always has. An http(s) label is its
+// serverBase.
+func tokenKey(label string) string {
+	label = strings.TrimRight(strings.TrimSpace(label), "/")
+	if rest, ok := strings.CutPrefix(label, "ssh://"); ok {
+		at := strings.LastIndex(rest, "@") + 1 // 0 without a user
+		return "ssh://" + rest[:at] + strings.ToLower(rest[at:])
 	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	u, err := url.Parse(label)
+	if err != nil || u.Host == "" || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
+		return label
+	}
+	return serverBase(u)
 }
 
 // isLoopback reports whether baseURL points at this machine.
@@ -75,7 +91,7 @@ func pair(ctx context.Context, ep endpoint, credential string) (string, error) {
 		"client_label":         {"aidiff"},
 		"client_device_type":   {"bot"},
 	}
-	endpointURL := strings.TrimRight(ep.origin, "/") + "/oauth/token"
+	endpointURL := strings.TrimRight(ep.base, "/") + "/oauth/token"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("pair with T3: %w", err)
@@ -84,15 +100,15 @@ func pair(ctx context.Context, ep endpoint, credential string) (string, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := ep.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("pair with T3 at %s: %w", ep.origin, err)
+		return "", fmt.Errorf("pair with T3 at %s: %w", ep.base, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("pair with T3 at %s: read response: %w", ep.origin, err)
+		return "", fmt.Errorf("pair with T3 at %s: read response: %w", ep.base, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("pair with T3 at %s: HTTP %d: %s", ep.origin, resp.StatusCode, errorExcerpt(body))
+		return "", fmt.Errorf("pair with T3 at %s: HTTP %d: %s", ep.base, resp.StatusCode, errorExcerpt(body))
 	}
 	var out struct {
 		AccessToken string `json:"access_token"`
@@ -163,7 +179,8 @@ func firstToken(out []byte) (string, error) {
 			continue
 		}
 		if !tokenFormat.MatchString(line) {
-			return "", fmt.Errorf("t3 auth session issue printed %q where a token belongs", errorExcerpt([]byte(line)))
+			// never quoted: a token with a stray character is still a secret
+			return "", fmt.Errorf("t3 auth session issue printed unexpected output (%d bytes) where a token belongs", len(line))
 		}
 		return line, nil
 	}

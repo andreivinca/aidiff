@@ -12,12 +12,20 @@ import (
 )
 
 // diffChoice is what T3: Diff View… chose. It applies to the reviews of the
-// folder it was chosen in, since a branch named there may not exist in
-// another; reviews elsewhere compare what the run's --t3-source says.
+// folder it was chosen in, on the server it was chosen on (by label, so
+// across reconnects), since a branch named there may not exist in another;
+// reviews elsewhere compare what the run's --t3-source says.
 type diffChoice struct {
+	server string
 	cwd    string
 	source t3client.DiffSource
 	label  string
+}
+
+// appliesTo reports whether the choice was made for target's folder on s's
+// server.
+func (d diffChoice) appliesTo(s Session, target t3client.Target) bool {
+	return d.cwd != "" && d.cwd == target.Cwd && s != nil && d.server == s.Label()
 }
 
 // The rows of the diff picker that are not a branch.
@@ -53,7 +61,7 @@ func (t *Palette) newReview(s Session, target t3client.Target) *Review {
 	d, view := t.diff, t.view
 	t.mu.Unlock()
 	r := &Review{Session: s, Target: target, View: view}
-	if d.cwd != "" && d.cwd == target.Cwd {
+	if d.appliesTo(s, target) {
 		r.Source, r.SourceLabel = d.source, d.label
 	}
 	return r
@@ -203,7 +211,7 @@ func (t *Palette) ShowView(inner tea.Model, files bool) tea.Cmd {
 	t.mu.Lock()
 	d := t.diff
 	t.mu.Unlock()
-	if d.cwd != r.Target.Cwd {
+	if !d.appliesTo(r.Session, r.Target) {
 		d = diffChoice{} // the run's --t3-source
 	}
 	if d.label == "" {
@@ -215,7 +223,7 @@ func (t *Palette) ShowView(inner tea.Model, files bool) tea.Cmd {
 // showDiff makes d the choice for r's folder and rebuilds r comparing it,
 // with the annotations in store.
 func (t *Palette) showDiff(r *Review, d diffChoice, store *annotation.Store) tea.Cmd {
-	d.cwd = r.Target.Cwd
+	d.server, d.cwd = r.Session.Label(), r.Target.Cwd
 	t.mu.Lock()
 	t.diff = d
 	view := t.view

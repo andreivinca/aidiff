@@ -99,9 +99,11 @@ func TestPane_PendingFollowIgnoresOldSend(t *testing.T) {
 	p.SendText("old thread message\r")
 	nextCall(t, f)
 	p.Follow(nil, "Other")
+	waitUpdate(t, p) // the follow's redraw
 	close(release)
-	assert.NotContains(t, view(p), "old thread message")
-	assert.NotContains(t, view(p), "old failure")
+	waitUpdate(t, p)
+	assert.NotContains(t, view(p), "Sending…", "the old thread's card does not follow the pane")
+	assert.Equal(t, "old thread message", p.input.text(), "but its failed message comes back to the input, never lost")
 }
 
 func TestPane_PendingFitsSmallPanes(t *testing.T) {

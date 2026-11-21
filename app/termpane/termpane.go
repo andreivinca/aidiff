@@ -15,6 +15,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // frameInterval caps how often the pane asks the UI to redraw while the
@@ -89,12 +90,15 @@ func Start(argv []string, dir string, width, height int) (*Pane, error) {
 	// a context would only kill the leader and leave its jobs behind.
 	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec,noctx // user-chosen command, run on purpose; Close ends it
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = childEnv(os.Environ())
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(height), Cols: uint16(width)}) //nolint:gosec // sizes are small positive ints
 	if err != nil {
 		return nil, fmt.Errorf("start %s in pty: %w", argv[0], err)
 	}
+	if polled, err := pollable(ptmx); err == nil {
+		ptmx = polled
+	} // else keep the blocking master: the pane works, only Close may leave its reader behind
 
 	p := newPane(ptmx, width, height)
 	p.cmd = cmd
@@ -289,7 +293,7 @@ func (p *Pane) Resize(width, height int) {
 	}
 	p.emu.Resize(width, height)
 	p.screenGen++
-	_ = pty.Setsize(p.ptmx, &pty.Winsize{Rows: uint16(height), Cols: uint16(width)}) //nolint:gosec // small positive ints
+	_ = setWinsize(p.ptmx, width, height)
 	p.markDirty()
 }
 
@@ -325,7 +329,7 @@ func (p *Pane) reapLeader() {
 // stopIO closes the pty and the emulator's input pipe and waits for the I/O
 // goroutines to end.
 func (p *Pane) stopIO() {
-	_ = p.ptmx.Close() // unblocks readOutput and a writeInput stuck on a full pty
+	_ = p.ptmx.Close() // wakes readOutput and a writeInput stuck on a full pty (see pollable)
 	// Emulator.Close flips an unlocked flag that Read/Write also check, so it
 	// would race the copy goroutines. Closing only the input pipe (an
 	// io.PipeWriter, safe across goroutines) ends queueInput with EOF.
@@ -341,4 +345,57 @@ func (p *Pane) stopIO() {
 			return
 		}
 	}
+}
+
+// pollable returns the pty master f as a non-blocking file the runtime
+// poller owns, and closes f. creack/pty leaves the master in blocking mode
+// (its ioctls go through Fd), and closing a blocking file does not wake a
+// Read in progress: the close waits for the Read, which returns only once
+// every process holding the pty's other end lets go. A daemon the shell
+// started keeps it open, so readOutput, its descriptor and the emulator would
+// outlive Close until that daemon exits. Through the poller, Close wakes the
+// Read at once.
+func pollable(f *os.File) (*os.File, error) {
+	sc, err := f.SyscallConn()
+	if err != nil {
+		return nil, fmt.Errorf("pty master: %w", err)
+	}
+	dup, dupErr := -1, error(nil)
+	if err := sc.Control(func(fd uintptr) {
+		dup, dupErr = unix.FcntlInt(fd, unix.F_DUPFD_CLOEXEC, 0)
+	}); err != nil {
+		return nil, fmt.Errorf("pty master: %w", err)
+	}
+	if dupErr != nil {
+		return nil, fmt.Errorf("duplicate pty master: %w", dupErr)
+	}
+	if err := unix.SetNonblock(dup, true); err != nil {
+		_ = unix.Close(dup)
+		return nil, fmt.Errorf("pty master non-blocking: %w", err)
+	}
+	// the duplicate holds the pty
+	_ = f.Close()
+	return os.NewFile(uintptr(dup), f.Name()), nil //nolint:gosec // a descriptor is a small non-negative int
+}
+
+// setWinsize sets the window size of pty master f. It goes through
+// SyscallConn rather than pty.Setsize, which takes the descriptor with Fd:
+// Fd may hand it back in blocking mode (it does for a file Go made
+// non-blocking itself), which would undo pollable.
+func setWinsize(f *os.File, width, height int) error {
+	sc, err := f.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("pty window size: %w", err)
+	}
+	ws := &unix.Winsize{Row: uint16(height), Col: uint16(width)} //nolint:gosec // small positive ints
+	var ioErr error
+	if err := sc.Control(func(fd uintptr) {
+		ioErr = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, ws) //nolint:gosec // a descriptor is a small non-negative int
+	}); err != nil {
+		return fmt.Errorf("pty window size: %w", err)
+	}
+	if ioErr != nil {
+		return fmt.Errorf("pty window size: %w", ioErr)
+	}
+	return nil
 }

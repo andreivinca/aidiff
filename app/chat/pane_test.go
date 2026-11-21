@@ -78,7 +78,7 @@ func TestPane_RendersEveryEntry(t *testing.T) {
 	assert.Contains(t, v, "▸ fix")
 	assert.Contains(t, v, "☐ test")
 	assert.Contains(t, v, "✗ rate limited")
-	assert.NotContains(t, v, "retry later", "a failure shows its first line")
+	assert.Contains(t, v, "\n     retry later", "a failure shows all of its text, hanging under the mark")
 	assert.Contains(t, v, "⋯ 1 thought, ", "work still going shows ⋯")
 	assert.Contains(t, v, " 1 tool, 1 subagent, 4 steps", "kinds without a word of their own count as steps")
 
@@ -253,10 +253,12 @@ func TestPane_StaleRequestLeavesTheNewBackendAlone(t *testing.T) {
 	p.SendText("on the new thread\r")
 	nextCall(t, other)
 	close(release)
-	p.SendText("again\r")
+	waitUpdate(t, p)
+	assert.Equal(t, "on the old thread", p.input.text(),
+		"the old thread's failed message is back in the input, not lost: the draft outlives the conversation")
+	assert.Contains(t, view(p), "send failed: old failure", "the note says why it is back")
+	p.SendText("\x15again\r")
 	assert.Contains(t, view(p), "still being sent", "the old request did not end the new one's wait")
-	assert.NotContains(t, view(p), "old failure", "nor reported on the new thread")
-	assert.NotContains(t, view(p), "on the old thread")
 	close(blocked)
 	waitUpdate(t, p)
 }
