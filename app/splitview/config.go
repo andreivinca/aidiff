@@ -46,6 +46,10 @@ type Config struct {
 	// NoColors draws the chrome that would color its text by machine (the
 	// tab strip, the switcher's machine names) without colors.
 	NoColors bool
+	// TabBarBg is the select-graphic-rendition sequence that sets the tab
+	// strip's background, such as the side pane's shade, so the strip reads
+	// as its own band without a line under it; "" leaves the terminal's.
+	TabBarBg string
 	// Sidebar, when set, is a column left of the wrapped model that
 	// Keys.Sidebar shows and hides.
 	Sidebar Sidebar

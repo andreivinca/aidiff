@@ -220,10 +220,24 @@ func (m Model) tabStrip() tabLine {
 		return c.strip
 	}
 	strip := layoutTabs(specs, m.winW, m.cfg.NoColors, m.styles.muted)
+	if !m.cfg.NoColors {
+		strip.line = shadeRow(strip.line, m.cfg.TabBarBg)
+	}
 	if c != nil {
 		*c = tabCache{valid: true, specs: specs, width: m.winW, noColors: m.cfg.NoColors, strip: strip}
 	}
 	return strip
+}
+
+// shadeRow is line on background bg (an SGR sequence): set at its start
+// and again after every reset inside it, which would drop it, so a tab's
+// own background still wins over it; line as it is for no bg.
+func shadeRow(line, bg string) string {
+	if bg == "" {
+		return line
+	}
+	line = strings.ReplaceAll(line, "\x1b[0m", ansi.ResetStyle) // lipgloss's reset, as ansi's
+	return bg + strings.ReplaceAll(line, ansi.ResetStyle, ansi.ResetStyle+bg) + ansi.ResetStyle
 }
 
 // tabText is tab s's text with its name cut to name: its number (1-9),

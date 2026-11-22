@@ -8,6 +8,7 @@ import (
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/ui"
+	"github.com/umputun/revdiff/app/ui/style"
 )
 
 // paletteKey opens the split's command palette. It is set here, not left to
@@ -27,8 +28,8 @@ const (
 
 // newSplit wraps the review in the split view. It always does: ctrl+p can
 // open terminals even when none start open, and the T3 commands live there
-// too. out is the terminal the program draws on.
-func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs, out io.Writer) splitview.Model {
+// too. out is the terminal the program draws on; res colors the tab strip.
+func newSplit(opts options, res style.Resolver, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs, out io.Writer) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	finder := &paletteFinder{project: reviewProject(t3p, local, diffs)}
 	tabs, recent := t3p.StartTabs() // the last run's, not opened until shown
@@ -51,6 +52,7 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		Sessions:     t3p.Sessions(),
 		Output:       terminalOutput(out),
 		NoColors:     opts.NoColors,
+		TabBarBg:     string(res.Color(style.ColorKeyTreePaneBg)), // the file tree's shade: one band of chrome
 	})
 }
 

@@ -580,3 +580,11 @@ func TestTabs_AltWClosesTheTabOnScreenEitherCase(t *testing.T) {
 	assert.Equal(t, "alt+left", shifted("alt+left"), "a named key has no upper case")
 	assert.Equal(t, "alt+1", shifted("alt+1"))
 }
+
+func TestShadeRow(t *testing.T) {
+	const bg = "\x1b[48;2;30;32;38m"
+	assert.Equal(t, "plain", shadeRow("plain", ""), "no background: as it is")
+	got := shadeRow("a\x1b[1mb\x1b[mc\x1b[0md", bg)
+	assert.Equal(t, bg+"a\x1b[1mb\x1b[m"+bg+"c\x1b[m"+bg+"d\x1b[m", got, "set at the start and again after every reset")
+	assert.Equal(t, "abcd", ansi.Strip(got), "the cells are the same")
+}
