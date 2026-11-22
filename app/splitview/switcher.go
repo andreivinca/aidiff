@@ -103,7 +103,8 @@ func (m Model) openOrder(order []string) []string {
 }
 
 // sessionKeys are the open workspaces, most recently used first: the one on
-// screen, then the parked ones.
+// screen, then the parked ones; those never used yet, such as the ones not
+// opened yet, follow in the order of their tabs.
 func (m Model) sessionKeys() []string {
 	keys := []string{m.wsKey}
 	for _, k := range m.mru {
@@ -111,7 +112,12 @@ func (m Model) sessionKeys() []string {
 			keys = append(keys, k)
 		}
 	}
-	var rest []string // parked ones the order does not know: never expected, listed last
+	for _, k := range m.tabs {
+		if _, ok := m.parked[k]; ok && !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	var rest []string // parked ones neither order knows: never expected, listed last
 	for k := range m.parked {
 		if !slices.Contains(keys, k) {
 			rest = append(rest, k)
@@ -170,12 +176,13 @@ func (s switcherState) selectedSession() string {
 
 // showSession is the Done of a switch to key and whether key can come on
 // screen as it was parked (Sessions.Show); without Sessions every workspace
-// can.
+// can. A workspace not opened yet never can: Sessions.Open opens it.
 func (m Model) showSession(key string) (func(WorkspaceSwitch), bool) {
 	if m.cfg.Sessions == nil {
 		return nil, true
 	}
-	return m.cfg.Sessions.Show(key)
+	done, ready := m.cfg.Sessions.Show(key)
+	return done, ready && !isUnopened(m.workspaceModel(key))
 }
 
 // previewSession puts the selected session on screen, unless it cannot come

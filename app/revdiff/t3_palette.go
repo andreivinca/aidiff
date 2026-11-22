@@ -13,10 +13,10 @@ import (
 
 // newT3Palette builds the T3 commands of the ctrl+p palette and the projects
 // sidebar for this run; store holds the annotations of the review the run
-// opens with, local how it reaches this machine's folders. From here on the
-// palette owns the T3 session src opened, if any; the caller ends it with
-// Close.
-func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *annotation.Store, local t3palette.LocalConfig) *t3palette.Palette {
+// opens with, local how it reaches this machine's folders, plan the saved
+// tabs and the saved T3 tab the run starts on. From here on the palette
+// owns the T3 session src opened, if any; the caller ends it with Close.
+func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *annotation.Store, local t3palette.LocalConfig, plan runStart) *t3palette.Palette {
 	opts := deps.opts
 	return t3palette.New(t3palette.Config{
 		Store: t3TokenStore(),
@@ -41,6 +41,8 @@ func newT3Palette(deps reviewDeps, description string, src sourceSetup, store *a
 		LocalName:  deps.hostname,
 		Local:      local,
 		Saved:      savedConnections(),
+		Tabs:       plan.tabs,
+		StartTab:   plan.tab,
 	}, src.t3)
 }
 

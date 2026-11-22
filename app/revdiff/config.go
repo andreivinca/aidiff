@@ -13,7 +13,7 @@ import (
 
 type options struct {
 	Refs struct {
-		Base    string `positional-arg-name:"base" description:"git ref to diff against (default: uncommitted changes)"`
+		Base    string `positional-arg-name:"base" description:"git ref to diff against (default: uncommitted changes), or a folder to open"`
 		Against string `positional-arg-name:"against" description:"second git ref for two-ref diff (e.g. revdiff main feature)"`
 	} `positional-args:"yes"`
 
@@ -116,6 +116,7 @@ type options struct {
 
 	compareAbsOld string
 	compareAbsNew string
+	folder        string // the folder the positional argument names, reviewed as if the run started there (folder_arg.go)
 }
 
 // ref returns the combined ref string from positional args.
@@ -159,6 +160,7 @@ func parseArgs(args []string) (options, error) {
 	if _, err := p.ParseArgs(args); err != nil {
 		return options{}, fmt.Errorf("parse args: %w", err)
 	}
+	opts = opts.withFolderForm()
 
 	if opts.Staged && (opts.Refs.Against != "" || strings.Contains(opts.Refs.Base, "..")) {
 		return options{}, errors.New("--staged cannot be used with two-ref diff")
@@ -198,6 +200,10 @@ func parseArgs(args []string) (options, error) {
 	}
 
 	if err := validateT3Flags(opts); err != nil {
+		return options{}, err
+	}
+
+	if err := validateFolderArg(opts); err != nil {
 		return options{}, err
 	}
 

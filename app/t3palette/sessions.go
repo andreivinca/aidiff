@@ -77,6 +77,8 @@ func (l sessionList) Peek(key string) splitview.SessionInfo {
 			Machine: localLabel,
 			Path:    display(homeRelative(filepath.Dir(local.Dir))),
 		}
+	case t.restored[key] != nil:
+		return t.describeRestoredLocked(t.restored[key])
 	}
 	return splitview.SessionInfo{}
 }
@@ -120,11 +122,15 @@ func (t *Palette) reviewNoteLocked(r *Review) string {
 // Show is the Done of a switch to parked workspace key, the one the
 // sidebars' switches carry. A T3 review over a connection that dropped, is
 // being reconnected, or was replaced, is not ready: it would show errors,
-// or start a rebuild for a workspace the user may only be passing by.
+// or start a rebuild for a workspace the user may only be passing by. A
+// restored tab is never ready: it opens only through Open.
 func (l sessionList) Show(key string) (func(splitview.WorkspaceSwitch), bool) {
 	t := l.t
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if _, ok := t.restored[key]; ok {
+		return t.doneRestored(key), false
+	}
 	if r, ok := t.parked[key]; ok {
 		return t.doneSwitched(key), t.reviewNoteLocked(r) == ""
 	}
@@ -149,10 +155,15 @@ func (t *Palette) doneSwitched(key string) func(splitview.WorkspaceSwitch) {
 // comes now and is rebuilt when the reconnect lands (takeOver); one whose
 // connection dropped makes that connection the selected one, which starts
 // the reconnect, as selecting it in the connections panel does, and comes
-// now, the status bar naming its machine.
+// now, the status bar naming its machine. A restored tab opens now
+// (restore.go).
 func (l sessionList) Open(key string) tea.Cmd {
 	t := l.t
 	t.mu.Lock()
+	if tab, ok := t.restored[key]; ok {
+		t.mu.Unlock()
+		return t.openRestored(key, *tab)
+	}
 	r, parked := t.parked[key]
 	stale := parked && t.stale[r]
 	retrying := parked && t.retrying[r.Session]
@@ -223,6 +234,7 @@ func (l sessionList) Closed(key string, model tea.Model) {
 	}
 	delete(t.parked, key)
 	delete(t.parkedLocal, key)
+	delete(t.restored, key) // closed before it was opened
 	t.dropChatsLocked(key)
 	if m, ok := model.(annotated); ok {
 		t.forgetStoreLocked(m.Store())

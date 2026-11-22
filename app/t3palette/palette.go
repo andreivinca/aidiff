@@ -46,6 +46,11 @@ type Config struct {
 	// Saved keeps the servers connected to, for the connections panel
 	// (saved.go).
 	Saved SavedConfig
+	// Tabs keeps the open tabs from one run to the next (restore.go).
+	Tabs TabsConfig
+	// StartTab is the saved T3 tab the run starts on, nil when it starts on
+	// a review of its own (restore.go).
+	StartTab *StartTab
 }
 
 // Program receives what the palette sends outside a command: the refreshes
@@ -107,6 +112,13 @@ type Palette struct {
 	forgotten   map[string]bool              // servers forgotten in this run: saved again only once the user connects to them
 	saveQ       []func()                     // writes of the saved servers and folders, in order (saved.go)
 	saving      bool                         // a goroutine drains saveQ
+	restored    map[string]*Tab              // the tabs the last run left open, not opened in this one yet, by workspace key (restore.go)
+	tabs        []string                     // the tabs the split starts with, in order (StartTabs)
+	recentTab   string                       // the restored tab the last run had on screen
+	keepTabs    bool                         // the run starts in a named workspace: it brings the saved tabs back and saves its own at exit
+	tabDials    map[string]*tabDial          // connections being made for restored tabs, by server
+	startTab    string                       // the restored T3 tab the run started on (StartTab), "" for none
+	opening     map[string]bool              // restored tabs whose opening is under way (openRestored)
 }
 
 // New builds the palette. start is the T3 review the run opens with, nil for
@@ -139,6 +151,9 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 		incoming:    map[Session]bool{},
 		stale:       map[*Review]bool{},
 		forgotten:   map[string]bool{},
+		restored:    map[string]*Tab{},
+		tabDials:    map[string]*tabDial{},
+		opening:     map[string]bool{},
 	}
 	if start != nil {
 		t.held[start.Session] = true
@@ -154,6 +169,8 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 	t.mu.Lock()
 	t.initLocalLocked()
 	t.initSavedLocked()
+	t.initStartTabLocked()
+	t.initTabsLocked()
 	if start != nil {
 		t.saveLocked(start.Session)
 	}
@@ -177,6 +194,7 @@ func (t *Palette) Start(p Program, localStop func()) {
 		t.stop = localStop
 	}
 	autoChat := t.autoChatLocked(t.onScreen)
+	t.pruneTabsLocked()
 	t.mu.Unlock()
 	t.refreshShell() // the projects sidebar lists the live server's projects
 	if autoChat != nil {
@@ -444,6 +462,7 @@ func (t *Palette) switched(key string, r *Review, store *annotation.Store, sw sp
 	if t.closed {
 		return
 	}
+	delete(t.restored, key) // a restored tab opens with r
 	prev, prevStop := t.onScreen, t.stop
 	var notes []note
 	on := prev

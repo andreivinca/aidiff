@@ -59,7 +59,8 @@ func TestProjects_SwitchingBringsBackTheWorkspace(t *testing.T) {
 	require.Equal(t, projectKey(a, "p1"), h.p.Workspace(), "a T3 run starts in its project's workspace")
 
 	view := ansi.Strip(sb.View(30, 16, true))
-	assert.Contains(t, view, "3   Zed                      \n\n enter, 1…9   open project", "the key help sits under the projects")
+	assert.Contains(t, view, "3   Zed                      \n     + Add project…           \n\n enter, 1…9   open project",
+		"the Add project… row under the projects, the key help under it")
 	assert.NotContains(t, ansi.Strip(sb.View(30, 8, true)), "open project", "a short panel keeps its rows for the projects")
 	assert.Contains(t, view, "1   Alpha")
 	assert.Contains(t, view, "2 ▸ Sabra2", "projects are numbered by title; the one on screen is marked")
@@ -182,4 +183,26 @@ func TestProjects_FailedListingIsShownAndBacksOff(t *testing.T) {
 	h.settle()
 	assert.Contains(t, view(), "Alpha", "the server answers again: its projects")
 	assert.NotContains(t, view(), "server gone")
+}
+
+func TestProjects_AddProjectRow(t *testing.T) {
+	a := newFakeSession("ssh://a", twoProjectShell())
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, threadReview(t, a, loginID))
+	_, err := h.p.fetchShell(t.Context(), a)
+	require.NoError(t, err)
+	sb := h.p.Sidebar()
+	sb.Shown()
+	for range 5 {
+		sb.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	view := ansi.Strip(sb.View(30, 16, true))
+	assert.Contains(t, view, "+ Add project…")
+	cmd, ok := sb.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	require.True(t, ok)
+	require.NotNil(t, cmd, "enter on the row adds a project, as a does")
+	assert.NotEmpty(t, flashes(run(cmd)), "it asks the server for its folders")
+
+	cmd, ok = sb.Click(sidebarHeader + 3) // the row under the three projects
+	require.True(t, ok)
+	assert.NotNil(t, cmd, "a click on it does the same")
 }

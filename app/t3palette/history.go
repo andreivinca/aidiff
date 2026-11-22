@@ -195,10 +195,8 @@ func (t *Palette) openLocal(dir string) tea.Cmd {
 	t.mu.Lock()
 	onScreen := t.ws == key
 	ws, parked := t.parkedLocal[key]
-	if remember := t.cfg.Local.Remember; remember != nil && !onScreen {
-		t.queueLocked(func() {
-			remember(dir)
-		})
+	if !onScreen {
+		t.rememberDirLocked(dir)
 	}
 	t.mu.Unlock()
 	switch {
@@ -213,38 +211,62 @@ func (t *Palette) openLocal(dir string) tea.Cmd {
 	case t.cfg.Local.Open == nil:
 		return nil
 	}
-	name := filepath.Base(dir)
-	return tea.Batch(flash("opening "+name+"…"), func() tea.Msg {
-		r, err := t.cfg.Local.Open(dir)
-		if err != nil {
-			return splitview.FlashMsg{Text: "open " + name + ": " + err.Error()}
-		}
-		ws := &LocalWorkspace{Dir: dir, Watch: r.Watch}
-		show := splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
-			t.switchedLocal(key, ws, sw)
-		}}
-		if t.cfg.NoTerminal {
-			return show
-		}
-		// in order: the terminal opens in the folder's new workspace, there,
-		// as a thread's chat pane comes along with it
-		return tea.Sequence(func() tea.Msg { return show }, func() tea.Msg { return splitview.OpenTerminalMsg{} })()
+	return tea.Batch(flash("opening "+filepath.Base(dir)+"…"), func() tea.Msg {
+		return t.folderMsg(key, dir)
 	})
+}
+
+// rememberDirLocked records local folder dir as opened now, in the
+// background. mu must be held.
+func (t *Palette) rememberDirLocked(dir string) {
+	if remember := t.cfg.Local.Remember; remember != nil {
+		t.queueLocked(func() {
+			remember(dir)
+		})
+	}
+}
+
+// folderMsg builds the review of local folder dir and the message that
+// puts it on screen in a new workspace, key, with a terminal unless
+// NoTerminal.
+func (t *Palette) folderMsg(key, dir string) tea.Msg {
+	if t.cfg.Local.Open == nil {
+		return nil
+	}
+	r, err := t.cfg.Local.Open(dir)
+	if err != nil {
+		return splitview.FlashMsg{Text: "open " + filepath.Base(dir) + ": " + err.Error()}
+	}
+	ws := &LocalWorkspace{Dir: dir, Watch: r.Watch}
+	show := splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
+		t.switchedLocal(key, ws, sw)
+	}}
+	if t.cfg.NoTerminal {
+		return show
+	}
+	// in order: the terminal opens in the folder's new workspace, there,
+	// as a thread's chat pane comes along with it
+	return tea.Sequence(func() tea.Msg { return show }, func() tea.Msg { return splitview.OpenTerminalMsg{} })()
 }
 
 // switchedLocal brings the palette in line with a switch to local folder
 // workspace key, ws: switched's counterpart for a folder of this machine.
 // The workspace left is parked, a T3 review keeping its session; the old
-// refresh stops and the folder's starts.
+// refresh stops and the folder's starts. A restored folder may open in
+// place of its stand-in on screen (restore.go), leaving nothing.
 func (t *Palette) switchedLocal(key string, ws *LocalWorkspace, sw splitview.WorkspaceSwitch) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.closed || sw.Left == nil {
+	if t.closed || (sw.Left == nil && !sw.Created) {
 		return // on screen already
 	}
 	prevStop := t.stop
-	notes := t.leaveLocked(sw)
+	var notes []note
+	if sw.Left != nil {
+		notes = t.leaveLocked(sw)
+	}
 	delete(t.parkedLocal, key)
+	delete(t.restored, key)
 	t.ws, t.onScreen, t.local = key, nil, ws
 	t.stop = t.localWatchLocked(ws)
 	if !sw.Created && t.program != nil {
@@ -361,7 +383,8 @@ func (b *historySidebar) View(width, height int, focused bool) string {
 		return ""
 	}
 	dirs := b.t.historyDirs()
-	b.sel = min(b.sel, max(0, len(dirs)-1))
+	total := len(dirs) + 1 // the Add project… row under the folders
+	b.sel = min(b.sel, total-1)
 	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
 	lines := []string{bold.Render(" History"), faint.Render(" " + b.t.cfg.LocalName), ""}
@@ -374,9 +397,13 @@ func (b *historySidebar) View(width, height int, focused bool) string {
 	}
 	rows := max(1, height-historyHeader-len(help))
 	b.offset = min(max(b.offset, b.sel-rows+1), b.sel)
-	b.offset = max(0, min(b.offset, len(dirs)-rows))
+	b.offset = max(0, min(b.offset, total-rows))
 	current := b.t.LocalDir()
-	for i := b.offset; i < min(len(dirs), b.offset+rows); i++ {
+	for i := b.offset; i < min(total, b.offset+rows); i++ {
+		if i == len(dirs) {
+			lines = append(lines, addProjectRow(width, i == b.sel, focused))
+			continue
+		}
 		lines = append(lines, historyRow(i, dirs[i], width, i == b.sel, focused, dirs[i] == current))
 	}
 	for _, h := range help {
@@ -443,12 +470,15 @@ func (b *historySidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "up", "k":
 		b.sel = max(0, b.sel-1)
 	case "down", "j":
-		b.sel = max(0, min(len(dirs)-1, b.sel+1))
+		b.sel = min(len(dirs), b.sel+1) // past the folders, the Add project… row
 	case "home", "g":
 		b.sel = 0
 	case "end", "G":
-		b.sel = max(0, len(dirs)-1)
+		b.sel = len(dirs)
 	case "enter", " ":
+		if b.sel == len(dirs) {
+			return b.t.browseFolders(b.t.browseStart()), true
+		}
 		return b.open(dirs, b.sel)
 	case "a":
 		return b.t.browseFolders(b.t.browseStart()), true
@@ -466,6 +496,10 @@ func (b *historySidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 func (b *historySidebar) Click(y int) (tea.Cmd, bool) {
 	i := b.offset + y - historyHeader
 	dirs := b.t.historyDirs()
+	if y >= historyHeader && i == len(dirs) {
+		b.sel = i
+		return b.t.browseFolders(b.t.browseStart()), true
+	}
 	if y < historyHeader || i >= len(dirs) {
 		return nil, false
 	}

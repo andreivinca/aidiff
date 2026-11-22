@@ -14,10 +14,14 @@ aidiff still uses revdiff's config directory.
 | `~/.config/revdiff/keybindings` | Key remapping | `--keys`, `REVDIFF_KEYS` |
 | `~/.config/revdiff/history/` | Auto-saved annotations (T3 reviews go under `t3/`) | `--history-dir` |
 | `~/.config/revdiff/t3-tokens.json` | Saved T3 tokens, one per server. Mode 0600 in a 0700 directory. Lives next to the config file. | follows `--config` |
+| `~/.config/revdiff/tabs.json` | The tabs open at the last exit, which plain `aidiff` brings back ([FUNCTIONAL_SPECIFICATION.md §9](FUNCTIONAL_SPECIFICATION.md#9-global-keys-and-quitting)). Mode 0600. | — |
 | `$T3CODE_HOME/userdata/server-runtime.json` (default `~/.t3`) | Locates the local T3 server (read only) | `T3CODE_HOME` |
 | `~/.ssh/config` | `Host` entries offered in the palette's connect list (read only; wildcard entries are skipped) | — |
 
 ## aidiff options
+
+### Positional argument
+`aidiff [folder | base [against]]`: one argument written as a path (`.`, `..`, `./x`, `../x`, `/abs`, `~/x`, `x/`), or naming a folder that is no git revision of the repository aidiff runs in, opens that folder as if aidiff were started there; anything else is revdiff's git ref (`aidiff main`, `aidiff main feature`, `aidiff main..feature`). With neither, and no flag that names a review, aidiff starts on the saved tabs ([FUNCTIONAL_SPECIFICATION.md §3](FUNCTIONAL_SPECIFICATION.md#3-folder-browsing)).
 
 ### Terminal, chat, live refresh
 | Flag | Env | In config file | Default | Description |

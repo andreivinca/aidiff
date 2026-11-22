@@ -115,10 +115,12 @@ func (m Model) View() string {
 
 // leftBlock is the wrapped model's view fitted to its column, one line per
 // row. It is cached until the wrapped model receives a message or the column
-// changes size, so a terminal echo does not re-render the wrapped model.
+// changes size, so a terminal echo does not re-render the wrapped model. The
+// stand-in of a workspace not opened yet is drawn afresh: it shows how its
+// opening goes (unopened.go), which changes without a message to it.
 func (m Model) leftBlock() []string {
 	c, h := m.leftCache, m.paneH()
-	if !c.valid || c.w != m.leftW || c.h != h {
+	if !c.valid || c.w != m.leftW || c.h != h || isUnopened(m.inner) {
 		c.lines = strings.Split(fitBlock(m.inner.View(), m.leftW, h), "\n")
 		c.valid, c.w, c.h, c.cut = true, m.leftW, h, nil
 	}

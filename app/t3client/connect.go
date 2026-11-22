@@ -153,6 +153,17 @@ func parseServer(spec string) (server, error) {
 	return server{}, fmt.Errorf("unknown T3 server %q: use local, ssh://host or http(s)://host:port", spec)
 }
 
+// ServerLabel is the label a session to spec carries (Session.Label), the
+// name aidiff keeps that server under, or why spec names no server Connect
+// could reach. It reaches nothing.
+func ServerLabel(spec string) (string, error) {
+	srv, err := parseServer(spec)
+	if err != nil {
+		return "", err
+	}
+	return srv.label, nil
+}
+
 // Connect reaches a T3 server named by spec:
 //   - "local": the server this user runs here, found through its runtime state file
 //   - "ssh://host": the server on host, reached through an SSH port forward; the

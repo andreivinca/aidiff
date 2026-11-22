@@ -59,6 +59,20 @@ type Config struct {
 	// unnamed, so it closes once another one is switched to (see
 	// SwitchWorkspaceMsg).
 	Workspace string
+	// Tabs, when set, are the tabs the split starts with, in order:
+	// Workspace among them, else appended, and each other one a workspace
+	// not opened yet (unopened.go), which has a tab and a switcher row but no
+	// wrapped model until it is first shown and Sessions.Open opens it.
+	// Ignored without Sessions, which alone can open them.
+	Tabs []string
+	// Recent are workspaces of Tabs the switcher lists first after the one
+	// on screen, most recently used first, as the run before used them.
+	Recent []string
+	// Opening starts Workspace not opened yet either, as the other Tabs: its
+	// stand-in is on screen, saying how its opening goes, and Init asks
+	// Sessions.Open for it, so the model New wraps is not used (it may be
+	// nil). Ignored without Sessions or for the unnamed workspace.
+	Opening bool
 	// Sessions, when set, tells the session switcher (Keys.Switch) what each
 	// workspace is and puts it on screen the way the embedding program's
 	// own switches do. Without it the rows show the workspace keys and the

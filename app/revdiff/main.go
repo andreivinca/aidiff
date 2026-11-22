@@ -126,6 +126,12 @@ func run(opts options) (int, error) {
 	deadline := newExitDeadline()
 	defer deadline.disarm()
 
+	plan, err := planStart(opts, tabsStore()) // the folder argument, or the saved tab a run that names nothing starts on
+	if err != nil {
+		return 0, err
+	}
+	opts = plan.opts
+
 	store := annotation.NewStore()
 	deps := newReviewDeps(opts)
 
@@ -154,14 +160,14 @@ func run(opts options) (int, error) {
 		return 0, err
 	}
 
-	src, err := setupSource(opts)
+	src, err := plan.source()
 	if err != nil {
 		return 0, err
 	}
 	defer src.close()
 	reviewDescription := src.reviewDescription(description)
 	local, diffs := newLocalDiff(deps, src, reviewDescription), &localDiffs{}
-	t3p := newT3Palette(deps, description, src, store, newLocalConfig(deps, src, diffs, local)) // owns src's T3 session from here on
+	t3p := newT3Palette(deps, description, src, store, newLocalConfig(deps, src, diffs, local), plan) // owns src's T3 session from here on
 	defer t3p.Close()
 	deps.views.set(switchView(t3p, local, diffs))
 	deps.views.setChoices(diffChoices(t3p, local, diffs))
@@ -178,9 +184,11 @@ func run(opts options) (int, error) {
 	}
 	preloaded := store.Count() > 0
 
-	model, err := deps.newModel(src, store, reviewDescription)
-	if err != nil {
-		return 0, err
+	var model tea.Model // none for a saved T3 tab: the split opens it (t3p.Opening)
+	if plan.tab == nil {
+		if model, err = deps.newModel(src, store, reviewDescription); err != nil {
+			return 0, err
+		}
 	}
 
 	p := tea.NewProgram(newSplit(opts, model, t3p, local, diffs, tuiOut), append(programOptions, splitProgramOptions()...)...)
@@ -188,7 +196,7 @@ func run(opts options) (int, error) {
 	guard := &shutdownGuard{deadline: deadline} // a signal bounds the exit even when the quit never lands
 	stop := guard.watch(forceQuitter{p})
 	defer stop()
-	finalModel, runErr := runSplit(p, tuiOut, deadline)
+	final, runErr := runSplit(p, tuiOut, deadline)
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()
@@ -198,6 +206,10 @@ func run(opts options) (int, error) {
 	// and swallowed by the guard. defer stop() above stays as a panic safety net —
 	// stop is idempotent.
 	stop()
+	if runErr == nil || signaled {
+		saveTabs(t3p, final) // as the history's safety net runs: the window closing is an exit too
+	}
+	finalModel := closeSplit(final)
 
 	// persist annotations: history safety net + optional -o handoff. a
 	// signal-driven exit can still surface a TUI error — a PTY hangup returns

@@ -50,6 +50,8 @@ func setupSource(opts options) (sourceSetup, error) {
 			return sourceSetup{}, err
 		}
 		return sourceSetup{vcsSetup: vcsSetup{renderer: r}, tty: tty}, nil
+	case opts.folder != "": // a folder argument, or the saved tab a run starts on: as if started there
+		return setupFolderSource(opts, opts.folder)
 	}
 	if folder, ok, err := setupFolder(opts); ok || err != nil {
 		return folder, err

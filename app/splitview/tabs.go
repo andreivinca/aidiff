@@ -19,6 +19,9 @@ import (
 // has a close button; the strip shows only while two or more tabs are
 // open, so a single-workspace run keeps its row. The session switcher keeps
 // its own order, the most recently used first, over the same workspaces.
+// The program may start the split with tabs of workspaces it opens only
+// once they are shown (Config.Tabs, unopened.go), such as the ones an
+// earlier run left open.
 //
 // The unnamed workspace has no tab: it closes once left, and in practice it
 // is on screen only while it is the run's only workspace.
@@ -101,7 +104,9 @@ func (m Model) selectTab(n int) (tea.Model, tea.Cmd) {
 
 // showTab puts tab key on screen as the switcher's commit does: as it was
 // parked when it can come so, else through Sessions.Open (a dropped or
-// replaced connection). A sidebar, left for the tab, hides.
+// replaced connection, a workspace not opened yet). The tab on screen while
+// it is not opened yet tries to open again. A sidebar, left for the tab,
+// hides.
 func (m Model) showTab(key string) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if key != m.wsKey {
@@ -112,13 +117,16 @@ func (m Model) showTab(key string) (tea.Model, tea.Cmd) {
 		} else {
 			cmds = append(cmds, m.scoped(m.cfg.Sessions.Open(key)))
 		}
+	} else if isUnopened(m.inner) && !isGone(m.inner) {
+		cmds = append(cmds, m.scoped(m.cfg.Sessions.Open(key)))
 	}
 	model, cmd := m.hideSidebar()
 	return model, tea.Batch(append(cmds, cmd)...)
 }
 
 // requestCloseTab asks to close tab key, every time, saying what closing
-// it would lose (closeDetails); the last tab stays.
+// it would lose (closeDetails); the last tab stays. A workspace not opened
+// yet has nothing to lose and closes at once.
 func (m Model) requestCloseTab(key string) (tea.Model, tea.Cmd) {
 	keys := m.tabKeys()
 	switch {
@@ -128,6 +136,8 @@ func (m Model) requestCloseTab(key string) (tea.Model, tea.Cmd) {
 	case len(keys) < 2:
 		m.flash = lastTab
 		return m, nil
+	case isUnopened(m.workspaceModel(key)):
+		return m.closeTab(key)
 	}
 	details := m.closeDetails(key)
 	if len(details) == 0 {
@@ -193,8 +203,9 @@ func (m Model) workspaceModel(key string) tea.Model {
 }
 
 // closeTab closes tab key with its workspace and panes. The tab on screen
-// hands the screen to its neighbor first (tabNeighbor); the program hears
-// of it (Sessions.Closed) once it is off screen.
+// hands the screen to its neighbor first (tabNeighbor); one not opened yet
+// opens from there (unopened.go). The program hears of the close
+// (Sessions.Closed) once the tab is off screen.
 func (m Model) closeTab(key string) (tea.Model, tea.Cmd) {
 	keys := m.tabKeys()
 	i := slices.Index(keys, key)
@@ -214,6 +225,9 @@ func (m Model) closeTab(key string) (tea.Model, tea.Cmd) {
 		var switched tea.Model
 		switched, cmd = m.switchAway(SwitchWorkspaceMsg{Key: next, Done: done}, true)
 		m = switched.(Model)
+		if isUnopened(m.inner) && m.cfg.Sessions != nil { // no opened tab was left to go to
+			cmd = tea.Batch(cmd, m.scoped(m.cfg.Sessions.Open(next)))
+		}
 		m.switcher = switcherState{}
 		m.mru = used(m.mru, m.wsKey)
 		hidden, hideCmd := m.hideSidebar()

@@ -15,8 +15,8 @@ import (
 )
 
 // jsonFile is a list kept as indented JSON at path; what names it in errors
-// ("history", "connections"). Both lists of the package are one, so they
-// read, lock and write the same way.
+// ("history", "connections", "tabs"). Every file of the package is one, so
+// they read, lock and write the same way.
 type jsonFile struct {
 	path string
 	what string
@@ -94,6 +94,32 @@ func update[T any](j jsonFile, edit func(*T)) error {
 // lock creates the directory and takes the file's exclusive lock, returning
 // its release.
 func (j jsonFile) lock() (unlock func(), err error) {
+	return j.takeLock(func(fd int) error {
+		return syscall.Flock(fd, syscall.LOCK_EX)
+	})
+}
+
+// lockPoll is how often lockWithin tries the lock again.
+const lockPoll = 10 * time.Millisecond
+
+// lockWithin is lock that gives up after wait, for a write that must not
+// hang, such as one at exit, on a lock another process never lets go of.
+func (j jsonFile) lockWithin(wait time.Duration) (unlock func(), err error) {
+	return j.takeLock(func(fd int) error {
+		deadline := time.Now().Add(wait)
+		for {
+			err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
+			if !errors.Is(err, syscall.EWOULDBLOCK) || time.Now().After(deadline) {
+				return err
+			}
+			time.Sleep(lockPoll)
+		}
+	})
+}
+
+// takeLock creates the directory, opens the lock file beside the list and
+// locks it with flock.
+func (j jsonFile) takeLock(flock func(fd int) error) (unlock func(), err error) {
 	if err = os.MkdirAll(filepath.Dir(j.path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s directory: %w", j.what, err)
 	}
@@ -101,7 +127,7 @@ func (j jsonFile) lock() (unlock func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s lock: %w", j.what, err)
 	}
-	if err = syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+	if err = flock(int(lf.Fd())); err != nil {
 		_ = lf.Close()
 		return nil, fmt.Errorf("lock %s: %w", j.what, err)
 	}

@@ -230,3 +230,27 @@ func TestHistory_StartDoesNotWaitOnTheFolders(t *testing.T) {
 	assert.Eventually(t, func() bool { return slices.Equal([]string{a}, p.historyDirs()) }, 2*time.Second, time.Millisecond,
 		"and the folder gone left out once checked")
 }
+
+func TestHistory_AddProjectRow(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "alpha")
+	require.NoError(t, os.MkdirAll(a, 0o750))
+	f := &localFake{}
+	h := newHarness(t, Config{NoChat: true, LocalName: "andrei-pc", Local: f.config(a)}, nil)
+	sb := h.p.Sidebar()
+	require.True(t, sb.Available())
+	sb.Shown()
+	assert.Contains(t, ansi.Strip(sb.View(40, 20, true)), "     + Add project…", "the row under the folders")
+	sb.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+	sb.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+	cmd, ok := sb.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	require.True(t, ok)
+	require.NotNil(t, cmd)
+	_, browsing := cmd().(splitview.ShowPickerMsg)
+	assert.True(t, browsing, "enter on it browses this machine's folders, as a does")
+
+	cmd, ok = sb.Click(historyHeader + 1)
+	require.True(t, ok)
+	_, browsing = cmd().(splitview.ShowPickerMsg)
+	assert.True(t, browsing, "a click on it does the same")
+}

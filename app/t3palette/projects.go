@@ -20,7 +20,13 @@ import (
 // projectKey names a project of a server across reconnects, which make new
 // sessions to the same server.
 func projectKey(s Session, projectID string) string {
-	return s.Label() + "\x00" + projectID
+	return t3Key(s.Label(), projectID)
+}
+
+// t3Key is the workspace of project projectID of server label, as a
+// session to it names it; a restored tab names it before connecting.
+func t3Key(label, projectID string) string {
+	return label + "\x00" + projectID
 }
 
 // wsKey is the split workspace of r: one per project of a server.

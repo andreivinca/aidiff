@@ -186,11 +186,21 @@ const closeHandshakeTimeout = time.Second
 // close ends the connection. Session.Close is the public way to do it, since
 // a session may own an SSH tunnel as well.
 func (c *Conn) close() error {
-	// canceling the read loop's context closes the socket, which ends a
-	// handshake still waiting for the peer
-	stop := time.AfterFunc(closeHandshakeTimeout, c.cancel)
-	err := c.ws.Close(websocket.StatusNormalClosure, "")
-	stop.Stop()
+	// The handshake waits for the peer for up to 5s inside the library.
+	// Canceling the read loop's context closes the socket and ends it, but
+	// only once the loop reads: a connection closed right after it opened
+	// (a dial that lost to another choice) would still wait it out. So the
+	// close returns after closeHandshakeTimeout either way, and the
+	// handshake finishes or times out on its own.
+	errc := make(chan error, 1)
+	go func() {
+		errc <- c.ws.Close(websocket.StatusNormalClosure, "")
+	}()
+	var err error
+	select {
+	case err = <-errc:
+	case <-time.After(closeHandshakeTimeout):
+	}
 	c.cancel()
 	if err != nil {
 		return fmt.Errorf("close T3 connection: %w", err)

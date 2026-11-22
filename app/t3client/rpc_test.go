@@ -198,3 +198,28 @@ func TestConn_CloseDoesNotWaitForASilentPeer(t *testing.T) {
 		t.Fatal("the connection did not end")
 	}
 }
+
+func TestConn_CloseRightAfterDialDoesNotWait(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = ws.CloseNow()
+		}()
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	for range 5 { // closed before its read loop may have started reading
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, err := dial(ctx, directEndpoint(srv.URL), "tok")
+		cancel()
+		require.NoError(t, err)
+		start := time.Now()
+		_ = c.close()
+		require.Less(t, time.Since(start), 3*closeHandshakeTimeout, "a close right after the dial is cut short too")
+	}
+}

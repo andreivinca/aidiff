@@ -82,7 +82,7 @@ type Model struct {
 // New wraps inner.
 func New(inner tea.Model, cfg Config) Model {
 	cfg = cfg.withDefaults()
-	return Model{
+	m := Model{
 		inner:     inner,
 		cfg:       cfg,
 		styles:    newStyles(cfg.Colors),
@@ -98,6 +98,7 @@ func New(inner tea.Model, cfg Config) Model {
 		strip:     &tabCache{},
 		keys:      newKeyReports(cfg.Output),
 	}
+	return m.withTabs(cfg)
 }
 
 // Inner returns the wrapped model, e.g. to read its final state after Run.
@@ -107,6 +108,9 @@ func (m Model) Inner() tea.Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
+	if isUnopened(m.inner) && m.cfg.Sessions != nil { // Config.Opening: it opens now
+		return m.scoped(m.cfg.Sessions.Open(m.wsKey))
+	}
 	return m.tag(m.inner.Init())
 }
 
@@ -206,6 +210,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.switchWorkspace(msg)
 	case closeTabMsg:
 		return m.closeTab(msg.key)
+	case DropTabMsg:
+		return m.dropTab(msg.Key)
 	case innerMsg:
 		return m.routeInner(msg)
 	case scopedMsg:

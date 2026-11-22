@@ -88,7 +88,11 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 	b.t.refreshShell() // a list older than shellMaxAge is fetched again
 	v := b.t.state()
 	list := projects(v.shell)
-	b.sel = min(b.sel, max(0, len(list)-1))
+	total := len(list)
+	if v.live != nil {
+		total++ // the Add project… row under the projects
+	}
+	b.sel = min(b.sel, max(0, total-1))
 
 	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
@@ -118,9 +122,13 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 	}
 	rows := max(1, height-sidebarHeader-len(help))
 	b.offset = min(max(b.offset, b.sel-rows+1), b.sel)
-	b.offset = max(0, min(b.offset, len(list)-rows))
+	b.offset = max(0, min(b.offset, total-rows))
 	current := v.currentProjectID()
-	for i := b.offset; i < min(len(list), b.offset+rows); i++ {
+	for i := b.offset; i < min(total, b.offset+rows); i++ {
+		if i == len(list) {
+			lines = append(lines, addProjectRow(width, i == b.sel, focused))
+			continue
+		}
 		lines = append(lines, b.row(i, list[i], v.shell, width, i == b.sel, focused, list[i].ID == current))
 	}
 	for _, h := range help {
@@ -171,6 +179,27 @@ func (b *projectsSidebar) row(i int, p t3client.Project, sh t3client.Shell, widt
 	return style.Render(text)
 }
 
+// canAdd reports whether the panel has its Add project… row: a server is
+// connected, and not being replaced by another one being dialed.
+func (b *projectsSidebar) canAdd() bool {
+	v := b.t.state()
+	return v.live != nil && v.dial.spec == ""
+}
+
+// addProjectRow is the row under a panel's list that adds a project, as a
+// does: aligned with the names above it, selectable like them.
+func addProjectRow(width int, selected, focused bool) string {
+	style := lipgloss.NewStyle().Faint(!selected || !focused)
+	switch {
+	case selected && focused:
+		style = style.Reverse(true)
+	case selected:
+		style = style.Underline(true)
+	}
+	text := ansi.Truncate("     + Add project…", width, "…")
+	return style.Render(text + strings.Repeat(" ", max(0, width-ansi.StringWidth(text))))
+}
+
 // list is the projects the sidebar lists: none while a server is being
 // connected to, whose listing is not there yet; the one cached is the
 // previous server's, and opening from it would open the wrong one.
@@ -182,20 +211,28 @@ func (b *projectsSidebar) list() []t3client.Project {
 	return projects(v.shell)
 }
 
-// HandleKey moves the selection and opens the selected project; a digit
-// opens its project, esc hides the sidebar.
+// HandleKey moves the selection and opens the selected project, or adds
+// one on the Add project… row under them; a digit opens its project, esc
+// hides the sidebar.
 func (b *projectsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	list := b.list()
+	last := len(list) - 1
+	if b.canAdd() {
+		last++ // the Add project… row
+	}
 	switch msg.String() {
 	case "up", "k":
 		b.sel = max(0, b.sel-1)
 	case "down", "j":
-		b.sel = max(0, min(len(list)-1, b.sel+1))
+		b.sel = max(0, min(last, b.sel+1))
 	case "home", "g":
 		b.sel = 0
 	case "end", "G":
-		b.sel = max(0, len(list)-1)
+		b.sel = max(0, last)
 	case "enter", " ":
+		if b.sel == len(list) && b.canAdd() {
+			return b.t.addT3Project(nil), true
+		}
 		return b.open(list, b.sel)
 	case "a":
 		return b.t.addT3Project(nil), true
@@ -213,6 +250,10 @@ func (b *projectsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 func (b *projectsSidebar) Click(y int) (tea.Cmd, bool) {
 	i := b.offset + y - sidebarHeader
 	list := b.list()
+	if y >= sidebarHeader && i == len(list) && b.canAdd() {
+		b.sel = i
+		return b.t.addT3Project(nil), true
+	}
 	if y < sidebarHeader || i >= len(list) {
 		return nil, false
 	}

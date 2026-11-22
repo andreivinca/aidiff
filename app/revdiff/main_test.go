@@ -382,6 +382,9 @@ func TestTUIOutput_Open(t *testing.T) {
 
 func TestRun_RedirectedStdoutUsesTTY(t *testing.T) {
 	if os.Getenv("REVDIFF_TUI_TEST_HELPER") == "1" {
+		if os.Getenv("REVDIFF_TUI_TEST_REF") != "" { // a ref git cannot vouch for reaches the review, whose load fails (folder_arg.go)
+			isRevision = func(string, string) revAnswer { return revUnknown }
+		}
 		opts, err := parseArgs(tuiTestHelperArgs())
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "parse helper args: %v\n", err)

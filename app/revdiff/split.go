@@ -31,9 +31,10 @@ const (
 func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *localDiff, diffs *localDiffs, out io.Writer) splitview.Model {
 	terminals := terminalLauncher{command: opts.TerminalCommand, place: t3p.TerminalPlace}
 	finder := &paletteFinder{project: reviewProject(t3p, local, diffs)}
+	tabs, recent := t3p.StartTabs() // the last run's, not opened until shown
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
-		OpenOnStart:  startsWithTerminal(opts, t3p.OnScreen() != nil),
+		OpenOnStart:  !t3p.Opening() && startsWithTerminal(opts, t3p.OnScreen() != nil), // a saved T3 tab's comes once it is on screen (StartTab.Terminal)
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local, diffs),
@@ -44,6 +45,9 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		Sidebar:      t3p.Sidebar(),
 		OuterSidebar: t3p.Connections(),
 		Workspace:    t3p.Workspace(),
+		Tabs:         tabs,
+		Recent:       recent,
+		Opening:      t3p.Opening(), // review is nil: a saved T3 tab opens once its server answers
 		Sessions:     t3p.Sessions(),
 		Output:       terminalOutput(out),
 		NoColors:     opts.NoColors,
@@ -160,14 +164,14 @@ func splitProgramOptions() []tea.ProgramOption {
 }
 
 // runSplit runs the program on out with modified-key reports on, so a chat
-// pane can tell shift+enter from enter, then closes the split's panes and
-// returns the review it wrapped, for revdiff's finalization.
+// pane can tell shift+enter from enter, and returns the model it ended with:
+// the split, whose tabs are saved and panes closed next (closeSplit).
 func runSplit(p *tea.Program, out io.Writer, deadline *exitDeadline) (tea.Model, error) {
 	restoreKeys := splitview.ReportModifiedKeys(out)
 	final, err := p.Run()
 	deadline.arm(shutdownLimit) // the screen is gone: whatever follows must not hang
 	restoreKeys()
-	return closeSplit(final), err
+	return final, err
 }
 
 // closeSplit closes the panes of the split the program ended with and

@@ -80,9 +80,13 @@ func (m Model) switchTo(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
 
 // switchAway is switchTo; closeLeft closes the workspace left with its
 // panes instead of parking it, as the unnamed one always is: its tab was
-// closed (tabs.go). A workspace that is new gets a tab at the end.
+// closed (tabs.go). A workspace that is new gets a tab at the end; one not
+// opened yet (unopened.go) opens with Model, its tab kept in place.
 func (m Model) switchAway(msg SwitchWorkspaceMsg, closeLeft bool) (tea.Model, tea.Cmd) {
 	if msg.Key == m.wsKey {
+		if msg.Model != nil && isUnopened(m.inner) {
+			return m.openInPlace(msg)
+		}
 		if msg.Model == nil || !msg.Replace {
 			// the review keeps its state; Model, never initialized, is
 			// left to Done, as for a parked workspace
@@ -111,9 +115,12 @@ func (m Model) switchAway(msg SwitchWorkspaceMsg, closeLeft bool) (tea.Model, te
 	if m.parked == nil {
 		m.parked = map[string]workspace{}
 	}
-	if m.wsKey == "" || closeLeft {
+	if m.wsKey == "" || closeLeft || isGone(m.inner) {
 		for _, t := range m.terms {
 			m.closing.Go(t.Close)
+		}
+		if isGone(m.inner) { // it could not be opened: its tab goes with it
+			m.tabs, m.mru = without(m.tabs, m.wsKey), without(m.mru, m.wsKey)
 		}
 	} else {
 		m.parked[m.wsKey] = m.currentWorkspace()
@@ -127,6 +134,9 @@ func (m Model) switchAway(msg SwitchWorkspaceMsg, closeLeft bool) (tea.Model, te
 		next = workspace{id: nextWorkspaceID(), inner: msg.Model, focus: focusDiff, termRatio: float64(m.cfg.WidthPercent) / 100}
 		sw.Created = true
 		m.tabs = opened(m.tabs, msg.Key)
+	case msg.Model != nil && isUnopened(next.inner):
+		next.inner, next.id = msg.Model, nextWorkspaceID()
+		sw.Created = true // its stand-in held nothing: Replaced stays nil
 	case msg.Model != nil && msg.Replace:
 		sw.Replaced = next.inner
 		next.inner = msg.Model

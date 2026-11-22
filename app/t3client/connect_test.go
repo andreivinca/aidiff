@@ -233,3 +233,21 @@ func TestConnect_PairedSessionRedialsPastAnExpiredToken(t *testing.T) {
 		})
 	}
 }
+
+func TestServerLabel(t *testing.T) {
+	for spec, want := range map[string]string{
+		"local":                     "local",
+		"":                          "local",
+		"ssh://devbox":              "ssh://devbox",
+		"ssh://devbox/":             "ssh://devbox",
+		"https://t3.example.com/x/": "https://t3.example.com/x",
+	} {
+		got, err := ServerLabel(spec)
+		require.NoError(t, err, spec)
+		assert.Equal(t, want, got, "the label a session to %q carries", spec)
+	}
+	for _, spec := range []string{"ssh://-oProxyCommand=x", "ftp://host", "devbox"} {
+		_, err := ServerLabel(spec)
+		assert.Error(t, err, "%q names no server", spec)
+	}
+}

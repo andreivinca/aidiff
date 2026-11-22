@@ -237,6 +237,13 @@ type harness struct {
 // a local review).
 func newHarness(t *testing.T, cfg Config, start *Review) *harness {
 	t.Helper()
+	return newHarnessDial(t, cfg, start, nil)
+}
+
+// newHarnessDial is newHarness whose palette connects with dial; nil dials
+// what h.dials holds for each spec.
+func newHarnessDial(t *testing.T, cfg Config, start *Review, dial dialFunc) *harness {
+	t.Helper()
 	h := &harness{program: &fakeProgram{}, dials: map[string]*fakeSession{}, parked: map[string]tea.Model{}}
 	cfg.NewReview = func(r *Review, store *annotation.Store) (tea.Model, error) {
 		return fakeModel{store: store, review: r}, nil
@@ -246,12 +253,14 @@ func newHarness(t *testing.T, cfg Config, start *Review) *harness {
 		defer h.mu.Unlock()
 		h.saves = append(h.saves, saved{review: r, annotations: annotations})
 	}
-	dial := func(_ context.Context, spec string) (Session, error) {
-		s, ok := h.dials[spec]
-		if !ok {
-			return nil, errors.New("no such server")
+	if dial == nil {
+		dial = func(_ context.Context, spec string) (Session, error) {
+			s, ok := h.dials[spec]
+			if !ok {
+				return nil, errors.New("no such server")
+			}
+			return s, nil
 		}
-		return s, nil
 	}
 	h.p = newPalette(cfg, start, dial)
 	h.p.Start(h.program, nil)
