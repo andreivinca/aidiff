@@ -1,5 +1,7 @@
 package chat
 
+import "time"
+
 // Conversation is what a backend shows of its conversation at one moment.
 // A backend builds a new one for every change and leaves it alone once
 // shown.
@@ -7,8 +9,11 @@ type Conversation struct {
 	Title   string     // replaces the pane's title when not empty
 	State   AgentState // what the agent is doing, for the header
 	Running []string   // the turns still going, newest first; the stop dialog interrupts one
-	Entries []Entry    // the conversation, oldest first, without the queued messages
-	Queued  []Queued   // the messages waiting for their turn, in order
+	// RunningSince is when the newest of Running began, which the status
+	// line counts from; zero when nothing runs or the backend cannot say.
+	RunningSince time.Time
+	Entries      []Entry  // the conversation, oldest first, without the queued messages
+	Queued       []Queued // the messages waiting for their turn, in order
 	// Delivered names the messages sent from the pane that the backend
 	// took over: shown among Entries, or done with. Until then the pane
 	// shows them as cards above the composer.
@@ -55,9 +60,10 @@ type Entry interface {
 	entry()
 }
 
-// UserMessage is what the user said.
+// UserMessage is what the user said, with what the message carries.
 type UserMessage struct {
-	Text string
+	Text        string
+	Attachments []Attachment
 }
 
 // AgentMessage is the agent's prose, in markdown.
@@ -178,9 +184,11 @@ func (SecretRequest) entry() {
 
 // Queued is a message waiting for its turn.
 type Queued struct {
-	ID     string // the message's id; a card of the pane's own with this id gives way to it
-	Text   string
-	Images int // the images it carries, which taking it back cannot return to the input
+	ID   string // the message's id; a card of the pane's own with this id gives way to it
+	Text string
+	// Images and Files are what it carries, which taking it back cannot
+	// return to the input
+	Images, Files int
 	// Steer is a message sent into the running turn that the agent has not
 	// read yet; it cannot be taken back.
 	Steer bool

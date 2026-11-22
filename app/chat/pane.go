@@ -22,10 +22,10 @@ const defaultQuitNote = "Closes the chat."
 
 // Config tunes a pane.
 type Config struct {
-	NoColor   bool       // draw without colors
-	Clipboard Clipboard  // what ctrl+v pastes from and a selection is copied to; nil for none
-	Files     ImageFiles // the image files the user attaches; nil for none
-	QuitNote  string     // what the quit dialog says about closing the pane
+	NoColor   bool      // draw without colors
+	Clipboard Clipboard // what ctrl+v pastes from and a selection is copied to; nil for none
+	Files     Files     // the files the user attaches; nil for none
+	QuitNote  string    // what the quit dialog says about closing the pane
 	// HostKeys are shortcuts the pane's host handles, such as a command
 	// palette; the composer's hint row lists them with its own.
 	HostKeys []Hint
@@ -48,7 +48,7 @@ type Pane struct {
 	styles   styles // the pane's colors
 	composer styles // the same colors on the composer's background
 	clip     Clipboard
-	files    ImageFiles
+	files    Files
 	quitNote string
 	hostKeys []Hint    // the host's shortcuts for the hint row
 	hintsOut bool      // the host shows the hints (Config.HintsOutside)
@@ -77,9 +77,13 @@ type Pane struct {
 	questionDrafts map[int]string
 	questionChoice int            // the picker's highlighted row
 	choiceFor      string         // the prompt questionChoice is a row of; another resets it
+	approvalChoice int            // the approval picker's highlighted row: 0 accept, 1 decline
+	approvalFor    string         // the approval approvalChoice is a row of; another resets it
 	showWork       bool           // /work: the agent's steps shown one per line instead of a summary
 	images         []pendingImage // images pasted into the input, each shown there as its token
 	imageSeq       int
+	attached       []pendingFile // files attached to the input, each shown there as its token
+	fileSeq        int
 	reading        int       // clipboard and file reads in flight
 	busy           bool      // a request the composer waits on is in flight
 	note           string    // the last failure or hint, shown until the next key
@@ -91,11 +95,16 @@ type Pane struct {
 	frame          frame
 	rowCache       rowCache         // the transcript's rendered messages (rowcache.go)
 	wheel          wheelState       // the run of wheel notches, which speeds scrolling up (wheel.go)
-	now            func() time.Time // the clock the wheel reads; tests set it
+	now            func() time.Time // the clock the wheel and the elapsed time read; tests set it
+	ticking        bool             // a redraw of the elapsed time is scheduled (status.go)
 	selection      textSelection
 	subID          uint64 // the current subscription; what older ones deliver is dropped
 	cancel         context.CancelFunc
 	closed         bool
+	// cancelSend stops the request in flight while it uploads files (esc,
+	// another thread, closing); nil when there is none to stop
+	cancelSend context.CancelCauseFunc
+	upload     uploadProgress // how far the files of the message being sent went (upload.go)
 }
 
 // frame is a Render result and what it was built from.
@@ -143,7 +152,9 @@ func New(b Backend, title string, width, height int, cfg Config) *Pane {
 }
 
 // Follow switches the pane to another backend and starts over; a nil
-// backend leaves it not connected. The draft and its images stay.
+// backend leaves it not connected. The draft and its attachments stay; a
+// message whose files are still going up stops, and goes back into the
+// input.
 func (p *Pane) Follow(b Backend, title string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -162,6 +173,9 @@ func (p *Pane) lock() {
 		p.note = note
 		p.gen++
 	}
+	if p.upload.moved() {
+		p.gen++
+	}
 }
 
 // attachLocked forgets the conversation shown and subscribes to b's. mu
@@ -171,6 +185,7 @@ func (p *Pane) attachLocked(b Backend, title string) {
 		p.cancel()
 		p.cancel = nil
 	}
+	p.stopSendLocked(errSendLeft)
 	p.subID++
 	p.box.follow(p.subID)
 	p.backend, p.title = b, sanitize(strings.TrimSpace(title)) // the host names the thread as the server does
@@ -186,7 +201,7 @@ func (p *Pane) attachLocked(b Backend, title string) {
 }
 
 // clearConversationLocked forgets everything shown of the conversation; the
-// draft and its images stay. mu must be held.
+// draft and its attachments stay. mu must be held.
 func (p *Pane) clearConversationLocked() {
 	p.selection = textSelection{}
 	p.conv, p.activities, p.counts = Conversation{}, nil, activityCounts{}
@@ -194,6 +209,7 @@ func (p *Pane) clearConversationLocked() {
 	p.activity, p.stop = activityView{}, stopConfirmation{}
 	p.answers, p.answersFor = nil, ""
 	p.questionChoice, p.choiceFor = 0, ""
+	p.approvalChoice, p.approvalFor = 0, ""
 	p.secret = secretInput{runes: p.secret.runes[:0]}
 	p.secretGone = false
 	p.scroll, p.seen, p.note, p.busy, p.reading = 0, seenLines{}, "", false, 0
@@ -237,6 +253,9 @@ func (p *Pane) showLocked(c Conversation) {
 		if prompt != nil {
 			p.choiceFor = prompt.ID
 		}
+	}
+	if id := p.pendingApprovalLocked(); id != p.approvalFor {
+		p.approvalChoice, p.approvalFor = 0, id // a new approval's picker starts on Accept
 	}
 	p.gen++
 }
@@ -328,5 +347,6 @@ func (p *Pane) Close() {
 		p.cancel()
 		p.cancel = nil
 	}
+	p.stopSendLocked(errSendLeft)
 	p.box.close()
 }

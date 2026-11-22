@@ -30,7 +30,7 @@
 | `app/t3chat` | The chat pane's T3 backend: a thread's events as conversations, T3's commands |
 | `app/t3palette` | T3 palette commands: sessions, thread reviews, chat panes |
 | `app/clipboard` | Linux clipboard |
-| `app/imagefile` | Reads image files attached to chat messages |
+| `app/attachfile` | Reads the files attached to chat messages: images whole, other files checked when attached and opened when sent |
 | `app/revdiff/t3.go`, `t3_palette.go`, `t3_terminal.go`, `chat.go`, `split.go`, `watch.go`, `source_setup.go`, `review_model.go` | Wiring in the composition root |
 | `app/ui/refresh.go`, `folder.go`, `chrome.go`, `identity.go`, `treedrag.go`; `app/ui/sidepane/foldertree.go`, `scroll.go`; `app/diff/folder.go`, `gitmeta.go`, `watchdirs.go` | Our code inside revdiff packages, reached through one-line hooks in revdiff files |
 | `third_party/termenv` | Patched termenv (§5) |
@@ -57,7 +57,7 @@ Trade-off: a terminal that answers after 150 ms (a slow SSH link) answers after 
 ## 6. Tests
 
 - Every package has unit tests, written with testify. Mocks are generated with moq, never edited by hand.
-- aidiff's packages have their own `_test.go` files and run without a server. The chat pane's tests drive it through a fake `chat.Backend` and fake clipboard and image files; the T3 backend's tests use a fake server and a fake `chat.Viewer`, plus a few that drive a real pane over the T3 backend. No test sleeps: they wait on the pane's `Updates` and on what the fakes record.
+- aidiff's packages have their own `_test.go` files and run without a server. The chat pane's tests drive it through a fake `chat.Backend` and fake clipboard and files; the T3 backend's tests use a fake server and a fake `chat.Viewer`, plus a few that drive a real pane over the T3 backend. No test sleeps: they wait on the pane's `Updates` and on what the fakes record.
 - **PTY subprocess tests** in `app/revdiff/main_test.go` re-run the test binary under `script(1)` to get a real TTY. `TestStartupSilentTerminal` (`startup_test.go`) does the same through a PTY, with `AIDIFF_SILENT_TERMINAL_HELPER`.
 - The inherited plugin and launcher tests (`plugin_exit_code_test.go`) still run, since the plugins ship in this repository.
 

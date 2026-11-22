@@ -1,6 +1,8 @@
-// Package imagefile reads the image files a user names, to attach them to a
-// message for an agent.
-package imagefile
+// Package attachfile reads the files a user names to attach them to a
+// message for an agent: images, read whole to go with the message, and
+// files of any type, checked when they are attached and opened again when
+// the message is sent, so a large file is never held in memory.
+package attachfile
 
 import (
 	"errors"
@@ -34,7 +36,7 @@ type Image struct {
 	Data []byte
 }
 
-// Reader reads image files on this machine.
+// Reader reads the files on this machine a user attaches.
 type Reader struct{}
 
 // IsImage reports whether path names an image file, by its extension alone.
@@ -42,32 +44,21 @@ func (r Reader) IsImage(path string) bool {
 	return r.mimeType(path) != ""
 }
 
-// Read loads the image file at path; a leading "~/" stands for the home
-// directory. check is asked about the file's name and size before it is
-// read, and turns it down with its error. No more than that size is read: a
-// file grown since is turned down, as is one whose content is not an image
-// of an attachable type, whatever its extension says. The media type is the
-// content's.
-func (r Reader) Read(path string, check func(name string, size int64) error) (Image, error) {
+// ReadImage loads the image file at path; a leading "~/" stands for the
+// home directory. check is asked about the file's name and size before it
+// is read, and turns it down with its error. No more than that size is
+// read: a file grown since is turned down, as is one whose content is not
+// an image of an attachable type, whatever its extension says. The media
+// type is the content's.
+func (r Reader) ReadImage(path string, check func(name string, size int64) error) (Image, error) {
 	if r.mimeType(path) == "" {
 		return Image{}, fmt.Errorf("%w: %s", ErrNotImage, path)
 	}
-	path, err := r.expandHome(path)
+	f, info, err := r.open(path) // the size is the file opened's, not whatever the path names by now
 	if err != nil {
 		return Image{}, err
 	}
-	f, err := os.Open(path) //nolint:gosec // the user's own file, named by them
-	if err != nil {
-		return Image{}, fmt.Errorf("attach: %w", err)
-	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat() // the file opened, not whatever the path names by now
-	if err != nil {
-		return Image{}, fmt.Errorf("attach: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return Image{}, fmt.Errorf("attach: %s is not a regular file", path)
-	}
 	name := filepath.Base(path)
 	if err = check(name, info.Size()); err != nil {
 		return Image{}, fmt.Errorf("attach: %w", err)

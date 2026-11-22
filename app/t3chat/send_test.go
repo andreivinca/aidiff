@@ -2,7 +2,6 @@ package t3chat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -148,10 +147,11 @@ func TestChats_WithoutAConnection(t *testing.T) {
 func TestBackend_Unqueue(t *testing.T) {
 	snap := fixture()
 	snap.Runs = append(snap.Runs, t3client.Run{ID: "run-3", Ordinal: 3, Status: "queued", UserMessageID: "m3"})
-	snap.Messages = append(snap.Messages, t3client.Message{ID: "m3", Role: "user", Text: "queued", Attachments: []json.RawMessage{json.RawMessage(`{"id":"a"}`)}})
+	snap.Messages = append(snap.Messages, t3client.Message{ID: "m3", Role: "user", Text: "queued", Attachments: t3client.Attachments{
+		{Type: "image", ID: "a"}, {Type: "file", ID: "b"}, {Type: "file", ID: "c"}}})
 	f := newFakeServer(snap)
 	s := subscribe(t, f)
-	assert.Equal(t, []chat.Queued{{ID: "m3", Text: "queued", Images: 1}}, s.v.latest().Queued, "the pane learns its images")
+	assert.Equal(t, []chat.Queued{{ID: "m3", Text: "queued", Images: 1, Files: 2}}, s.v.latest().Queued, "the pane learns its images and files")
 
 	require.NoError(t, s.b.Unqueue(context.Background(), "m3"))
 	assert.Equal(t, t3client.QueuedRunCancelCommand("th-1", "run-3"), nextCommand(t, f))

@@ -111,6 +111,17 @@ func skipString(s string, i int) int {
 	return i
 }
 
+// oneLine reports text flatten leaves as it is.
+func oneLine(s string) bool {
+	return clean(s) && !strings.ContainsAny(s, "\n\t")
+}
+
+// flatten is text sanitized for one row: a line break or a tab becomes a
+// space.
+func flatten(s string) string {
+	return strings.NewReplacer("\n", " ", "\t", " ").Replace(sanitize(s))
+}
+
 // scrub sanitizes *s in place and records whether that changed it.
 func scrub(s *string, changed *bool) {
 	if t := sanitize(*s); t != *s {
@@ -181,6 +192,14 @@ func scrubEntry(e Entry) (Entry, bool) {
 	switch e := e.(type) {
 	case UserMessage:
 		scrub(&e.Text, &changed)
+		if slices.ContainsFunc(e.Attachments, func(a Attachment) bool { return !oneLine(a.Name) || !oneLine(a.Kind) }) {
+			e.Attachments = slices.Clone(e.Attachments)
+			for i := range e.Attachments {
+				e.Attachments[i].Name = flatten(e.Attachments[i].Name)
+				e.Attachments[i].Kind = flatten(e.Attachments[i].Kind)
+			}
+			changed = true
+		}
 		return e, changed
 	case AgentMessage:
 		scrub(&e.Markdown, &changed)

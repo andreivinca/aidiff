@@ -1,9 +1,10 @@
 // Package t3chat is the T3 Code side of the chat pane: a chat.Backend over
 // one thread of a T3 server. It follows the thread's events, turns them
 // into the conversations the pane shows, and carries out what the user
-// asks: messages with their images, answers to the agent's prompts, stops,
-// and T3's own slash commands (/model, /effort, /plan, /build, /mode,
-// /clear, /side), with the provider's commands from the server's catalog.
+// asks: messages with their images and files, answers to the agent's
+// prompts, stops, and T3's own slash commands (/model, /effort, /plan,
+// /build, /mode, /clear, /side), with the provider's commands from the
+// server's catalog.
 package t3chat
 
 import (
@@ -26,6 +27,8 @@ type server interface {
 	Dispatch(ctx context.Context, cmd t3client.Command) error
 	FetchCatalog(ctx context.Context) (t3client.Catalog, error)
 	PersistImages(ctx context.Context, threadID, messageID string, images []t3client.ImageUpload) ([]json.RawMessage, error)
+	UploadFile(ctx context.Context, f t3client.FileUpload, progress func(sent int64)) (t3client.Upload, error)
+	DeleteUpload(ctx context.Context, id string) error
 }
 
 // Chats opens chat backends on the threads of one T3 connection. Its

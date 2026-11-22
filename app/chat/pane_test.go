@@ -22,7 +22,7 @@ func TestPane_RendersTranscript(t *testing.T) {
 	}
 	assert.Contains(t, v, "Fix login · running")
 	assert.Contains(t, v, "┃  please fix the login page", "the user's text sits in a rail panel")
-	assert.Contains(t, v, "+ 1 command, 1 edit, 1 thought", "the agent's work is one quiet line")
+	assert.Contains(t, v, "+ Ran 1 command and changed 1 file", "the agent's work is one quiet line, saying what it did")
 	assert.NotContains(t, v, "secret thoughts", "finished reasoning is never shown")
 	assert.NotContains(t, v, "$ go test")
 	assert.Contains(t, v, "   Looking at the handler▍", "the agent's prose is inset and shows a cursor while streaming")
@@ -79,8 +79,9 @@ func TestPane_RendersEveryEntry(t *testing.T) {
 	assert.Contains(t, v, "☐ test")
 	assert.Contains(t, v, "✗ rate limited")
 	assert.Contains(t, v, "\n     retry later", "a failure shows all of its text, hanging under the mark")
-	assert.Contains(t, v, "⋯ 1 thought, ", "work still going shows ⋯")
-	assert.Contains(t, v, " 1 tool, 1 subagent, 4 steps", "kinds without a word of their own count as steps")
+	assert.Contains(t, v, "⋯ Searched 2 times, used 1 tool, started 1 subagent and took 4",
+		"work still going shows ⋯; thoughts count only alone; kinds without a word of their own count as steps")
+	assert.Contains(t, v, "\n   other steps · /work shows them", "a long summary wraps, never cut")
 
 	p.SendText("/work\r")
 	v = view(p)

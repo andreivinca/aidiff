@@ -9,7 +9,7 @@ This document lists the platforms, dependencies and non-functional requirements 
 | **TR-1. OS** | Linux and macOS on amd64 and arm64. Windows is not supported: the terminal pane, SSH tunnel and process cleanup use Unix-only calls (`syscall.Kill`, `Setpgid`, PTYs). |
 | **TR-2. Terminal** | An interactive TTY with true color. Mouse support is recommended for drag-resize, selection and focus by click. |
 | **TR-3. Toolchain** | Go 1.26, `CGO_ENABLED=0`, dependencies vendored and committed. |
-| **TR-4. Linux-only** | Chat clipboard: image paste and copy-on-select. It needs `wl-clipboard` (Wayland) or `xclip` (X11). Full process cleanup when a terminal pane closes uses `/proc`; on macOS only the process group is signalled. |
+| **TR-4. Linux-only** | Chat clipboard: pasting copied files or an image, and copy-on-select. Pasted paths and `/attach` work on macOS too. It needs `wl-clipboard` (Wayland) or `xclip` (X11). Full process cleanup when a terminal pane closes uses `/proc`; on macOS only the process group is signalled. |
 
 ## 2. Runtime dependencies (aidiff features)
 
@@ -51,7 +51,7 @@ Go libraries added by aidiff:
 - **TR-16. Atomic token storage.** The T3 token file is written to a temp file and renamed into place, with mode 0600 in a 0700 directory.
 
 ### Maintainability
-- **TR-17. Upstream mergeability.** Fork code lives in `splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard` and `imagefile`. Hooks into revdiff code are limited to `RefreshMsg`/`CanRefresh`, folder browsing, and the status-bar identity.
+- **TR-17. Upstream mergeability.** Fork code lives in `splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard` and `attachfile`. Hooks into revdiff code are limited to `RefreshMsg`/`CanRefresh`, folder browsing, and the status-bar identity.
 - **TR-18. No OS work in the review UI.** PTYs, sockets, fsnotify and the clipboard stay out of `app/ui`.
 - **TR-19. Quality gates.** Tests run under the race detector, golangci-lint must pass, and shellcheck runs on the scripts (see [DEVELOPMENT.md](DEVELOPMENT.md)).
 
@@ -68,7 +68,9 @@ Go libraries added by aidiff:
 | Terminal scrollback | 5000 lines (kept but not viewable yet) |
 | Terminal redraw | ≤ 1 per 16 ms |
 | Pane close grace | 1 s, then SIGKILL |
-| Chat image | 10 MiB; png, jpg, gif, webp, bmp |
+| Chat image | 10 MiB; png, jpg, gif, webp, bmp (a larger one goes as a file) |
+| Chat file | 1 byte to 50 MiB, any type; 100 attachments a message; images and image-typed files 80 MiB together |
+| Chat send carrying files | 30 s plus the files at 64 KiB/s; an upload silent for 1 min ends |
 | Queued message cards shown | 8 rows |
 | Recent threads in the palette | 8 |
 | T3 websocket frame | 256 MiB |

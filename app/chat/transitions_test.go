@@ -137,3 +137,43 @@ func TestPane_ReleasedSelectionDoesNotHideNewOutput(t *testing.T) {
 		assert.Nil(t, p.selection.rows, "its text gone, the selection goes too")
 	})
 }
+
+func TestPane_ApprovalIsAPicker(t *testing.T) {
+	approving := func(ids ...string) Conversation {
+		conv := fixture()
+		conv.State = AgentWaiting
+		for _, id := range ids {
+			conv.Entries = append(conv.Entries, Approval{ID: id, Prompt: "Run " + id + "?", Pending: true})
+		}
+		return conv
+	}
+	p, f := newTestPane(t, 80, 40, approving("old", "req-1"))
+	v := view(p)
+	assert.Contains(t, v, "› 1) Accept", "the picker starts on Accept")
+	assert.Contains(t, v, "  2) Decline")
+	assert.Contains(t, v, "enter accept", "the key line names what enter does")
+	assert.Equal(t, 1, strings.Count(v, "1) Accept"), "only the approval the keys answer is a picker")
+	assert.Contains(t, v, "type /accept or /decline", "an older one keeps its hint")
+
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
+	assert.Contains(t, view(p), "› 2) Decline")
+	assert.Contains(t, view(p), "enter decline")
+	c := ask(t, p, f, func() { p.SendText("\r") })
+	assert.Equal(t, call{kind: "decide", id: "req-1", decision: Decline}, c, "enter on an empty input answers with the highlighted row")
+
+	show(t, p, f, approving("req-2"))
+	assert.Contains(t, view(p), "› 1) Accept", "another approval starts on Accept again")
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyUp})
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyUp})
+	c = ask(t, p, f, func() { p.SendText("\r") })
+	assert.Equal(t, call{kind: "decide", id: "req-2", decision: Accept}, c)
+
+	p.SendText("wait")
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
+	assert.Contains(t, view(p), "› 1) Accept", "with a draft the arrows belong to the input")
+
+	asked := asking("p1", Question{ID: "q", Text: "Which?", Options: []Option{{Label: "Red", Value: "red"}}})
+	asked.Entries = append(asked.Entries, Approval{ID: "req-3", Prompt: "Run it?", Pending: true})
+	p2, _ := newTestPane(t, 80, 40, asked)
+	assert.NotContains(t, view(p2), "1) Accept", "while the agent's questions hold the keys the approval is not a picker")
+}

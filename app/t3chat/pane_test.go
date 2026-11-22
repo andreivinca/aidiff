@@ -80,7 +80,7 @@ func TestPane_OnAThread(t *testing.T) {
 	v := view(p)
 	assert.Contains(t, v, "Fix login · running")
 	assert.Contains(t, v, "┃  please fix the login page")
-	assert.Contains(t, v, "+ 1 command, 1 edit, 1 thought")
+	assert.Contains(t, v, "+ Ran 1 command and changed 1 file")
 	assert.Contains(t, v, "Looking at the handler▍")
 	assert.Contains(t, v, "│   Build  T3 Code")
 

@@ -83,10 +83,10 @@ func TestPane_ComposerScrollsDraftAndPopup(t *testing.T) {
 	for range 7 {
 		p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
 	}
-	assert.Contains(t, view(p), "/attach <image file>", "the selected command stays visible in a short popup")
+	assert.Contains(t, view(p), "/attach <file>", "the selected command stays visible in a short popup")
 	assert.Contains(t, view(p), "↑↓ select")
 	p.SendText("\x1b")
-	assert.NotContains(t, view(p), "/attach <image file>")
+	assert.NotContains(t, view(p), "/attach <file>")
 	assert.Contains(t, view(p), "shift+enter newline", "closing the popup brings the hint row back")
 }
 

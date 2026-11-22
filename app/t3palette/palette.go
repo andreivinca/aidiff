@@ -148,10 +148,16 @@ func newPalette(cfg Config, start *Review, dial dialFunc) *Palette {
 		t.ws = wsKey(start)
 		t.rememberLocked(start, cfg.StartStore)
 	}
+	// under the lock: initLocalLocked starts the history check, which takes
+	// it to read what the lines below still write
+	t.mu.Lock()
 	t.initLocalLocked()
 	t.initSavedLocked()
 	if start != nil {
 		t.saveLocked(start.Session)
+	}
+	t.mu.Unlock()
+	if start != nil {
 		t.watchDrop(start.Session)
 	}
 	return t

@@ -25,7 +25,7 @@ func TestPane_PastesImages(t *testing.T) {
 	waitUpdate(t, p)
 	assert.Contains(t, view(p), "[Image #1] and this text█", "text on the clipboard is pasted as text")
 
-	f.files["/pics/shot.jpg"] = Image{Name: "shot.jpg", MIME: "image/jpeg", Data: []byte("jpegdata")}
+	f.files["/pics/shot.jpg"] = imageFile(Image{Name: "shot.jpg", MIME: "image/jpeg", Data: []byte("jpegdata")})
 	p.Paste("/pics/shot.jpg")
 	waitUpdate(t, p)
 	assert.Contains(t, view(p), "[Image #2] █", "a pasted path to an image attaches it")
@@ -53,9 +53,10 @@ func TestPane_PastesImages(t *testing.T) {
 	assert.Empty(t, c.msg.Images, "a token deleted from the input drops its image")
 
 	p.SendText("/attach /pics/notes.txt\r")
-	assert.Contains(t, view(p), "not an image file")
+	waitUpdate(t, p)
+	assert.Contains(t, view(p), "attach: stat /pics/notes.txt: file does not exist", "/attach takes any file, and says when there is none")
 	p.SendText("\x15/attach\r")
-	assert.Contains(t, view(p), "/attach <image file>")
+	assert.Contains(t, view(p), "/attach <file>")
 	f.clip.set(Clip{}, errors.New("no clipboard tool"))
 	p.SendText("\x15\x16")
 	waitUpdate(t, p)
@@ -67,7 +68,8 @@ func TestPane_PastesImages(t *testing.T) {
 }
 
 func TestPane_BackendTurnsImagesDown(t *testing.T) {
-	p, f := newTestPane(t, 80, 14, fixture())
+	f := newFakeBackend(fixture())
+	p := startPaneOn(t, imagesOnly{f}, f, 80, 14)
 	f.mu.Lock()
 	f.maxImage = 4
 	f.mu.Unlock()
@@ -77,12 +79,17 @@ func TestPane_BackendTurnsImagesDown(t *testing.T) {
 	assert.Contains(t, view(p), "clipboard.png is too large")
 	assert.Empty(t, p.input.text())
 
-	f.files["/pics/big.png"] = Image{Name: "big.png", MIME: "image/png", Data: []byte("too large")}
+	f.files["/pics/big.png"] = imageFile(Image{Name: "big.png", MIME: "image/png", Data: []byte("too large")})
 	p.SendText("/attach /pics/big.png\r")
 	waitUpdate(t, p)
-	assert.Contains(t, view(p), "attach: big.png is too large", "a file is checked before it is read")
+	assert.Contains(t, view(p), "big.png is too large", "a file is checked before it is read")
+	f.files["/docs/a.pdf"] = fakeFile{mime: "application/pdf", content: "%PDF"}
+	p.SendText("\x15/attach /docs/a.pdf\r")
+	waitUpdate(t, p)
+	assert.Contains(t, view(p), "a.pdf: this agent takes images only")
 	locked(p, func() {
 		assert.Empty(t, p.images)
+		assert.Empty(t, p.attached)
 	})
 }
 

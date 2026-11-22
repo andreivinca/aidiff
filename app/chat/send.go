@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var (
@@ -32,6 +33,13 @@ func (p *Pane) submitLocked() {
 			if err := p.submitAnswersLocked(prompt); err != nil {
 				p.note = err.Error()
 			}
+			return
+		}
+		if p.pickedApprovalLocked() != "" {
+			c := approvalChoices[min(max(p.approvalChoice, 0), len(approvalChoices)-1)]
+			if err := p.decider(c.decision)(""); err != nil {
+				p.note = err.Error()
+			}
 		}
 		return
 	}
@@ -50,41 +58,66 @@ func (p *Pane) submitLocked() {
 	p.clearDraftLocked()
 }
 
-// clearDraftLocked empties the input along with the images pasted into it;
-// mu must be held.
+// clearDraftLocked empties the input along with the images and files
+// attached to it; mu must be held.
 func (p *Pane) clearDraftLocked() {
 	p.input.clear()
-	p.images = nil
+	p.images, p.attached = nil, nil
 	p.inputChanged()
 }
 
-// sendMessageLocked hands text and the images it names to the agent. Its
-// card shows above the composer until the backend takes the message over.
-// mu must be held.
+// sendMessageLocked hands text and the images and files it names to the
+// agent. Its card shows above the composer until the backend takes the
+// message over. A message carrying files has time for them to go up on a
+// slow link, its card shows how far they went, and esc stops them. mu must
+// be held.
 func (p *Pane) sendMessageLocked(text string) error {
-	pasted := p.imagesInLocked(text)
+	images, files := p.imagesInLocked(text), p.filesInLocked(text)
 	m := Outgoing{ID: newID(), Text: text}
-	for _, img := range pasted {
+	for _, img := range images {
 		m.Images = append(m.Images, img.image)
 	}
-	b := p.backend
-	err := p.requestLocked(request{
-		run: func(ctx context.Context) error {
-			if err := b.Send(ctx, m); err != nil {
-				return fmt.Errorf("send failed: %w", err)
-			}
-			return nil
-		},
+	var size int64
+	for _, f := range files {
+		m.Files = append(m.Files, f.file)
+		size += f.file.Size
+	}
+	late := false // esc came once the files were up, too late to stop the message
+	r := request{
 		finish: func(err error) {
 			p.sentLocked(m, err)
-		},
-		keep: func(err error) {
-			if err != nil {
-				p.restoreLocked(m.Text, pasted)
+			if late {
+				p.note = "the files were already up; the message went out"
 			}
 		},
-	})
-	if err != nil {
+		keep: func(err error) {
+			p.upload.stop(m.ID)
+			if err != nil {
+				p.restoreLocked(m.Text, images, files)
+			}
+		},
+	}
+	if len(files) > 0 {
+		m.Progress = p.progressFunc(m.ID)
+		r.timeout, r.cancellable = sendTimeout(size), true
+		p.upload.start(m.ID)
+	}
+	b := p.backend
+	r.run = func(ctx context.Context) error {
+		err := b.Send(ctx, m)
+		cause := context.Cause(ctx)
+		stopped := errors.Is(cause, errSendCancelled) || errors.Is(cause, errSendLeft)
+		switch {
+		case err != nil && stopped:
+			return cause // stopped from here, whatever the backend made of it
+		case err != nil:
+			return fmt.Errorf("send failed: %w", err)
+		}
+		late = stopped
+		return nil
+	}
+	if err := p.requestLocked(r); err != nil {
+		p.upload.stop(m.ID)
 		return err
 	}
 	p.pending = append(p.pending, queuedMessage{id: m.ID, text: text, sending: true, queued: p.runningTurnLocked() != ""})
@@ -107,13 +140,17 @@ func (p *Pane) sentLocked(m Outgoing, err error) {
 }
 
 // restoreLocked puts text the backend did not take back into the input,
-// with the images it names: in place of an empty draft, else ahead of what
-// was typed since, on a line of its own, so neither is lost. mu must be
-// held.
-func (p *Pane) restoreLocked(text string, pasted []pendingImage) {
-	p.images = append(p.images, pasted...)
-	for _, img := range pasted {
+// with the images and files it names: in place of an empty draft, else
+// ahead of what was typed since, on a line of its own, so neither is lost.
+// mu must be held.
+func (p *Pane) restoreLocked(text string, images []pendingImage, files []pendingFile) {
+	p.images = append(p.images, images...)
+	for _, img := range images {
 		p.input.addAtom(img.token)
+	}
+	p.attached = append(p.attached, files...)
+	for _, f := range files {
+		p.input.addAtom(f.token)
 	}
 	if p.input.empty() {
 		p.input.insert(text)
@@ -130,9 +167,13 @@ func (p *Pane) restoreLocked(text string, pasted []pendingImage) {
 // request is a call to the backend the composer waits on; one runs at a
 // time.
 type request struct {
-	run    func(ctx context.Context) error // off the lock; its error says what failed
-	done   string                          // the note once it succeeded, if any
-	finish func(err error)                 // with mu held once run returned, before the note; may be nil
+	run     func(ctx context.Context) error // off the lock; its error says what failed
+	done    string                          // the note once it succeeded, if any
+	timeout time.Duration                   // how long run may take; requestTimeout when zero
+	// cancellable lets esc, following another thread or closing stop run,
+	// through its context's cause: a message whose files are going up
+	cancellable bool
+	finish      func(err error) // with mu held once run returned, before the note; may be nil
 	// keep, with mu held once run returned, gives the user back text the
 	// backend did not take. It runs even when the pane follows another
 	// backend by then, unlike finish: that text belongs to the draft, which
@@ -151,12 +192,24 @@ func (p *Pane) requestLocked(r request) error {
 	}
 	p.busy = true
 	sub := p.subID
+	timeout := r.timeout
+	if timeout <= 0 {
+		timeout = requestTimeout
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, stop := context.WithTimeout(ctx, timeout)
+	if r.cancellable {
+		p.cancelSend = cancel
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
-		defer cancel()
+		defer stop()
 		err := r.run(ctx)
+		cancel(nil)
 		p.lock()
 		defer p.mu.Unlock()
+		if sub == p.subID && r.cancellable {
+			p.cancelSend = nil
+		}
 		if r.keep != nil {
 			r.keep(err)
 		}

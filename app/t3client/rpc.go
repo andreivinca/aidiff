@@ -44,6 +44,10 @@ type Conn struct {
 	ws     *websocket.Conn
 	ctx    context.Context // canceled when the connection closes
 	cancel context.CancelFunc
+	// ep and token reach the server over plain HTTP too, the way the socket
+	// was dialed: file uploads go there (UploadFile)
+	ep    endpoint
+	token string
 
 	// writeTurn serializes frames. It is a channel rather than a mutex so a
 	// writer waits for its turn under its own context, apart from the
@@ -127,6 +131,8 @@ func dial(ctx context.Context, ep endpoint, token string) (*Conn, error) {
 		ws:        ws,
 		ctx:       cctx,
 		cancel:    cancel,
+		ep:        ep,
+		token:     token,
 		writeTurn: make(chan struct{}, 1),
 		control:   newControlQueue(),
 		pending:   map[string]*call{},

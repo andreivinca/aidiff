@@ -79,7 +79,9 @@ T3 serves **Effect RPC over a WebSocket**. aidiff implements the part it needs: 
 | `orchestration.launchThread` | New thread, with the caller's `runtimeMode` (the palette sends `full-access`), `interactionMode: default` and workspace root. |
 | `orchestration.dispatchCommand` | Every thread command (below), each with a UUIDv4 `commandId` |
 | `server.getConfig` | Provider catalog: models, capabilities, slash commands, default model |
-| `assets.persistChatAttachments` | Image uploads |
+| `assets.persistChatAttachments` | Image uploads (data URLs, images only) |
+| `attachments.createUploadUrl` | A signed address for one file upload: `{type: file, name, mimeType, sizeBytes}` → `{attachmentId, relativeUrl, expiresAt}` |
+| `attachments.delete` | Deletes an upload no message took (`{attachmentId}`; the server deletes only uploads still pending) |
 | `secrets.answerRequest` | Answers the agent's secret request (a `secret_request` turn item, from `request_secret`): `{threadId, turnItemId, answer: {type: save, secret} \| {type: decline}}`. T3 stores the secret for the agent; it never enters the thread. |
 | `filesystem.browse`, `projects.mutate` | Browse server folders and create projects |
 
@@ -138,7 +140,8 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
  ───────────────────────────────────────────────────────────────────────
  you: please add tests
  assistant: …
- + 3 commands, 1 edit · /work shows them
+ + Ran 3 commands and changed 1 file · /work shows them
+ ✻ checking whether the test covers the empty case
  ┌ Queued ───────────────────────────┐
  │ also update the docs              │
  └───────────────────────────────────┘
@@ -177,17 +180,25 @@ The pane (`app/chat`) owns the layout, the composer, the popup, the stop dialog,
 | ctrl+c / ctrl+shift+c | Copy the selection: the text selected in the input, else the transcript text the mouse selected. There is one selection at a time: a drag drops the input's, a key drops the transcript's |
 | shift+← / shift+→ / shift+home / shift+end | Select; typing or pasting replaces the selection, backspace and delete remove it |
 | ctrl+shift+← / ctrl+shift+→ | Select a word at a time |
-| ctrl+v | Paste from clipboard: an image attaches as `[Image #n]`, which the input treats as one character (the cursor skips it, one delete removes it and drops the image), text is inserted |
+| ctrl+v | Paste from clipboard: files copied in a file manager attach, each as `[File #n: name]` (an image file as `[Image #n]`); an image (a screenshot) attaches as `[Image #n]`; text is inserted. The input treats a token as one character (the cursor skips it, one delete removes it and drops what it stands for) |
 | ↑ / ↓ | Move in the slash popup, else move the cursor a line up or down in a multi-line draft, else (on its first or last line) scroll |
-| ↑ on an empty input, a message queued | Take the newest queued message back into the input (`queued-run.cancel` first, so it is never both queued and in the input) to edit and send again, or drop with ctrl+u. Its images stay behind, and the note says so. A message taken back never shows as sent |
+| ↑ on an empty input, a message queued | Take the newest queued message back into the input (`queued-run.cancel` first, so it is never both queued and in the input) to edit and send again, or drop with ctrl+u. Its images and files stay behind, and the note says so. A message taken back never shows as sent |
 | Mouse wheel | Scroll the transcript: 3 lines a notch, speeding up on a fast run of notches one way (a trackpad flick, a quick spin) by 3 more every 3 notches, up to 12; a pause of 50 ms or a turn back starts over |
 | PgUp / PgDn | Scroll by a page |
 | End | Cursor to the end of the input; with the cursor already there, jump to the bottom of the transcript |
 | Tab | Complete a slash command |
 | ← (empty input) | Activity view |
-| Esc | Drop the selection, close the popup, or ask to stop the run |
+| Esc | Drop the selection, close the popup, cancel the upload of a message's files, or ask to stop the run |
 
-Pasting a single line that is a path to an image file attaches that file. The backend turns down an image over T3's 10 MB limit, a file before it is read. When a send fails, the text and images go back into the input. A command or message that is turned down (bad argument, nothing to approve, not connected, another request still being sent) stays in the input, with the reason underneath. Commands that send nothing, such as `/help` or `/work`, work while a request is in flight. Switching threads keeps the draft and its images.
+**Attachments.** Files reach the composer three ways: ctrl+v with files copied in a file manager, pasting a single line that names files, and `/attach <path>`.
+- **Clipboard** (`app/clipboard`): when the clipboard offers a file list (`text/uri-list`, else `x-special/gnome-copied-files`, `x-special/KDE-copied-files` or `application/x-kde4-urilist`), its `file://` URIs are percent-decoded and attached in order; `#` comment lines, a desktop's `copy`/`cut` line, web addresses and files on another host (a `file://host/` other than localhost or this machine) are left out. A file list wins over image data, and image data over text: copying an image file in a file manager offers its list (and sometimes its pixels), so the file attaches under its own name; a screenshot offers the image alone; copied text offers text alone. A list that names no local file (a browser's copied image offers its web address) counts as none.
+- **Pasted path:** a single pasted line that is an absolute path through a folder (`/a/b`), a `~/` path or a `file://` URI on this machine, quoted (`'…'`, `"…"`) or backslash-escaped as terminals paste a dropped file, attaches the file; several such words separated by spaces attach them all; a path pasted bare keeps its spaces. A slash command (`/help`), a code comment (`// …`) or a relative path stays text, at once. When nothing it names can be attached, the line goes in as text: silently when it names no file, else with the reason (`… is a folder; pasted as text`).
+- **What attaches how:** each file is looked at off the UI goroutine (`Files.Stat`): it must be a regular file this user can read; a symlink is followed, a folder, named pipe, socket or device is refused with a note, and nothing is recursed or zipped. An image of an attachable type, by name and content, within T3's 10 MB image limit is read whole and goes as an image (`assets.persistChatAttachments`), as before; one over that limit goes as a file (the note says so). Any other file is checked and only opened again when the message is sent, so a large file is never held in memory, and it goes as it is then. The backend (`chat.FileTaker`) turns down, with a one-line note and nothing attached, an empty file (T3 refuses those), a file over 50 MB, a 101st attachment, and images (image-typed files included) over 80 MB in all. Several files pasted at once attach in order with one note (`3 attached: [File #1] report.pdf, 2.3 MB; …; left out: …`); one says `[File #1] attached: report.pdf, 2.3 MB`. The token names the file, so the agent reading the message text can tell which file is which.
+- **Sending:** `t3chat` uploads each file, one at a time, read from disk as it goes: `attachments.createUploadUrl`, then `POST <server base><relativeUrl>` with `Content-Type` the file's type, `Content-Length` its size and the bearer token, over the connection's own transport (the SSH tunnel's socket for `ssh://`) and below the path the server is served under. The server answers 204, stores the file as a pending upload and checks the byte count. Then the images are stored and `message.dispatch` carries `{type: file, id, name, mimeType, sizeBytes}` for each file after the images; T3 copies each pending upload into the thread's own store (`claimPendingAttachments`). A message carrying files has 30 s plus its files at 64 KB/s to go; a transfer that sends nothing for a minute is ended. The message's card reads `Uploading report.pdf: 12.5 MB of 48.0 MB · esc cancels`; esc, switching threads or closing the pane stops the upload and puts the message back in the input. Once the files are up the message goes out on a deadline of its own: cancelling stops an upload, never half a send. The uploads of a message that was not sent are deleted with `attachments.delete`, and so are those of one that was, which the server has copied; T3 sweeps a forgotten pending upload after a day.
+- **The agent** gets each file as a path on the server's disk: every provider adapter appends `[Attached file "report.pdf" is saved at: <T3 home>/userdata/attachments/<id>.pdf]` to the message, with the path of a text extraction for documents T3 can read; Claude may also get a PDF inline. An image goes to the agent as an image, as before.
+- **Transcript:** a user's message lists what it carries under its text, one row each: `📎 report.pdf · 2.3 MB`, an image's and any other kind's with its kind (`· image`), including messages sent from T3's own client and attachment kinds this client does not know. Names are sanitized like all server text.
+
+When a send fails, the text and its images and files go back into the input; a file gone since it was attached fails the send that way. A command or message that is turned down (bad argument, nothing to approve, not connected, another request still being sent) stays in the input, with the reason underneath. Commands that send nothing, such as `/help` or `/work`, work while a request is in flight. Switching threads keeps the draft and its attachments.
 
 **Queued messages:** the server queues a message that arrives during a run (`queue_after_active`), and it becomes the next turn. The pane names each message it sends with a UUID, which T3 takes as the message id. Its local cards and the server's queue are merged **by message ID only**, never by text; a local card goes once the backend reports the message delivered (the transcript shows it, or its run ended). A card is labeled "Sending…", "Queued" or "Sent". Up to 8 rows of cards are shown.
 
@@ -197,6 +208,7 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 | `/help` | List commands |
 | `/stop` | Stop the run (asks for confirmation) |
 | `/accept` (`/yes`, `/y`), `/decline` (`/no`, `/n`), `/cancel` | Answer the newest pending approval |
+| ↑/↓, Enter on an empty input | Choose **Accept** or **Decline** in the pending approval's picker and confirm it (the picker starts on Accept) |
 | `/answer <n \| 1,3 \| text>`, `/1`…`/9` | Answer a question. Answers to multi-question prompts are collected until all questions are answered. If sending them fails, only the last answer has to be given again. |
 | `/dismiss` | Dismiss a user-input request |
 | `/model <model>` *(T3)* | Switch model, by slug, `instance:slug`, or a unique part of the name |
@@ -205,7 +217,7 @@ Pasting a single line that is a path to an image file attaches that file. The ba
 | `/mode approval-required\|auto-accept-edits\|auto\|full-access` *(T3)* | Runtime mode |
 | `/clear` *(T3)* | Start a new thread in the same project, with this thread's model, runtime and interaction modes; it takes the screen and the chat |
 | `/side` (`/btw`) `<question>` *(T3)* | Fork a side chat and ask it |
-| `/attach <image>` | Attach an image file |
+| `/attach <path>` | Attach a file, an image as an image; quoted, escaped, `~/`, `file://` and relative paths are taken |
 | `/work` | Toggle between expanded and summarized agent work |
 | `/activity` | Open the activity view |
 
@@ -251,4 +263,5 @@ The directory is single-quote escaped. A `--terminal-command` replaces the `exec
 | SSH tunnel listening | 15 s |
 | Diff and shell calls | 60 s |
 | Palette calls, chat sends | 30 s |
+| Chat send carrying files | 30 s plus the files at 64 KB/s; an upload that sends nothing for 1 min ends |
 | Ping interval | 25 s |

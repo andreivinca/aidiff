@@ -36,7 +36,7 @@ func (p *Pane) builtinCommands() []command {
 		{Command: Command{Name: "/answer", Args: "<n> | 1,3 | <text>", Description: "answer the agent's question (/1…/9 pick an option)"},
 			run: p.answerCmd},
 		{Command: Command{Name: "/dismiss", Description: "drop the agent's question"}, run: p.dismissCmd},
-		{Command: Command{Name: "/attach", Args: "<image file>", Description: "attach an image file (ctrl+v pastes one from the clipboard)"},
+		{Command: Command{Name: "/attach", Args: "<file>", Description: "attach a file or an image (ctrl+v pastes copied files or an image)"},
 			run: p.attachCmd},
 		{Command: Command{Name: "/work", Description: "show or hide the agent's commands, edits and thoughts one by one"},
 			run: p.workCmd},
@@ -127,6 +127,15 @@ func (p *Pane) decider(d Decision) func(string) error {
 	}
 }
 
+// pickedApprovalLocked is the approval the picker's keys answer: the newest
+// pending one, unless the agent's questions hold the keys. mu must be held.
+func (p *Pane) pickedApprovalLocked() string {
+	if p.pendingQuestionsLocked() != nil {
+		return ""
+	}
+	return p.pendingApprovalLocked()
+}
+
 // pendingApprovalLocked is the newest approval the agent still waits on, or
 // ""; mu must be held.
 func (p *Pane) pendingApprovalLocked() string {
@@ -138,16 +147,14 @@ func (p *Pane) pendingApprovalLocked() string {
 	return ""
 }
 
-// attachCmd attaches an image file by path.
+// attachCmd attaches a file by path: an image as one, any other file to
+// be read when the message is sent.
 func (p *Pane) attachCmd(arg string) error {
-	path := strings.TrimSpace(arg)
+	path := attachArg(arg)
 	if path == "" {
-		return errors.New("/attach <image file>; ctrl+v pastes an image from the clipboard")
+		return errors.New("/attach <file>; ctrl+v pastes copied files or an image from the clipboard")
 	}
-	if !p.files.IsImage(path) {
-		return errors.New("not an image file: " + path)
-	}
-	p.attachFileLocked(path, "")
+	p.attachPathsLocked([]string{path}, "")
 	return nil
 }
 

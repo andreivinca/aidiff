@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -54,12 +55,12 @@ func (p *Pane) transcriptPanelsLocked(w int) (block, []panelSpan) {
 			work = append(work, s)
 			continue
 		}
-		add(p.workRows(work, w), false, true)
+		add(p.workRows(work, w, false), false, true)
 		work = nil
 		_, user := e.(UserMessage)
 		add(p.entryRowsLocked(e, w), user, false)
 	}
-	add(p.workRows(work, w), false, true)
+	add(p.workRows(work, w, true), false, true) // the last run of steps, the one the agent may be adding to
 	// the rows are gathered first and copied once: a frame builds the whole transcript
 	out := block{rows: make([]string, 0, n), meta: make([]rowMeta, 0, n)}
 	var spans []panelSpan
@@ -81,8 +82,8 @@ func (p *Pane) entryRowsLocked(e Entry, w int) block {
 	st := p.styles
 	switch e := e.(type) {
 	case UserMessage:
-		return p.rowCache.rows(rowKey{kind: 'u', text: e.Text, w: w}, func() block {
-			return userPanel(e.Text, w, st)
+		return p.rowCache.rows(rowKey{kind: 'u', text: e.Text + attachmentsKey(e.Attachments), w: w}, func() block {
+			return userPanel(e, w, st)
 		})
 	case AgentMessage:
 		text := e.Markdown
@@ -102,7 +103,11 @@ func (p *Pane) entryRowsLocked(e Entry, w int) block {
 	case TodoList:
 		return todoRows(e, w, st)
 	case Approval:
-		return approvalRows(e, w, st)
+		choice := -1 // only the approval the keys answer gets the picker
+		if e.Pending && e.ID != "" && e.ID == p.pickedApprovalLocked() {
+			choice = p.approvalChoice
+		}
+		return approvalRows(e, w, st, choice)
 	case SecretRequest:
 		return secretRows(e, w, st) // secret.go
 	case Questions:
@@ -132,14 +137,16 @@ func insetRows(b block, style lipgloss.Style) block {
 }
 
 // workRows shows a run of the agent's steps: one quiet summary line, or
-// each step in full after /work.
-func (p *Pane) workRows(work []Step, w int) block {
+// each step in full after /work. last is the run that ends the transcript:
+// while the agent works, it is the one being added to.
+func (p *Pane) workRows(work []Step, w int, last bool) block {
 	var b block
 	if len(work) == 0 {
 		return b
 	}
 	if !p.showWork {
-		b.plain(p.styles.muted.Render(ansi.Truncate(inset+workSummary(work), w, "…"))) // a count; /work shows the steps
+		b.join(insetRows(wrapText("", workSummary(work), w, false), p.styles.muted)) // what it did; /work shows the steps
+		b.join(p.liveStepRows(work, w, last && p.workingLocked()))
 		return b
 	}
 	for _, s := range work {
@@ -149,8 +156,86 @@ func (p *Pane) workRows(work []Step, w int) block {
 	return b
 }
 
-// stepNouns are what the work summary counts, in its order.
-var stepNouns = []string{"command", "edit", "thought", "search", "tool", "subagent", "step"}
+// The live steps under a collapsed summary: how many at most, and how many
+// rows a thought still being written keeps of its end.
+const (
+	liveSteps       = 3
+	liveThoughtRows = 3
+)
+
+// liveStepRows shows under a collapsed summary what the agent is doing right
+// now, the newest last: the command it runs, the thought it writes. A count
+// alone left the user unsure anything happened. Those are the steps still
+// going; for the run the working agent adds to (latest), its last steps
+// whether or not they finished, as T3's own client shows them, so the gap
+// between two steps still says what came last. Once the agent stops they
+// go, and the count stands alone.
+func (p *Pane) liveStepRows(work []Step, w int, latest bool) block {
+	var going []Step
+	for _, s := range work {
+		if latest || s.State.going() {
+			going = append(going, s)
+		}
+	}
+	if len(going) > liveSteps {
+		going = going[len(going)-liveSteps:]
+	}
+	var b block
+	for _, s := range going {
+		if s.Kind == StepThought {
+			b.join(insetRows(thoughtTail(s.Text, w), p.styles.muted))
+			continue
+		}
+		lead, _ := s.line()
+		text := firstLine(s.Text)
+		if text == "" {
+			text = s.noun()
+		}
+		b.join(insetRows(wrapText(lead, text+s.suffix(), w, false), p.styles.text))
+	}
+	return b
+}
+
+// thoughtTail is the end of a thought still being written: what it says
+// now, in at most liveThoughtRows rows, "…" leading when the start is cut.
+func thoughtTail(text string, w int) block {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return wrapText("✻ ", "thinking…", w, false) // a thought shows only as it is written, or not at all
+	}
+	b := wrapText("✻ ", text, w, false)
+	if len(b.rows) <= liveThoughtRows {
+		return b
+	}
+	// keep the end, "…" for the cut start; words wrap short of the width, so
+	// the end kept shrinks until it fits and the first row keeps its ✻
+	r := []rune(text)
+	room := min(len(r), max(1, (w-len(inset)-2)*liveThoughtRows-1))
+	for {
+		b = wrapText("✻ ", "…"+strings.TrimLeft(string(r[len(r)-room:]), " "), w, false)
+		if len(b.rows) <= liveThoughtRows || room == 1 {
+			return b
+		}
+		room = max(1, room-max(1, room/10))
+	}
+}
+
+// stepPhrases say what the agent did n times, for each noun the summary
+// counts.
+var stepPhrases = map[string]func(n int) string{
+	"command":  func(n int) string { return fmt.Sprintf("ran %d command%s", n, plural(n)) },
+	"edit":     func(n int) string { return fmt.Sprintf("changed %d file%s", n, plural(n)) },
+	"search":   func(n int) string { return fmt.Sprintf("searched %d time%s", n, plural(n)) },
+	"tool":     func(n int) string { return fmt.Sprintf("used %d tool%s", n, plural(n)) },
+	"subagent": func(n int) string { return fmt.Sprintf("started %d subagent%s", n, plural(n)) },
+	"step":     func(n int) string { return fmt.Sprintf("took %d other step%s", n, plural(n)) },
+	"thought": func(n int) string {
+		if n == 1 {
+			return "thought"
+		}
+		return fmt.Sprintf("thought %d times", n)
+	},
+}
 
 // noun is what the work summary counts the step as.
 func (s Step) noun() string {
@@ -172,29 +257,40 @@ func (s Step) noun() string {
 	}
 }
 
-// workSummary counts a run of steps the way OpenCode does: "+ 2 commands,
-// 1 edit, 3 thoughts", zero counts left out, "⋯" instead of "+" while any of
-// it is still going.
+// workSummary says what a run of steps did, the way T3's own client does:
+// "+ Changed 1 file and ran 5 commands", in the order the kinds first came,
+// thoughts counted only when the run is nothing else, "⋯" instead of "+"
+// while any of it is still going.
 func workSummary(work []Step) string {
 	counts := map[string]int{}
+	var order []string
 	going := false
 	for _, s := range work {
-		counts[s.noun()]++
+		noun := s.noun()
+		if counts[noun] == 0 {
+			order = append(order, noun)
+		}
+		counts[noun]++
 		if s.State.going() {
 			going = true
 		}
 	}
-	var parts []string
-	for _, noun := range stepNouns {
-		if n := counts[noun]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s%s", n, noun, plural(n)))
-		}
+	if len(order) > 1 {
+		order = slices.DeleteFunc(order, func(n string) bool { return n == "thought" })
+	}
+	parts := make([]string, 0, len(order))
+	for _, noun := range order {
+		parts = append(parts, stepPhrases[noun](counts[noun]))
+	}
+	said := strings.Join(parts, ", ")
+	if len(parts) > 1 {
+		said = strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 	}
 	mark := "+"
 	if going {
 		mark = "⋯"
 	}
-	return mark + " " + strings.Join(parts, ", ") + " · /work shows them"
+	return mark + " " + capitalize(said) + " · /work shows them"
 }
 
 // line is the step as /work shows it, with OpenCode's glyphs: $ for a
@@ -246,12 +342,52 @@ func (s Step) suffix() string {
 
 // userPanel is the user's message as OpenCode draws it: a raised panel with
 // a rail in the agent's color, one blank row above and below the text.
-func userPanel(text string, w int, st styles) block {
-	lines := panelBlock(text, w)
+func userPanel(m UserMessage, w int, st styles) block {
+	lines := panelBlock(m.Text, w)
 	for i, r := range lines.rows {
 		lines.rows[i] = st.rail.Render(rail) + st.panel.Render(panelText(r, w))
 	}
-	return lines
+	if len(m.Attachments) == 0 {
+		return lines
+	}
+	// the attachments go under the text, muted on the panel, above its blank last row
+	last := len(lines.rows) - 1
+	out := block{rows: lines.rows[:last:last], meta: lines.meta[:last:last]}
+	atts := attachmentRows(m.Attachments, w)
+	for i, r := range atts.rows {
+		out.add(st.rail.Render(rail)+st.queued.Render(panelText(r, w)), atts.meta[i])
+	}
+	out.add(lines.rows[last], lines.meta[last])
+	return out
+}
+
+// attachmentRows lists what a message carries, one row each, as the user's
+// panel shows them: its name and size, and its kind unless it is a file.
+func attachmentRows(atts []Attachment, w int) block {
+	inner := max(1, w-4)
+	var b block
+	for _, a := range atts {
+		row := "📎 " + a.Name + " · " + sizeText(a.Size)
+		if a.Kind != AttachedFile {
+			row += " · " + a.Kind
+		}
+		row = ansi.Truncate(row, inner, "…")
+		b.add(row, rowMeta{start: panelTextStart, end: panelTextStart + ansi.StringWidth(row)})
+	}
+	return b
+}
+
+// attachmentsKey tells apart, for the row cache, messages of the same text
+// that carry different attachments.
+func attachmentsKey(atts []Attachment) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, a := range atts {
+		fmt.Fprintf(&b, "\x00%s\x00%s\x00%d", a.Kind, a.Name, a.Size)
+	}
+	return b.String()
 }
 
 // panelTextStart is the column a panel row's text starts at: past the rail
@@ -300,9 +436,18 @@ func todoRows(list TodoList, w int, st styles) block {
 	return b
 }
 
+// approvalChoices are the approval picker's rows, in order.
+var approvalChoices = []struct {
+	label    string
+	decision Decision
+}{{"Accept", Accept}, {"Decline", Decline}}
+
 // approvalRows shows what the agent asks to do in full, wrapped: a command
-// to approve has to be read whole, and so does one approved already.
-func approvalRows(a Approval, w int, st styles) block {
+// to approve has to be read whole, and so does one approved already. The
+// approval the keys answer (choice >= 0) is drawn as a picker, its
+// highlighted row a bar as a question's is: a hint to type /accept alone
+// was easy to miss.
+func approvalRows(a Approval, w int, st styles, choice int) block {
 	prompt := strings.TrimSpace(a.Prompt)
 	if !a.Pending {
 		return insetRows(wrapText("", "approval: "+prompt, w, false), st.muted)
@@ -311,7 +456,24 @@ func approvalRows(a Approval, w int, st styles) block {
 	if a.Reason != "" {
 		b.join(wrapLines(a.Reason, w))
 	}
-	b.plain(st.muted.Render(ansi.Truncate(inset+"  type /accept or /decline", w, "…")))
+	if choice < 0 {
+		b.plain(st.muted.Render(ansi.Truncate(inset+"  type /accept or /decline", w, "…")))
+		return b
+	}
+	b.plain("")
+	for i, c := range approvalChoices {
+		cursor, style := "  ", st.text
+		if i == choice {
+			cursor, style = "› ", st.selected
+		}
+		row := fmt.Sprintf("%s%d) %s", cursor, i+1, c.label)
+		if i == choice {
+			row = fit(row, max(1, w-len(inset)))
+		}
+		b.plain(inset + style.Render(row))
+	}
+	b.plain("")
+	b.plain(keyHints(w, st, "↑/↓ choose", "enter confirm", "or type /accept · /decline", "or a message to the agent")...)
 	return b
 }
 

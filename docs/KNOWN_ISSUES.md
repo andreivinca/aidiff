@@ -28,7 +28,8 @@ Renaming the config directory and the env vars would break existing setups, so i
 | T3 | Tied to orchestration protocol 2. Any T3 server protocol change needs a client update. |
 | T3 | New threads always start in `full-access` runtime mode. |
 | T3 | Remote `http://` servers are accepted, which sends the token in cleartext. |
-| Clipboard | Linux only (`wl-clipboard` / `xclip`). No macOS `pbcopy`, and no OSC 52 for SSH sessions. |
+| Clipboard | Linux only (`wl-clipboard` / `xclip`). No macOS `pbcopy`, and no OSC 52 for SSH sessions. On macOS, files copied in Finder cannot be pasted with ctrl+v; dropping or pasting their path, or `/attach`, attaches them. |
+| Chat attachments | Files go up one at a time when the message is sent, not in the background while it is written, so a large file makes the send wait (its card shows the progress). T3 copies each upload into the thread; the copy left pending is deleted by aidiff after the send, or swept by T3 after a day if aidiff could not. |
 | Live refresh | Not available for Mercurial or jj repositories, stdin, compare, or `--only` outside a repository. |
 | Split view | Shift+enter needs a terminal that honors xterm's modifyOtherKeys (aidiff turns on level 1 at startup); others send it as a plain enter, and alt+enter or ctrl+j still insert a line break. The split reads the reports through Bubble Tea's unexported `unknownCSISequenceMsg` (`rawseq.go`); `TestRawSequence_BubbleTeaType` fails if an upgrade changes it. |
 | Platforms | No Windows build. |

@@ -13,7 +13,7 @@ import (
 func (t *thread) entry(it t3client.TurnItem) chat.Entry {
 	switch it.Type {
 	case "user_message":
-		return chat.UserMessage{Text: it.Text}
+		return chat.UserMessage{Text: it.Text, Attachments: attachments(it.Attachments)}
 	case "assistant_message":
 		return chat.AgentMessage{Markdown: it.Text, Streaming: it.Streaming || it.Status == "running"}
 	case "proposed_plan":
@@ -30,6 +30,39 @@ func (t *thread) entry(it t3client.TurnItem) chat.Entry {
 		return secretRequest(it)
 	}
 	return stepOf(it, t.texts(it).in)
+}
+
+// attachments are what a message carries, as the pane lists them: T3's
+// images and files, and any kind of its own by the name T3 gives it.
+func attachments(atts t3client.Attachments) []chat.Attachment {
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]chat.Attachment, 0, len(atts))
+	for _, a := range atts {
+		kind := a.Type
+		if kind == "" {
+			kind = "attachment"
+		}
+		name := a.Name
+		if name == "" {
+			name = a.ID
+		}
+		out = append(out, chat.Attachment{Kind: kind, Name: name, MIME: a.MimeType, Size: a.SizeBytes})
+	}
+	return out
+}
+
+// countAttachments counts a message's images and its other attachments.
+func countAttachments(atts t3client.Attachments) (images, files int) {
+	for _, a := range atts {
+		if a.Type == chat.AttachedImage {
+			images++
+		} else {
+			files++
+		}
+	}
+	return images, files
 }
 
 // secretRequest is a secret_request item as the pane shows it: pending

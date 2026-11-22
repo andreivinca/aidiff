@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // waitLimit bounds every wait of a test on the pane or a fake.
@@ -42,6 +47,12 @@ type fakeBackend struct {
 	hold     chan struct{} // when set, calls wait for it to close
 	commands []Command
 	maxImage int64 // the largest image CheckImage takes; 0 takes any
+	maxFile  int64 // the largest file CheckAttachments takes; 0 takes any
+	maxAtts  int   // the most attachments CheckAttachments takes; 0 takes any
+	checked  [][]Attachment
+	// uploading, when set, makes a message with files send half its first
+	// file and wait for it to close, or for the send's context to end
+	uploading chan struct{}
 }
 
 func newFakeBackend(initial Conversation) *fakeBackend {
@@ -75,7 +86,20 @@ func (f *fakeBackend) record(c call) error {
 	return fail
 }
 
-func (f *fakeBackend) Send(_ context.Context, m Outgoing) error {
+func (f *fakeBackend) Send(ctx context.Context, m Outgoing) error {
+	f.mu.Lock()
+	uploading := f.uploading
+	f.mu.Unlock()
+	if uploading != nil && len(m.Files) > 0 {
+		first := m.Files[0]
+		m.Progress(first.Name, first.Size/2, first.Size) // halfway, then it waits
+		f.calls <- call{kind: "upload", msg: m}
+		select {
+		case <-uploading:
+		case <-ctx.Done():
+			return fmt.Errorf("upload %s: %w", first.Name, ctx.Err())
+		}
+	}
 	return f.record(call{kind: "send", msg: m})
 }
 
@@ -118,6 +142,24 @@ func (f *fakeBackend) CheckImage(name string, size int64) error {
 	defer f.mu.Unlock()
 	if f.maxImage > 0 && size > f.maxImage {
 		return fmt.Errorf("%s is too large", name)
+	}
+	return nil
+}
+
+// CheckAttachments takes empty files and a message of any size, up to the
+// limits the test set.
+func (f *fakeBackend) CheckAttachments(atts []Attachment) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checked = append(f.checked, slices.Clone(atts))
+	last := atts[len(atts)-1]
+	switch {
+	case last.Kind == AttachedFile && last.Size == 0:
+		return fmt.Errorf("%s is empty", last.Name)
+	case f.maxFile > 0 && last.Size > f.maxFile:
+		return fmt.Errorf("%s is too large to send", last.Name)
+	case f.maxAtts > 0 && len(atts) > f.maxAtts:
+		return fmt.Errorf("up to %d attachments a message", f.maxAtts)
 	}
 	return nil
 }
@@ -168,26 +210,69 @@ func (c *fakeClipboard) set(content Clip, err error) {
 	c.content, c.err = content, err
 }
 
-// fakeFiles are the image files a test made, by path.
-type fakeFiles map[string]Image
-
-func (f fakeFiles) IsImage(path string) bool {
-	switch filepath.Ext(path) {
-	case ".png", ".jpg":
-		return true
-	}
-	return false
+// fakeFile is a file a test made: an image, or any other file with its
+// content, or one that Stat turns down with err.
+type fakeFile struct {
+	image   *Image
+	mime    string
+	content string
+	err     error
+	opened  *int // counts Open, when set
 }
 
-func (f fakeFiles) Read(path string, check func(name string, size int64) error) (Image, error) {
-	img, ok := f[path]
-	if !ok {
+// imageFile is an image file holding img.
+func imageFile(img Image) fakeFile {
+	return fakeFile{image: &img}
+}
+
+// fakeFiles are the files a test made, by path.
+type fakeFiles map[string]fakeFile
+
+func (f fakeFiles) Stat(path string) (FileInfo, error) {
+	ff, ok := f[path]
+	switch {
+	case !ok:
+		return FileInfo{}, fmt.Errorf("attach: stat %s: %w", path, fs.ErrNotExist)
+	case ff.err != nil:
+		return FileInfo{}, ff.err
+	case ff.image != nil:
+		return FileInfo{Name: ff.image.Name, Size: int64(len(ff.image.Data)), MIME: ff.image.MIME, Image: true}, nil
+	}
+	return FileInfo{Name: filepath.Base(path), Size: int64(len(ff.content)), MIME: ff.mime}, nil
+}
+
+func (f fakeFiles) ReadImage(path string, check func(name string, size int64) error) (Image, error) {
+	ff, ok := f[path]
+	if !ok || ff.image == nil {
 		return Image{}, fmt.Errorf("attach: %w", fs.ErrNotExist)
 	}
-	if err := check(img.Name, int64(len(img.Data))); err != nil {
+	if err := check(ff.image.Name, int64(len(ff.image.Data))); err != nil {
 		return Image{}, fmt.Errorf("attach: %w", err)
 	}
-	return img, nil
+	return *ff.image, nil
+}
+
+func (f fakeFiles) Open(path string) (io.ReadCloser, int64, error) {
+	ff, ok := f[path]
+	if !ok {
+		return nil, 0, fmt.Errorf("attach: open %s: %w", path, fs.ErrNotExist)
+	}
+	if ff.opened != nil {
+		*ff.opened++
+	}
+	return io.NopCloser(strings.NewReader(ff.content)), int64(len(ff.content)), nil
+}
+
+// fileContent reads what an attached file holds when it is sent.
+func fileContent(t *testing.T, f File) string {
+	t.Helper()
+	rc, size, err := f.Open()
+	require.NoError(t, err)
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(b)), size)
+	return string(b)
 }
 
 // fixture is a conversation with a running turn: the user's message, the
@@ -218,10 +303,22 @@ func newTestPane(t *testing.T, w, h int, conv Conversation) (*Pane, *fakeBackend
 // conversation f shows first.
 func startPane(t *testing.T, f *fakeBackend, w, h int) *Pane {
 	t.Helper()
-	p := New(f, "Fix login", w, h, Config{NoColor: true, Clipboard: f.clip, Files: f.files})
+	return startPaneOn(t, f, f, w, h)
+}
+
+// startPaneOn is startPane with b, a backend that delivers through f.
+func startPaneOn(t *testing.T, b Backend, f *fakeBackend, w, h int) *Pane {
+	t.Helper()
+	p := New(b, "Fix login", w, h, Config{NoColor: true, Clipboard: f.clip, Files: f.files})
 	t.Cleanup(p.Close)
 	awaitShown(t, p, f)
 	return p
+}
+
+// imagesOnly is a backend that takes no files besides images: it is no
+// FileTaker.
+type imagesOnly struct {
+	Backend
 }
 
 // follow switches the pane to b and waits for b's first conversation.

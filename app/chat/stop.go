@@ -24,10 +24,15 @@ func (p *Pane) modalTextLocked(s string) bool {
 	return p.activity.open && p.activityTextLocked(s)
 }
 
-// escapeLocked dismisses a command popup before offering to stop the agent.
+// escapeLocked dismisses a command popup, then stops files going up with a
+// message, before offering to stop the agent.
 func (p *Pane) escapeLocked() {
 	if len(p.suggestionsLocked()) > 0 {
 		p.sugHidden = true
+		return
+	}
+	if p.stopSendLocked(errSendCancelled) {
+		p.note = "cancelling the upload…"
 		return
 	}
 	if turn := p.runningTurnLocked(); turn != "" {
@@ -62,7 +67,7 @@ func (p *Pane) stopKeyLocked(k uv.KeyPressEvent) {
 }
 
 // confirmStopLocked interrupts the turn the dialog asked about, when Stop
-// was chosen and the turn still runs. The draft and its images stay:
+// was chosen and the turn still runs. The draft and its attachments stay:
 // stopping is independent of composing.
 func (p *Pane) confirmStopLocked() {
 	choice := p.stop

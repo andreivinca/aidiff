@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -262,4 +263,21 @@ func TestBackend_SteerQueuedUntilRead(t *testing.T) {
 	require.Len(t, s.v.latest().Queued, 1)
 	f.live().Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed"})
 	assert.Empty(t, s.v.latest().Queued, "a run that ended holds nothing unread")
+}
+
+func TestBackend_RunningSinceIsTheRunsStart(t *testing.T) {
+	f := newFakeServer(fixture())
+	s := subscribe(t, f)
+	assert.True(t, s.v.latest().RunningSince.IsZero(), "a run without a start time gives none")
+
+	s.b.events(s.b.sub).Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "running",
+		StartedAt: "2026-11-21T10:00:00Z", WorkStartedAt: "2026-11-21T10:00:05.5Z"})
+	assert.Equal(t, time.Date(2026, 11, 21, 10, 0, 5, 5e8, time.UTC), s.v.latest().RunningSince.UTC(),
+		"the agent's start, past the run's preparation")
+
+	s.b.events(s.b.sub).Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "running", StartedAt: "2026-11-21T10:00:00Z"})
+	assert.Equal(t, time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC), s.v.latest().RunningSince.UTC(), "else the run's")
+
+	s.b.events(s.b.sub).Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed", StartedAt: "2026-11-21T10:00:00Z"})
+	assert.True(t, s.v.latest().RunningSince.IsZero(), "nothing runs, nothing counts")
 }

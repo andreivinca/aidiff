@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -42,10 +43,58 @@ func (p *Pane) activityStatusLocked() string {
 		state = "working"
 	}
 	state = capitalize(state)
+	if state == "Working" && !p.conv.RunningSince.IsZero() {
+		state += " " + elapsedText(p.now().Sub(p.conv.RunningSince))
+		p.tickLocked()
+	}
 	if agents+processes == 0 {
 		return state
 	}
 	return fmt.Sprintf("%s · %d subagent%s · %d %s", state, agents, plural(agents), processes, processWord(processes))
+}
+
+// workingLocked reports whether the agent is at work on a turn. mu must be
+// held.
+func (p *Pane) workingLocked() bool {
+	return len(p.conv.Running) > 0 || p.agentStateLocked() == AgentRunning
+}
+
+// clockTick is how often the status line's elapsed time is redrawn.
+var clockTick = time.Second
+
+// tickLocked asks for a redraw on the next whole second of the elapsed
+// time, so it counts on while nothing else changes; one timer at a time,
+// and none once the pane is closed. mu must be held.
+func (p *Pane) tickLocked() {
+	if p.ticking || p.closed {
+		return
+	}
+	p.ticking = true
+	wait := clockTick
+	if clockTick == time.Second && !p.conv.RunningSince.IsZero() {
+		wait = time.Second - p.now().Sub(p.conv.RunningSince)%time.Second
+	}
+	time.AfterFunc(wait, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.ticking = false
+		if !p.closed {
+			p.changedLocked()
+		}
+	})
+}
+
+// elapsedText is a duration the way the status line counts it: 12s,
+// 5m 24s, 1h 03m.
+func elapsedText(d time.Duration) string {
+	d = max(d, 0)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d/time.Second))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm %02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
+	}
+	return fmt.Sprintf("%dh %02dm", int(d/time.Hour), int(d%time.Hour/time.Minute))
 }
 
 // capitalize upper-cases the first letter of s.

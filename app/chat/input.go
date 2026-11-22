@@ -274,6 +274,10 @@ func (p *Pane) composerKeyLocked(k uv.KeyPressEvent) {
 			p.questionChoice = (p.questionChoice + delta + len(q.Options) + 1) % (len(q.Options) + 1)
 			return
 		}
+		if (k.Code == uv.KeyUp || k.Code == uv.KeyDown) && p.pickedApprovalLocked() != "" {
+			p.approvalChoice = (p.approvalChoice + 1) % len(approvalChoices) // two rows: either key moves to the other
+			return
+		}
 	}
 	switch k.Code {
 	case uv.KeyTab:
@@ -329,8 +333,10 @@ func (p *Pane) endLocked() {
 	p.input.end()
 }
 
-// Paste inserts text at the cursor, line breaks included. A single line that
-// names an image file attaches the file instead.
+// Paste inserts text at the cursor, line breaks included. A single line
+// that names files (an absolute or "~/" path, a file:// URI, quoted or
+// escaped as terminals paste a dropped file) attaches them instead, and goes
+// in as text when it names none that can be attached.
 func (p *Pane) Paste(s string) {
 	p.lock()
 	defer p.mu.Unlock()
@@ -345,8 +351,8 @@ func (p *Pane) Paste(s string) {
 	if p.secretPasteLocked(s) {
 		return
 	}
-	if path := strings.TrimSpace(s); !strings.Contains(path, "\n") && p.files.IsImage(path) {
-		p.attachFileLocked(path, s)
+	if paths := pastedPaths(s); paths != nil {
+		p.attachPathsLocked(paths, s)
 		return
 	}
 	p.insertLocked(strings.ReplaceAll(s, "\r\n", "\n"))

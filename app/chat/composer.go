@@ -158,6 +158,8 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 			filter = "active"
 		}
 		return Hint{"↑↓", "select"}, []Hint{{"enter", "details"}, {"tab", filter}, {"esc", "back"}}
+	case p.busy && p.cancelSend != nil:
+		primary = Hint{"esc", "cancel upload"}
 	case p.busy:
 		primary = Hint{"", "sending…"}
 	case p.secretLocked() != nil: // secret.go
@@ -177,13 +179,19 @@ func (p *Pane) hintsLocked(popup bool) (primary Hint, secondary []Hint) {
 		if primary.Key == "enter" {
 			primary.Label = "queue"
 		}
-		secondary = append([]Hint{{"esc", "stop…"}}, secondary...)
+		if primary.Key != "esc" { // esc cancels the upload first
+			secondary = append([]Hint{{"esc", "stop…"}}, secondary...)
+		}
 	}
 	if p.input.empty() {
 		secondary = append([]Hint{{"←", p.activityHintLocked()}}, secondary...)
 		if _, ok := p.lastQueuedLocked(); ok {
 			secondary = append([]Hint{{"↑", "edit queued"}}, secondary...)
 		}
+	}
+	if primary.Key == "enter" && p.input.empty() && p.pickedApprovalLocked() != "" {
+		primary.Label = strings.ToLower(approvalChoices[min(max(p.approvalChoice, 0), len(approvalChoices)-1)].label)
+		secondary = append([]Hint{{"↑↓", "choose"}}, secondary...)
 	}
 	if prompt := p.pendingQuestionsLocked(); prompt != nil && primary.Key == "enter" {
 		primary.Label = "answer"

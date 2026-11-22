@@ -161,7 +161,8 @@ func TestPane_SlashCommands(t *testing.T) {
 	assert.Contains(t, v, "approval: Run ls?", "a settled approval collapses")
 	assert.Contains(t, v, "⚠ approval needed: Run rm -rf build?")
 	assert.Contains(t, v, "cleans the build")
-	assert.Contains(t, v, "type /accept or /decline")
+	assert.Contains(t, v, "› 1) Accept", "the pending approval is a picker")
+	assert.Contains(t, v, "or type /accept · /decline")
 	assert.Contains(t, v, "waiting for you")
 
 	c = ask(t, p, f, func() {

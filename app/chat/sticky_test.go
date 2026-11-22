@@ -27,7 +27,7 @@ func TestStickyRows(t *testing.T) {
 		text = append(text, fmt.Sprintf("L%d", i))
 	}
 	st, _ := newStyles(false)
-	panel := userPanel(strings.Join(text, "\n"), 40, st)
+	panel := userPanel(UserMessage{Text: strings.Join(text, "\n")}, 40, st)
 	require.Len(t, panel.rows, 12, "padding, ten lines, padding")
 	all := text
 	tests := []struct {
@@ -45,7 +45,7 @@ func TestStickyRows(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, lineText(stickyRows(panel, tt.off, 40, st).rows), "off %d", tt.off)
 	}
-	short := userPanel("one\ntwo\nthree\nfour", 40, st)
+	short := userPanel(UserMessage{Text: "one\ntwo\nthree\nfour"}, 40, st)
 	assert.Equal(t, []string{"one", "two", "three", "four", ""}, lineText(stickyRows(short, 30, 40, st).rows),
 		"four lines or fewer are never shortened")
 }

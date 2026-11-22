@@ -95,6 +95,9 @@ func (p *Pane) pendingCard(m queuedMessage, w int) []string {
 	}
 	if m.sending {
 		label = "Sending…"
+		if up := p.upload.label(m.id); up != "" {
+			label = up
+		}
 	}
 	lines := panelLines(m.text, w)
 	lines = lines[1 : len(lines)-1] // compact cards omit transcript padding
@@ -105,7 +108,7 @@ func (p *Pane) pendingCard(m queuedMessage, w int) []string {
 	if len(lines) > 2 {
 		panel = append(panel[:1], p.styles.muted.Render(inset+"…"))
 	}
-	return append(panel, p.styles.muted.Render(inset+label))
+	return append(panel, p.styles.muted.Render(ansi.Truncate(inset+label, w, "…")))
 }
 
 // stripedPanel paints a queued message's panel row: its text dimmed, in

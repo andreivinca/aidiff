@@ -3,6 +3,7 @@ package t3chat
 import (
 	"cmp"
 	"slices"
+	"time"
 
 	"github.com/umputun/revdiff/app/chat"
 	"github.com/umputun/revdiff/app/t3client"
@@ -16,16 +17,22 @@ func (b *Backend) conversationLocked() chat.Conversation {
 	queued := b.withPendingLocked(t.queue())
 	secret := t.pendingSecret()
 	activity := t.activity()
+	running := t.activeRunsWith(activity)
+	var since time.Time
+	if len(running) > 0 {
+		since = t.runs[running[0]].Since()
+	}
 	return chat.Conversation{
-		Title:     t.title,
-		State:     t.stateWith(secret),
-		Running:   t.activeRunsWith(activity),
-		Entries:   t.entries(queued),
-		Queued:    queued,
-		Delivered: t.delivered(),
-		Activity:  activity,
-		Settings:  b.settingsLocked(),
-		Secret:    secret,
+		Title:        t.title,
+		State:        t.stateWith(secret),
+		Running:      running,
+		RunningSince: since,
+		Entries:      t.entries(queued),
+		Queued:       queued,
+		Delivered:    t.delivered(),
+		Activity:     activity,
+		Settings:     b.settingsLocked(),
+		Secret:       secret,
 	}
 }
 
@@ -162,7 +169,8 @@ func (t *thread) queue() []chat.Queued {
 	out := t.unreadSteers()
 	for _, r := range runs {
 		if msg, ok := t.userMessages[r.UserMessageID]; ok {
-			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text, Images: len(msg.Attachments)})
+			images, files := countAttachments(msg.Attachments)
+			out = append(out, chat.Queued{ID: msg.ID, Text: msg.Text, Images: images, Files: files})
 		}
 	}
 	for _, it := range t.items {

@@ -178,10 +178,40 @@ func TestPersistImagesAndMessageWith(t *testing.T) {
 }
 
 func TestTitleSeed(t *testing.T) {
-	assert.Equal(t, "Fix the login page", TitleSeed("  Fix the login page\n\nmore", 0))
-	assert.Equal(t, "Attached image", TitleSeed("", 1))
-	assert.Equal(t, "Attached images", TitleSeed(" ", 3))
-	assert.Empty(t, TitleSeed("", 0))
+	assert.Equal(t, "Fix the login page", TitleSeed("  Fix the login page\n\nmore", 0, 0))
+	assert.Equal(t, "Fix the login page", TitleSeed("Fix the login page", 2, 1), "the text wins over what it attaches")
+	assert.Equal(t, "Attached image", TitleSeed("", 1, 0))
+	assert.Equal(t, "Attached images", TitleSeed(" ", 3, 0))
+	assert.Equal(t, "Attached file", TitleSeed("", 0, 1))
+	assert.Equal(t, "Attached files", TitleSeed("", 0, 4))
+	assert.Equal(t, "Attached image and file", TitleSeed("", 1, 1))
+	assert.Equal(t, "Attached images and files", TitleSeed("", 2, 3))
+	assert.Equal(t, "Attached image and files", TitleSeed("", 1, 2))
+	assert.Empty(t, TitleSeed("", 0, 0))
+}
+
+func TestAttachmentsDecodeLeniently(t *testing.T) {
+	var it TurnItem
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"row-1","type":"user_message","text":"see","attachments":[
+		{"type":"image","id":"th-1-a","name":"shot.png","mimeType":"image/png","sizeBytes":120},
+		{"type":"file","id":"th-1-b","name":"report.pdf","mimeType":"application/pdf","sizeBytes":2400000,"source":{"_tag":"pasted-text"}},
+		{"type":"snapshot","id":"th-1-c","name":"window","mimeType":"application/x-snap","sizeBytes":"lots"},
+		"not an object",
+		{"type":"file","id":"th-1-d","name":"notes.txt","mimeType":"text/plain","sizeBytes":5}
+	]}`), &it), "an attachment of an unexpected shape never fails the item")
+	assert.Equal(t, Attachments{
+		{Type: "image", ID: "th-1-a", Name: "shot.png", MimeType: "image/png", SizeBytes: 120},
+		{Type: "file", ID: "th-1-b", Name: "report.pdf", MimeType: "application/pdf", SizeBytes: 2400000},
+		{Type: "snapshot", ID: "th-1-c", Name: "window", MimeType: "application/x-snap"}, // the fields that read
+		{Type: "file", ID: "th-1-d", Name: "notes.txt", MimeType: "text/plain", SizeBytes: 5},
+	}, it.Attachments)
+	assert.Equal(t, "see", it.Text)
+
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"row-2","type":"user_message","attachments":{"odd":true}}`), &it))
+	assert.Empty(t, it.Attachments, "attachments that are no list are none")
+	var msg Message
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"m-1","role":"user","text":"x","attachments":[{"type":"file","name":"a.txt","sizeBytes":3}]}`), &msg))
+	assert.Equal(t, Attachments{{Type: "file", Name: "a.txt", SizeBytes: 3}}, msg.Attachments)
 }
 
 func TestQueuedMessageEvents(t *testing.T) {

@@ -139,7 +139,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
   - queued messages
   - slash commands for approvals, model, effort and mode
   - the agent's secret requests (a sudo password, a token): typed masked in the composer and handed to T3 Code, never into the chat
-  - image attachments
+  - attachments: files copied in a file manager and pasted with ctrl+v, a pasted path (quoted, escaped, `~/` or `file://`), or `/attach <path>`, each a token naming it in the input (`[File #1: report.pdf]`, an image as `[Image #1]`); files are uploaded to the T3 server when the message is sent (up to 50 MB each), with progress on the message's card and esc to cancel; sent messages list their attachments
   - an activity view
 - **Stop an agent:** Esc or `/stop` asks first, with **Keep working** selected. Typing letters cancels the question and never stops the agent.
 - **Manage:** create threads, and create projects by browsing the server's folders.
@@ -187,7 +187,7 @@ These are handled by aidiff before any pane sees them, and they can't be remappe
 1. Run `aidiff --t3 ssh://devbox`. The tunnel and login happen automatically, and the latest thread's diff and chat open.
 2. Annotate, then ctrl+p → **Send annotations to agent**.
 3. The chat shows `Working…`, and the diff refreshes when the agent finishes.
-4. Approve with `/accept`, or stop with Esc and then confirm.
+4. Approve in the picker under the request (↑/↓ chooses Accept or Decline, Enter on an empty input confirms) or with `/accept`, or stop with Esc and then confirm.
 5. ctrl+p → **Open Terminal** opens a shell on `devbox` in the thread's folder.
 
 ### Folder or document review

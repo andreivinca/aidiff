@@ -3,6 +3,8 @@ package t3client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"time"
 )
 
 // Run is one agent turn of a thread.
@@ -12,6 +14,19 @@ type Run struct {
 	Ordinal       int    `json:"ordinal"`
 	Status        string `json:"status"` // one of T3's run states; see Active
 	UserMessageID string `json:"userMessageId"`
+	StartedAt     string `json:"startedAt"`     // RFC 3339, "" until the run starts
+	WorkStartedAt string `json:"workStartedAt"` // when the agent began working, past any preparation; "" when not sent
+}
+
+// Since is when the run began working: the agent's start, else the run's,
+// zero when the server has not said.
+func (r Run) Since() time.Time {
+	for _, s := range []string{r.WorkStartedAt, r.StartedAt} {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // Active reports whether the run is still going.
@@ -96,6 +111,8 @@ type TurnItem struct {
 	Message     string `json:"message"`   // system_notice, run_interrupt_request, run_interrupt_result
 	Summary     string `json:"summary"`   // compaction
 
+	Attachments Attachments `json:"attachments"` // user_message, assistant_message: what the message carries
+
 	Input         json.RawMessage `json:"input"`  // command_execution: the command; dynamic_tool: the arguments
 	Output        json.RawMessage `json:"output"` // stripped on the wire when large
 	OutputOmitted bool            `json:"outputOmitted"`
@@ -129,6 +146,44 @@ type TurnItem struct {
 	Placeholder  string `json:"placeholder"`
 	Delivery     string `json:"delivery"`     // file: saved for shell use
 	SecretStatus string `json:"secretStatus"` // pending, saved, declined or cancelled
+}
+
+// Attachment is something a message carries: an image, a file, or a kind
+// of T3's this client does not know, which still has a name and a size.
+type Attachment struct {
+	Type      string `json:"type"` // image, file, or another kind
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MimeType  string `json:"mimeType"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+// Attachments are a message's attachments. They decode leniently: an
+// attachment of an unexpected shape keeps the fields that read, and one
+// that is no object at all is left out, so the message still shows.
+type Attachments []Attachment
+
+// UnmarshalJSON reads the attachments it can; it never fails.
+func (a *Attachments) UnmarshalJSON(data []byte) error {
+	var raws []json.RawMessage
+	if json.Unmarshal(data, &raws) != nil {
+		*a = nil
+		return nil
+	}
+	out := make(Attachments, 0, len(raws))
+	for _, raw := range raws {
+		if b := bytes.TrimSpace(raw); len(b) == 0 || b[0] != '{' {
+			continue
+		}
+		var att Attachment
+		err := json.Unmarshal(raw, &att)
+		if _, mistyped := errors.AsType[*json.UnmarshalTypeError](err); err != nil && !mistyped {
+			continue
+		}
+		out = append(out, att)
+	}
+	*a = out
+	return nil
 }
 
 // Done reports whether the item reached a final state.
@@ -188,10 +243,10 @@ type ProjectedTurnItem struct {
 
 // Message includes queued user text before T3 promotes it into the transcript.
 type Message struct {
-	ID          string            `json:"id"`
-	Role        string            `json:"role"`
-	Text        string            `json:"text"`
-	Attachments []json.RawMessage `json:"attachments"` // the images it carries, as T3 stored them
+	ID          string      `json:"id"`
+	Role        string      `json:"role"`
+	Text        string      `json:"text"`
+	Attachments Attachments `json:"attachments"` // the images and files it carries, as T3 stored them
 }
 
 // ThreadProjection is the part of a thread's full state aidiff renders.

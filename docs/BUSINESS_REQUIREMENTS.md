@@ -78,7 +78,7 @@ Our requirement on it: **we use it unchanged** and keep the ability to merge ups
 ### T3 Code
 - **BR-8. Connect anywhere.** The user can connect to a local T3 server, a remote one over SSH (the tunnel is set up automatically), or one at an HTTP(S) URL, with token login done automatically where possible and pairing otherwise.
 - **BR-9. Review agent threads.** The user can review the changes of a T3 thread, either its branch range or its uncommitted changes, and switch between threads without restarting.
-- **BR-10. Chat with the agent.** The user can read the transcript, send and queue messages, attach images, answer approvals and questions, change model, reasoning effort and runtime mode, and see whether the agent is working, waiting or idle, with subagent and process counts.
+- **BR-10. Chat with the agent.** The user can read the transcript, send and queue messages, attach files and images (pasted from a file manager's copy, a pasted path, or `/attach`), answer approvals and questions, change model, reasoning effort and runtime mode, and see whether the agent is working, waiting or idle, with subagent and process counts.
 - **BR-11. Controlled interruption.** Stopping an agent run always takes explicit confirmation, and stops only the run the user was asked about.
 - **BR-12. Remote shells.** When the T3 session goes through SSH, new terminal panes open on that host, in the thread's working directory.
 - **BR-13. Manage work.** The user can create projects (by browsing the server's filesystem) and new threads from the palette.
@@ -103,4 +103,4 @@ Our requirement on it: **we use it unchanged** and keep the ability to merge ups
 - Users work on Linux or macOS in a terminal with true color and, ideally, mouse support.
 - T3 Code's RPC protocol is internal to T3 and can change. aidiff pins orchestration protocol version 2 (see [T3_INTEGRATION.md](T3_INTEGRATION.md)).
 - SSH access to remote T3 hosts uses key or agent auth. The tunnel runs in batch mode and cannot prompt for a password.
-- aidiff is a fork and regularly merges upstream revdiff. Fork code is kept in separate packages (`splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard`, `imagefile`) to keep merges cheap.
+- aidiff is a fork and regularly merges upstream revdiff. Fork code is kept in separate packages (`splitview`, `termpane`, `watch`, `t3client`, `chat`, `t3chat`, `t3palette`, `clipboard`, `attachfile`) to keep merges cheap.

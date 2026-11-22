@@ -265,6 +265,8 @@ func TestBackend_ClearAndSideChat(t *testing.T) {
 	assert.Equal(t, "side chat started; ctrl+p lists it with the other threads", reply.Note)
 	fork := nextCommand(t, f)
 	assert.Equal(t, "thread.fork", fork["type"])
+	assert.Equal(t, "user", fork["createdBy"], "T3 refuses a fork that does not say who made the thread")
+	assert.Equal(t, "web", fork["creationSource"])
 	assert.Equal(t, "th-1", fork["sourceThreadId"])
 	assert.Equal(t, true, fork["sideChat"])
 	question := nextCommand(t, f)

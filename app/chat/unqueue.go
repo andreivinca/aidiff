@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // unqueuerLocked is the backend as one that takes queued messages back, nil
@@ -30,8 +31,8 @@ func (p *Pane) lastQueuedLocked() (Queued, bool) {
 // input, for the user to edit and send again or to drop by clearing it, and
 // reports whether there was one. The backend drops it from the queue first,
 // so it is never both queued and in the input; a draft typed meanwhile
-// stays, under it. Its images stay behind, and the note says so. mu must be
-// held.
+// stays, under it. Its images and files stay behind, and the note says so.
+// mu must be held.
 func (p *Pane) unqueueLastLocked() bool {
 	q, ok := p.lastQueuedLocked()
 	if !ok {
@@ -49,10 +50,19 @@ func (p *Pane) unqueueLastLocked() bool {
 			if err != nil {
 				return
 			}
-			p.restoreLocked(q.Text, nil) // never dropped: ahead of a draft typed meanwhile
+			p.restoreLocked(q.Text, nil, nil) // never dropped: ahead of a draft typed meanwhile
 			p.note = "the queued message is back in the input: enter queues it again, ctrl+u drops it"
-			if q.Images > 0 {
-				p.note += fmt.Sprintf("; its %d image%s stayed behind", q.Images, plural(q.Images))
+			var left []string
+			for _, k := range []struct {
+				n    int
+				noun string
+			}{{q.Images, "image"}, {q.Files, "file"}} {
+				if k.n > 0 {
+					left = append(left, fmt.Sprintf("%d %s%s", k.n, k.noun, plural(k.n)))
+				}
+			}
+			if len(left) > 0 {
+				p.note += "; its " + strings.Join(left, " and ") + " stayed behind"
 			}
 		},
 	})

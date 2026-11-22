@@ -90,10 +90,14 @@ func InteractionModeCommand(threadID, mode string) Command {
 
 // SideChatCommand forks the thread at its latest stable point into a side
 // chat, a place for a question that must not derail the main work. The
-// client mints newThreadID with NewID.
+// client mints newThreadID with NewID. A fork creates a thread, and T3
+// refuses a command that creates one without saying who made it and from
+// where ("Missing key at createdBy"); a message carries the same two.
 func SideChatCommand(sourceThreadID, newThreadID string) Command {
 	return Command{
 		"type":           "thread.fork",
+		"createdBy":      "user",
+		"creationSource": "web",
 		"sourceThreadId": sourceThreadID,
 		"targetThreadId": newThreadID,
 		"sourcePoint":    map[string]any{"type": "latest_stable"},

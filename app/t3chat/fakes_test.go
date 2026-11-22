@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,17 @@ type fakeServer struct {
 	catalogs   int           // FetchCatalog calls
 	catalogNow chan struct{} // when set, FetchCatalog waits for it to close
 	persisted  []persistCall
+	uploaded   []uploadCall
+	deleted    chan string   // the uploads deleted
+	order      []string      // what the server was asked, in order: upload <name>, persist, dispatch
+	uploadErr  error         // what UploadFile returns, after reading the content
+	uploadHold chan struct{} // when set, UploadFile waits for it to close, or for its context
+}
+
+type uploadCall struct {
+	name, mimeType string
+	size           int64
+	content        string
 }
 
 type persistCall struct {
@@ -38,7 +50,7 @@ type persistCall struct {
 }
 
 func newFakeServer(snap t3client.ThreadProjection) *fakeServer {
-	return &fakeServer{snapshot: snap, cmds: make(chan t3client.Command, 8), subscribed: make(chan struct{}, 4)}
+	return &fakeServer{snapshot: snap, cmds: make(chan t3client.Command, 8), subscribed: make(chan struct{}, 4), deleted: make(chan string, 8)}
 }
 
 func (f *fakeServer) SubscribeThread(ctx context.Context, _ string, h t3client.ThreadEvents) error {
@@ -55,6 +67,7 @@ func (f *fakeServer) Dispatch(_ context.Context, cmd t3client.Command) error {
 	f.cmds <- cmd
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.order = append(f.order, "dispatch")
 	if f.refuse != "" && cmd["type"] == f.refuse {
 		return fmt.Errorf("unknown command %s", f.refuse)
 	}
@@ -104,9 +117,61 @@ func effortCapabilities(id string) t3client.ModelCapabilities {
 		CurrentValue: json.RawMessage(`"medium"`), Options: []t3client.ModelOptionValue{{ID: "low"}, {ID: "medium"}, {ID: "high"}}}}}
 }
 
+// UploadFile reads the content as the server would and records it; the
+// attachment is named after the file.
+func (f *fakeServer) UploadFile(ctx context.Context, up t3client.FileUpload, progress func(sent int64)) (t3client.Upload, error) {
+	f.mu.Lock()
+	hold := f.uploadHold
+	f.order = append(f.order, "upload "+up.Name)
+	f.mu.Unlock()
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return t3client.Upload{}, fmt.Errorf("upload %s: %w", up.Name, ctx.Err())
+		}
+	}
+	content, err := io.ReadAll(io.LimitReader(up.Content, up.Size))
+	if err != nil {
+		return t3client.Upload{}, fmt.Errorf("upload %s: %w", up.Name, err)
+	}
+	if progress != nil {
+		progress(int64(len(content)))
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.uploadErr != nil {
+		return t3client.Upload{}, f.uploadErr
+	}
+	f.uploaded = append(f.uploaded, uploadCall{name: up.Name, mimeType: up.MimeType, size: up.Size, content: string(content)})
+	id := "pending-" + up.Name
+	return t3client.Upload{ID: id, Attachment: json.RawMessage(fmt.Sprintf(`{"type":"file","id":%q,"name":%q}`, id, up.Name))}, nil
+}
+
+func (f *fakeServer) DeleteUpload(_ context.Context, id string) error {
+	f.deleted <- id
+	return nil
+}
+
+// deletedUploads waits for n uploads to be deleted and returns them.
+func (f *fakeServer) deletedUploads(t *testing.T, n int) []string {
+	t.Helper()
+	var out []string
+	for range n {
+		select {
+		case id := <-f.deleted:
+			out = append(out, id)
+		case <-time.After(waitLimit):
+			t.Fatalf("only %d of %d uploads were deleted", len(out), n)
+		}
+	}
+	return out
+}
+
 func (f *fakeServer) PersistImages(_ context.Context, threadID, messageID string, images []t3client.ImageUpload) ([]json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.order = append(f.order, "persist")
 	f.persisted = append(f.persisted, persistCall{threadID, messageID, images})
 	out := make([]json.RawMessage, 0, len(images))
 	for i, img := range images {

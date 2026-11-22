@@ -25,6 +25,7 @@ func TestPickImage(t *testing.T) {
 // program runs are answered by reply.
 type fakeSystem struct {
 	env      map[string]string
+	host     string // this machine's name
 	programs []string
 	reply    func(c command) ([]byte, error)
 	ran      []command
@@ -43,6 +44,9 @@ func (f *fakeSystem) system() system {
 				}
 			}
 			return "", exec.ErrNotFound
+		},
+		hostname: func() (string, error) {
+			return f.host, nil
 		},
 		run: func(_ context.Context, c command) ([]byte, error) {
 			f.ran = append(f.ran, c)

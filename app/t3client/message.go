@@ -25,7 +25,7 @@ type OutgoingMessage struct {
 	ThreadID     string
 	MessageID    string // minted with NewID; PersistImages stores attachments under it
 	Text         string
-	Attachments  []json.RawMessage // what PersistImages returned for MessageID
+	Attachments  []json.RawMessage // what PersistImages returned for MessageID, then each UploadFile's
 	TitleSeed    string            // names a thread still called "New thread"; see TitleSeed
 	FreshContext bool              // start the agent on a fresh session, as after /clear
 	Model        *ModelSelection   // run the turn with this model instead of the thread's
@@ -120,19 +120,29 @@ func (c *Conn) PersistImages(ctx context.Context, threadID, messageID string, im
 
 // TitleSeed is what a thread's first message suggests as its name, the way
 // T3's composer seeds it: the message's first line, shortened; for a message
-// of images only, a note of that. The server starts from the seed and then
-// generates a proper title.
-func TitleSeed(text string, images int) string {
+// of attachments only, a note of what it attaches ("Attached image",
+// "Attached files", "Attached image and files"). The server starts from the
+// seed and then generates a proper title.
+func TitleSeed(text string, images, files int) string {
 	if seed := titleFrom(text); seed != "" {
 		return seed
 	}
-	switch {
-	case images == 1:
-		return "Attached image"
-	case images > 1:
-		return "Attached images"
+	var kinds []string
+	for _, k := range []struct {
+		n    int
+		noun string
+	}{{images, "image"}, {files, "file"}} {
+		switch {
+		case k.n == 1:
+			kinds = append(kinds, k.noun)
+		case k.n > 1:
+			kinds = append(kinds, k.noun+"s")
+		}
 	}
-	return ""
+	if len(kinds) == 0 {
+		return ""
+	}
+	return "Attached " + strings.Join(kinds, " and ")
 }
 
 // titleFrom is the first line of msg, shortened to a title.
