@@ -57,8 +57,8 @@ func TestTabs_OrderOfOpeningNeverChanges(t *testing.T) {
 	hs.send(SwitchWorkspaceMsg{Key: "d", Model: d})
 	hs.send(SwitchWorkspaceMsg{Key: "b", Model: d, Replace: true})
 	assert.Equal(t, []string{"a", "b", "c", "d"}, hs.m.tabKeys(), "a new one goes last; a replaced review keeps its tab")
-	assert.True(t, strings.HasPrefix(hs.stripLine(), " 1 a $ × "), "numbered from 1, a terminal open in a: %q", hs.stripLine())
-	assert.Contains(t, hs.stripLine(), " 4 d × ")
+	assert.True(t, strings.HasPrefix(hs.stripLine(), "▌1 a $ × "), "numbered from 1, a terminal open in a: %q", hs.stripLine())
+	assert.Contains(t, hs.stripLine(), "▌4 d × ")
 }
 
 func TestTabs_NumberKeysSwitch(t *testing.T) {
@@ -96,7 +96,7 @@ func TestTabs_StripShowsFromTwoTabsAndRelaysOut(t *testing.T) {
 	assert.Contains(t, *bGot, tea.WindowSizeMsg{Width: 100, Height: 29}, "the review under it is a row shorter")
 	lines := strings.Split(hs.m.View(), "\n")
 	require.Len(t, lines, 30)
-	assert.True(t, strings.HasPrefix(ansi.Strip(lines[0]), " 1 a $ ×   2 b × "), "%q", ansi.Strip(lines[0]))
+	assert.True(t, strings.HasPrefix(ansi.Strip(lines[0]), "▌1 a $ ×  ▌2 b × "), "%q", ansi.Strip(lines[0]))
 	assert.Equal(t, "inner", strings.TrimSpace(ansi.Strip(lines[1])), "the review starts under it")
 	for i, l := range lines {
 		assert.Equal(t, 100, ansi.StringWidth(l), "row %d spans the window", i)
@@ -266,7 +266,7 @@ func TestTabs_UnnamedWorkspaceHasNoTab(t *testing.T) {
 func TestTabs_NotReadyTabOpensAsTheSwitcherDoes(t *testing.T) {
 	fs := &fakeSessions{notReady: map[string]bool{"a": true}, info: map[string]SessionInfo{"a": {Name: "a", Note: "disconnected"}}}
 	hs := newSwitcherHarness(t, fs)
-	assert.Contains(t, hs.stripLine(), " 1 a · disconnected $ × ", "the tab stays, marked as the switcher marks it")
+	assert.Contains(t, hs.stripLine(), "▌1 a · disconnected $ × ", "the tab stays, marked as the switcher marks it")
 	cmd := hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
 	assert.Equal(t, "c", hs.m.Workspace(), "not shown as it was parked")
 	assert.Equal(t, []string{"a"}, fs.opened, "Open brings it the program's way")
@@ -426,6 +426,12 @@ func sgrAt(line string, col int) string {
 	return ""
 }
 
+// fgOf is the truecolor foreground parameters of hex.
+func fgOf(hex string) string {
+	r, g, b := rgbOf(hex)
+	return "38;2;" + strconv.Itoa(r) + ";" + strconv.Itoa(g) + ";" + strconv.Itoa(b)
+}
+
 // bgOf is the truecolor background parameters of hex.
 func bgOf(hex string) string {
 	r, g, b := rgbOf(hex)
@@ -449,23 +455,29 @@ func TestTabs_MachineColors(t *testing.T) {
 	local, devbox := machineColorOf("local"), machineColorOf("devbox T3")
 	require.NotEqual(t, local, devbox, "the test's two machines land on two colors")
 	assert.Equal(t, local, machineColorOf("local"), "the same machine, the same color, from a hash of its name")
+	bar := func(key string) string { // the styling of the tab's first cell
+		return sgrAt(hs.m.tabStrip().line, hs.zoneOf(t, key, false).from)
+	}
 	style := func(key string) string { // the styling of the tab's name, and of its ×
 		line, z, x := hs.m.tabStrip().line, hs.zoneOf(t, key, false), hs.zoneOf(t, key, true)
-		require.Equal(t, sgrAt(line, z.from+3), sgrAt(line, x.from), "%s: the × on its tab's background", key)
-		require.Equal(t, sgrAt(line, z.from), sgrAt(line, z.from+3), "%s: one color across the tab", key)
+		require.Equal(t, sgrAt(line, z.from+3), sgrAt(line, x.from), "%s: the × styled as its tab", key)
 		return sgrAt(line, z.from+3)
 	}
-	assert.Contains(t, style("a"), bgOf(local.bg), "a local tab on local's color")
-	assert.Contains(t, style("b"), bgOf(devbox.bg), "devbox's on its own")
-	assert.Contains(t, style("c"), bgOf(local.activeBg), "the tab on screen a brighter shade of its machine's")
-	assert.Contains(t, style("c"), "[1;4;", "bold and underlined")
-	assert.NotContains(t, style("a"), "[1;")
+	assert.Contains(t, ansi.Strip(hs.m.tabStrip().line), "▌1 alpha", "every tab starts with a bar")
+	assert.Contains(t, bar("a"), fgOf(local.bg), "a local tab's bar in local's color")
+	assert.Contains(t, bar("b"), fgOf(devbox.bg), "devbox's in its own")
+	assert.Contains(t, bar("c"), fgOf(local.bg))
+	assert.Empty(t, style("a"), "a tab not on screen sits on the row's background")
+	assert.Empty(t, style("b"))
+	assert.Contains(t, style("c"), bgOf(local.bg), "the tab on screen on its machine's color")
+	assert.Contains(t, style("c"), "[1;", "bold")
 	assert.Contains(t, hs.m.tabStrip().line, "$ ×", "marks and × inside the tab's own sequence")
 
 	hs.send(SwitchWorkspaceMsg{Key: "a"})
 	hs.send(closeTabMsg{key: "b"})
-	assert.Contains(t, style("c"), bgOf(local.bg), "colors follow the machine as tabs move and close")
-	assert.Contains(t, style("a"), bgOf(local.activeBg))
+	assert.Empty(t, style("c"), "the background follows the tab on screen")
+	assert.Contains(t, style("a"), bgOf(local.bg))
+	assert.Contains(t, bar("c"), fgOf(local.bg), "the bars follow the machine as tabs move and close")
 	line, za, zc := hs.m.tabStrip().line, hs.zoneOf(t, "a", false), hs.zoneOf(t, "c", false)
 	assert.Equal(t, 100, ansi.StringWidth(line), "the escapes take no cells")
 	assert.Empty(t, sgrAt(line, za.to), "the gap is plain")
@@ -513,14 +525,10 @@ func TestMachinePaletteContrast(t *testing.T) {
 	cube := map[int]bool{0x00: true, 0x5f: true, 0x87: true, 0xaf: true, 0xd7: true, 0xff: true}
 	for _, c := range machinePalette {
 		assert.GreaterOrEqual(t, contrast(c.fg, c.bg), 4.3, "%s on %s", c.fg, c.bg)
-		assert.GreaterOrEqual(t, contrast(c.activeFg, c.activeBg), 4.3, "%s on %s", c.activeFg, c.activeBg)
-		assert.Equal(t, consoleBits(c.bg), consoleBits(c.activeBg), "%s and %s are one console color", c.bg, c.activeBg)
 		assert.NotZero(t, consoleBits(c.bg), "%s is not the console's black", c.bg)
 		assert.NotEqual(t, 7, consoleBits(c.bg), "%s is not the console's grey", c.bg)
-		for _, hex := range []string{c.bg, c.activeBg} {
-			r, g, b := rgbOf(hex)
-			assert.True(t, cube[r] && cube[g] && cube[b], "%s is an entry of the 256-color cube", hex)
-		}
+		r, g, b := rgbOf(c.bg)
+		assert.True(t, cube[r] && cube[g] && cube[b], "%s is an entry of the 256-color cube", c.bg)
 	}
 }
 
@@ -532,7 +540,7 @@ func TestTabs_StripFetchesNothing(t *testing.T) {
 		_ = hs.m.View()
 	}
 	assert.Equal(t, before, fs.describes, "drawn on every frame, the strip asks Peek, never Describe")
-	assert.Contains(t, hs.stripLine(), " 1 alpha ● $ × ", "with the marks Peek has at hand")
+	assert.Contains(t, hs.stripLine(), "▌1 alpha ● $ × ", "with the marks Peek has at hand")
 }
 
 func TestTabs_StripIsCached(t *testing.T) {

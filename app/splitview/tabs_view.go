@@ -23,39 +23,42 @@ const (
 	tabRightMark  = "›"
 )
 
-// Each tab is drawn on its machine's color, so the tabs of one machine read
-// as a group: the color is picked from machinePalette by a hash of the
-// machine's name as the tab shows it, never by the tab's place, so it stays
-// the same in every frame, as tabs open and close, across reconnects and
-// from one run to the next. Two machines may land on the same color.
+// Each tab starts with a bar in its machine's color, so the tabs of one
+// machine read as a group, and only the tab on screen is drawn on that
+// color, bold: the others sit on the row's own background, so the one on
+// screen stands out from all of them. The color is picked from
+// machinePalette by a hash of the machine's name as the tab shows it, never
+// by the tab's place, so it stays the same in every frame, as tabs open and
+// close, across reconnects and from one run to the next. Two machines may
+// land on the same color.
 //
 // The colors are entries of the xterm 256-color cube, so a terminal that
-// maps truecolor to its palette lands on them exactly. Each sets its text
-// color too, never the theme's. On the Linux console, which keeps the top
-// bit of each channel of a background, every one keeps a color of its own
-// family (blue, green, red, magenta, cyan, brown), and its text stays white
-// or black. The tab on screen is a brighter shade of its machine's color,
-// raising only the channels that already set that bit, so it stays in the
-// same family there too, with bold, underlined text, whose color is the
-// one, white or black, that reads better on that shade.
+// maps truecolor to its palette lands on them exactly. The tab on screen
+// sets its text color too, never the theme's. On the Linux console, which
+// keeps the top bit of each channel of a background, every one keeps a
+// color of its own family (blue, green, red, magenta, cyan, brown), and its
+// text stays white or black.
 
-// machineColor is a machine's tab colors, as hex.
+// tabBar is the glyph a tab starts with, in its machine's color.
+const tabBar = "▌"
+
+// machineColor is a machine's tab colors, as hex: its bar and the tab on
+// screen's background, and that tab's text.
 type machineColor struct {
-	bg, fg             string // the tabs not on screen
-	activeBg, activeFg string // the tab on screen
+	bg, fg string
 }
 
 // machinePalette are the tab colors, picked by machine (machineColorOf).
 // Each pair keeps at least 4.3:1 contrast (TestMachinePaletteContrast).
 var machinePalette = [...]machineColor{
-	{bg: "#005faf", fg: "#ffffff", activeBg: "#005fd7", activeFg: "#ffffff"}, // blue
-	{bg: "#00875f", fg: "#ffffff", activeBg: "#00af5f", activeFg: "#000000"}, // green
-	{bg: "#af5f5f", fg: "#ffffff", activeBg: "#d75f5f", activeFg: "#000000"}, // rose
-	{bg: "#875faf", fg: "#ffffff", activeBg: "#af5fd7", activeFg: "#000000"}, // purple
-	{bg: "#008787", fg: "#ffffff", activeBg: "#00afaf", activeFg: "#000000"}, // teal
-	{bg: "#878700", fg: "#000000", activeBg: "#afaf00", activeFg: "#000000"}, // olive
-	{bg: "#875f00", fg: "#ffffff", activeBg: "#af5f00", activeFg: "#ffffff"}, // brown
-	{bg: "#5f5f87", fg: "#ffffff", activeBg: "#5f5faf", activeFg: "#ffffff"}, // slate
+	{bg: "#005faf", fg: "#ffffff"}, // blue
+	{bg: "#00875f", fg: "#ffffff"}, // green
+	{bg: "#af5f5f", fg: "#ffffff"}, // rose
+	{bg: "#875faf", fg: "#ffffff"}, // purple
+	{bg: "#008787", fg: "#ffffff"}, // teal
+	{bg: "#878700", fg: "#000000"}, // olive
+	{bg: "#875f00", fg: "#ffffff"}, // brown
+	{bg: "#5f5f87", fg: "#ffffff"}, // slate
 }
 
 // machineColorOf is machine's tab colors: FNV-1a of its name picks them.
@@ -65,26 +68,38 @@ func machineColorOf(machine string) machineColor {
 	return machinePalette[h.Sum32()%uint32(len(machinePalette))]
 }
 
-// tabSGR is the select-graphic-rendition sequence a tab on machine's color
-// starts with: the tab on screen brighter, bold and underlined. The colors
-// go through lipgloss's color profile, the one the program draws with, so
-// a profile of 256 or 16 colors gets the nearest of its own; one sequence
-// for the whole tab, where a lipgloss style with an underline would style
-// it a rune at a time. Without colors a tab is plain, the tab on screen in
-// reverse video; "" for no sequence.
+// tabSGR is the select-graphic-rendition sequence a tab's text starts with:
+// the tab on screen bold, on its machine's color; the others nothing. The
+// colors go through lipgloss's color profile, the one the program draws
+// with, so a profile of 256 or 16 colors gets the nearest of its own.
+// Without colors the tab on screen is in reverse video; "" for no sequence.
 func tabSGR(machine string, current, noColors bool) string {
 	switch {
-	case noColors && current:
-		return "\x1b[1;7m"
-	case noColors:
+	case !current:
 		return ""
+	case noColors:
+		return "\x1b[1;7m"
 	}
 	c := machineColorOf(machine)
-	fg, bg, params := c.fg, c.bg, []string(nil)
-	if current {
-		fg, bg, params = c.activeFg, c.activeBg, []string{"1", "4"}
+	return colorSGR([]string{"1"}, c.fg, c.bg)
+}
+
+// tabBarText is the bar a tab starts with, in its machine's color, on the
+// row's background or, for the tab on screen, on the tab's own; a blank
+// without colors.
+func tabBarText(machine string, current, noColors bool) string {
+	if noColors {
+		return withSGR(tabSGR(machine, current, noColors), " ")
 	}
-	return colorSGR(params, fg, bg)
+	c := machineColorOf(machine)
+	params := []string{}
+	if seq := lipgloss.ColorProfile().Color(c.bg).Sequence(false); seq != "" {
+		params = append(params, seq)
+	}
+	if len(params) == 0 {
+		return tabBar
+	}
+	return withSGR("\x1b["+strings.Join(params, ";")+"m", tabBar)
 }
 
 // colorSGR is the sequence setting params, foreground fg and background bg
@@ -316,8 +331,9 @@ func layoutTabs(specs []tabSpec, width int, noColors bool, muted lipgloss.Style)
 			b.WriteString(gap)
 			x += tabGap
 		}
-		text := tabText(specs[i], i, names[i])
-		b.WriteString(withSGR(tabSGR(specs[i].machine, specs[i].current, noColors), text))
+		text := tabText(specs[i], i, names[i]) // its first cell, a blank, takes the bar
+		b.WriteString(tabBarText(specs[i].machine, specs[i].current, noColors))
+		b.WriteString(withSGR(tabSGR(specs[i].machine, specs[i].current, noColors), text[1:]))
 		end := x + w[i]
 		zones = append(zones, tabZone{from: x, to: end, key: specs[i].key},
 			tabZone{from: end - tabCloseW, to: end, key: specs[i].key, close: true})
