@@ -40,6 +40,24 @@ type Thread struct {
 	ActiveProviderThreadID *string         `json:"activeProviderThreadId"`
 	LatestRunCompletedAt   *string         `json:"latestRunCompletedAt"`
 	UpdatedAt              string          `json:"updatedAt"`
+	Lineage                Lineage         `json:"lineage"`
+}
+
+// Lineage is where a thread came from: a side chat is a fork of the
+// thread it was asked in, which T3's own clients list it under, never on
+// its own.
+type Lineage struct {
+	ParentThreadID *string `json:"parentThreadId"`
+	SideChat       bool    `json:"sideChat"`
+}
+
+// SideChatOf is the thread a side chat was forked from, "" for a thread
+// that is no side chat.
+func (t Thread) SideChatOf() string {
+	if !t.Lineage.SideChat || t.Lineage.ParentThreadID == nil {
+		return ""
+	}
+	return *t.Lineage.ParentThreadID
 }
 
 // Running reports whether the thread's agent is mid-run. The thread's

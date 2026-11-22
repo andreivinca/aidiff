@@ -253,6 +253,23 @@ func savedChoice(q Question, a Answer, ok bool) int {
 
 // answerText shows an answer's values, which may be the backend's option
 // values, kept exact to send back and so sanitized only here.
+// answerLabels is answer a to question q as the user picked it: an
+// option's label for a value that is one, the text typed otherwise.
+func answerLabels(q Question, a Answer) string {
+	parts := make([]string, 0, len(a.Values))
+	for _, v := range a.Values {
+		label := v
+		for _, o := range q.Options {
+			if o.Value == v || o.Label == v {
+				label = o.Label
+				break
+			}
+		}
+		parts = append(parts, label)
+	}
+	return sanitize(strings.Join(parts, ", "))
+}
+
 func answerText(a Answer) string {
 	return sanitize(strings.Join(a.Values, ", "))
 }

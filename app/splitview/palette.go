@@ -45,6 +45,7 @@ type palette struct {
 type row struct {
 	label  string
 	detail string
+	badge  string // drawn in color after the label (Command.Badge)
 	group  string // section title; "" for the ungrouped rows on top
 	run    func(Model) (tea.Model, tea.Cmd)
 }
@@ -115,7 +116,7 @@ func (m Model) paletteRows() []row {
 	}
 	var out []row
 	for _, r := range m.commands() {
-		if fuzzyMatch(p.commandQuery(), r.label) {
+		if fuzzyMatch(p.commandQuery(), r.label) || (r.badge != "" && fuzzyMatch(p.commandQuery(), r.badge)) {
 			out = append(out, r)
 		}
 	}
@@ -136,7 +137,7 @@ func (m Model) commands() []row {
 	byGroup := map[string][]row{}
 	if m.cfg.Commands != nil {
 		for _, c := range m.cfg.Commands() {
-			r := row{label: c.Name, detail: c.Detail, group: c.Group, run: runCommand(c)}
+			r := row{label: c.Name, detail: c.Detail, badge: c.Badge, group: c.Group, run: runCommand(c)}
 			if c.Group == "" {
 				rows = append(rows, r)
 				continue
@@ -181,7 +182,7 @@ func (p palette) pickRows() []row {
 	text := strings.TrimSpace(p.query)
 	exact := false
 	for _, it := range p.items {
-		if fuzzyMatch(p.query, it.Label+" "+it.Detail) {
+		if fuzzyMatch(p.query, it.Label+" "+it.Detail+" "+it.Badge) {
 			out = append(out, pickRow(it, p.onPick, p.ws))
 		}
 		exact = exact || strings.EqualFold(it.Label, text)
@@ -201,7 +202,7 @@ func pickRow(it PickerItem, onPick func(PickerItem) tea.Cmd, ws int) row {
 		}
 		return m, scopeCmd(ws, onPick(it))
 	}
-	return row{label: it.Label, detail: it.Detail, group: it.Group, run: run}
+	return row{label: it.Label, detail: it.Detail, badge: it.Badge, group: it.Group, run: run}
 }
 
 // textRow is the picker's free-text row: it hands text to onText.

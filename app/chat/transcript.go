@@ -484,6 +484,13 @@ func questionRows(q Questions, w int, st styles, answered map[string]Answer) blo
 	if !q.Pending {
 		for _, question := range q.Questions {
 			out.join(insetRows(wrapText("", "question: "+strings.TrimSpace(question.Text), w, false), st.muted))
+			a, ok := q.Answers[question.ID]
+			if !ok {
+				a, ok = answered[question.ID]
+			}
+			if ok && len(a.Values) > 0 {
+				out.join(insetRows(wrapText("  → ", answerLabels(question, a), w, false), st.text))
+			}
 		}
 		return out
 	}

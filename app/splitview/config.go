@@ -116,6 +116,7 @@ type Colors struct {
 	Muted  lipgloss.TerminalColor // hints, row details, idle dividers; ANSI 8 by default
 	Border lipgloss.TerminalColor // popup borders; ANSI 6 by default
 	Active lipgloss.TerminalColor // the divider being dragged; ANSI 12 by default
+	Badge  lipgloss.TerminalColor // a row's badge (Command.Badge), drawn on it; ANSI 5 by default
 }
 
 // withDefaults fills in what the embedding program left unset.
@@ -181,6 +182,9 @@ func (c Colors) withDefaults() Colors {
 	if c.Active == nil {
 		c.Active = lipgloss.Color("12")
 	}
+	if c.Badge == nil {
+		c.Badge = lipgloss.Color("5")
+	}
 	return c
 }
 
@@ -190,6 +194,7 @@ type styles struct {
 	box        lipgloss.Style
 	grip       lipgloss.Style
 	gripActive lipgloss.Style
+	badge      lipgloss.Style
 }
 
 func newStyles(c Colors) styles {
@@ -198,5 +203,6 @@ func newStyles(c Colors) styles {
 		box:        lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(c.Border),
 		grip:       lipgloss.NewStyle().Foreground(c.Muted),
 		gripActive: lipgloss.NewStyle().Foreground(c.Active),
+		badge:      lipgloss.NewStyle().Background(c.Badge).Foreground(lipgloss.Color("15")),
 	}
 }

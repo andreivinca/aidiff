@@ -284,3 +284,25 @@ func TestSplit_AltKeysOpenThePaletteAndSidebar(t *testing.T) {
 	assert.False(t, hs.m.palette.open, "and closes it")
 	assert.Equal(t, "alt+b", hs.m.cfg.Keys.SidebarAlt)
 }
+
+func TestPalette_BadgeDrawnInColorAndMatched(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	hs.send(ShowPickerMsg{Title: "threads", Items: []PickerItem{
+		{Label: "Side chat", Detail: "aidiff · idle", Badge: "side chat · test"},
+		{Label: "Fix login", Detail: "aidiff · idle"},
+	}, OnPick: func(PickerItem) tea.Cmd { return nil }})
+	require.True(t, hs.m.palette.open)
+	inner := 0
+	for _, l := range strings.Split(hs.m.View(), "\n") {
+		if strings.Contains(ansi.Strip(l), "side chat · test") {
+			plain := ansi.Strip(l)
+			assert.Contains(t, plain, "Side chat  side chat · test ", "the badge right after the label")
+			assert.Contains(t, plain, "aidiff · idle", "the detail still on the right")
+			assert.Contains(t, l, hs.m.styles.badge.Render(" side chat · test "), "the badge on its color")
+			inner = ansi.StringWidth(plain)
+		}
+	}
+	require.Positive(t, inner, "the badged row is drawn")
+	hs.key("test")
+	assert.Equal(t, []string{"Side chat"}, names(hs.m.palette.rows), "the filter matches the badge")
+}

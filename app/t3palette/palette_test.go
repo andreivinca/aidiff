@@ -432,3 +432,17 @@ func TestPalette_HelpNamesBothFocusKeys(t *testing.T) {
 	assert.Contains(t, panel, " alt+h alt+l  move focus", "the pair the Linux console delivers, in the same column")
 	assert.Contains(t, h.p.Connections().View(40, 30, false), " alt+→ alt+l  back")
 }
+
+func TestSideChatBadge(t *testing.T) {
+	parent := "p-thread"
+	sh := t3client.Shell{Threads: []t3client.Thread{
+		{ID: parent, Title: "test"},
+		{ID: "s", Title: "Side chat", Lineage: t3client.Lineage{ParentThreadID: &parent, SideChat: true}},
+		{ID: "lost", Title: "Side chat", Lineage: t3client.Lineage{ParentThreadID: new(string), SideChat: true}},
+	}}
+	assert.Equal(t, "side chat · test", sideChatBadge(sh, sh.Threads[1]), "names the thread it was forked from")
+	assert.Equal(t, "side chat", sideChatBadge(sh, sh.Threads[2]), "a parent not listed: the kind alone")
+	assert.Empty(t, sideChatBadge(sh, sh.Threads[0]), "no badge on a thread of its own")
+	items := threadItems(sh, sh.Threads, "")
+	assert.Equal(t, "side chat · test", items[1].Badge, "the thread picker labels it too")
+}

@@ -64,6 +64,34 @@ type QuestionOption struct {
 	Value       string `json:"value"` // what choosing it sends; the label when empty
 }
 
+// QuestionAnswer is the answer a user_input_request got.
+type QuestionAnswer struct {
+	// Answers maps a question's id to its answer: a string, or a list of
+	// them for a question that takes several options
+	Answers map[string]json.RawMessage `json:"answers"`
+}
+
+// Values is the answer to question id, one value per option picked or the
+// text typed; nil when it got none.
+func (a *QuestionAnswer) Values(id string) []string {
+	if a == nil {
+		return nil
+	}
+	raw, ok := a.Answers[id]
+	if !ok {
+		return nil
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return []string{one}
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		return many
+	}
+	return nil
+}
+
 // Answer is what choosing the option sends.
 func (o QuestionOption) Answer() string {
 	if o.Value != "" {
@@ -137,8 +165,11 @@ type TurnItem struct {
 	RequestID string          `json:"requestId"` // approval_request, user_input_request
 	Options   []RequestOption `json:"options"`
 	Questions []Question      `json:"questions"`
-	Steps     []TodoStep      `json:"steps"`
-	Failure   json.RawMessage `json:"failure"` // error
+	// QuestionAnswer is how a user_input_request was answered, wherever
+	// that was (here, T3's own clients); nil while it waits
+	QuestionAnswer *QuestionAnswer `json:"questionAnswer"`
+	Steps          []TodoStep      `json:"steps"`
+	Failure        json.RawMessage `json:"failure"` // error
 
 	// secret_request: what the agent asks the user for (see AnswerSecret)
 	Label        string `json:"label"`

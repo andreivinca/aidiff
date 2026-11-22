@@ -23,13 +23,28 @@ func (t *thread) entry(it t3client.TurnItem) chat.Entry {
 	case "approval_request":
 		return chat.Approval{ID: it.RequestID, Prompt: it.Prompt, Reason: it.Reason, Pending: t.awaits(it)}
 	case "user_input_request":
-		return chat.Questions{ID: it.RequestID, Questions: questions(it.Questions), Pending: t.awaits(it)}
+		return chat.Questions{ID: it.RequestID, Questions: questions(it.Questions), Pending: t.awaits(it), Answers: givenAnswers(it)}
 	case "error":
 		return chat.Failure{Text: it.FailureText()}
 	case "secret_request":
 		return secretRequest(it)
 	}
 	return stepOf(it, t.texts(it).in)
+}
+
+// givenAnswers are the answers a user_input_request item got, by question
+// id; nil while it waits.
+func givenAnswers(it t3client.TurnItem) map[string]chat.Answer {
+	if it.QuestionAnswer == nil {
+		return nil
+	}
+	out := map[string]chat.Answer{}
+	for _, q := range it.Questions {
+		if v := it.QuestionAnswer.Values(q.ID); len(v) > 0 {
+			out[q.ID] = chat.Answer{Values: v, Multiple: q.MultiSelect}
+		}
+	}
+	return out
 }
 
 // attachments are what a message carries, as the pane lists them: T3's

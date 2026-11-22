@@ -177,3 +177,62 @@ func TestPane_ApprovalIsAPicker(t *testing.T) {
 	p2, _ := newTestPane(t, 80, 40, asked)
 	assert.NotContains(t, view(p2), "1) Accept", "while the agent's questions hold the keys the approval is not a picker")
 }
+
+func TestPane_AQuestionBelowAScrolledViewBringsItDown(t *testing.T) {
+	conv := Conversation{State: AgentRunning}
+	for i := range 40 {
+		conv.Entries = append(conv.Entries, AgentMessage{Markdown: fmt.Sprintf("line %d", i)})
+	}
+	p, f := newTestPane(t, 60, 16, conv)
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyPgUp})
+	v := view(p)
+	assert.Regexp(t, `Working · ↓ \d+ lines below · End`, v, "scrolled up, the row above the input says there is more below")
+
+	conv.Entries = append(conv.Entries, AgentMessage{Markdown: "line 40"})
+	show(t, p, f, conv)
+	assert.NotContains(t, view(p), "line 40", "plain output arriving below leaves the view where it is")
+
+	conv.State = AgentWaiting
+	conv.Entries = append(conv.Entries, Questions{ID: "q1", Pending: true,
+		Questions: []Question{{ID: "fix", Text: "How should I fix it?", Options: []Option{{Label: "Retry", Value: "retry"}}}}})
+	show(t, p, f, conv)
+	v = view(p)
+	assert.Contains(t, v, "1) Retry", "a question the agent waits on brings the view to it")
+	assert.NotContains(t, v, "lines below")
+
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyPgUp})
+	show(t, p, f, conv)
+	assert.Contains(t, view(p), "lines below", "the same question delivered again leaves a view the user scrolled up")
+}
+
+func TestPane_NewMessagesBelowAreCountedAndAClickGoesThere(t *testing.T) {
+	conv := Conversation{State: AgentRunning}
+	for i := range 40 {
+		conv.Entries = append(conv.Entries, AgentMessage{Markdown: fmt.Sprintf("line %d", i)})
+	}
+	p, f := newTestPane(t, 60, 16, conv)
+	view(p)
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyPgUp})
+	assert.Regexp(t, `↓ \d+ lines below · End`, view(p), "nothing new yet: how far the end is")
+
+	conv.Entries = append(conv.Entries, Step{Kind: StepCommand, Text: "make test"})
+	show(t, p, f, conv)
+	assert.Regexp(t, `↓ \d+ lines below · End`, view(p), "the agent's work steps are not messages")
+
+	conv.Entries = append(conv.Entries, AgentMessage{Markdown: "first news"}, AgentMessage{Markdown: "second news"})
+	show(t, p, f, conv)
+	v := view(p)
+	assert.Contains(t, v, "↓ 2 new messages · End", "what arrived since the view left the end")
+	assert.NotContains(t, v, "second news")
+
+	var statusY int
+	locked(p, func() { statusY = p.frame.layout.statusY })
+	require.Positive(t, statusY)
+	p.SendMouse(uv.MouseClickEvent{X: 10, Y: statusY, Button: uv.MouseLeft})
+	v = view(p)
+	assert.Contains(t, v, "second news", "a click on the row goes to the end")
+	assert.NotContains(t, v, "new message")
+
+	p.SendKey(uv.KeyPressEvent{Code: uv.KeyPgUp})
+	assert.NotContains(t, view(p), "new message", "seen at the end, they are no longer new")
+}

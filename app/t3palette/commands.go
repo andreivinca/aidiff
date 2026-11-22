@@ -60,8 +60,8 @@ func (t *Palette) threadCommands(v state, scope string) []splitview.Command {
 		if th.ID == current {
 			label = "T3: ▸ " + threadTitle(th)
 		}
-		cmds = append(cmds, splitview.Command{Name: label, Detail: threadDetail(v.shell, th), Group: threadsGroup,
-			Run: t.openThread(v.live, th.ID)})
+		cmds = append(cmds, splitview.Command{Name: label, Detail: threadDetail(v.shell, th), Badge: sideChatBadge(v.shell, th),
+			Group: threadsGroup, Run: t.openThread(v.live, th.ID)})
 	}
 	if len(threads) > inlineThreads {
 		cmds = append(cmds, splitview.Command{Name: "T3: All threads…", Detail: scope, Group: threadsGroup, Run: t.threadPicker})

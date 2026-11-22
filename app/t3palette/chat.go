@@ -129,6 +129,10 @@ func (t *Palette) chatPane(s Session, th t3client.Thread, side bool) tea.Msg {
 		cfg := t.cfg.Chat
 		cfg.QuitNote = chatQuitNote
 		cfg.Closable = side // a side chat closes on its own; the thread's chat closes with its tab
+		cfg.Badge = sideChatBadge(t.state().shell, th)
+		if cfg.Badge == "" && side {
+			cfg.Badge = "side chat"
+		}
 		pane := chat.New(c.threads(s.Conn()).Thread(th.ID), threadTitle(th), width, height, cfg)
 		c.pane = pane
 		t.mu.Lock()

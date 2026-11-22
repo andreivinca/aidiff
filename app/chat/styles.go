@@ -21,6 +21,7 @@ const (
 type styles struct {
 	text, muted, rail, panel, cursor, heading, code, warn, bad, bold lipgloss.Style
 	selected, atom                                                   lipgloss.Style
+	badge                                                            lipgloss.Style // Config.Badge on the header
 	// queued and queuedStripe draw a queued message's panel: its text muted,
 	// on the panel's background and, every other cell, a shade lighter
 	queued, queuedStripe lipgloss.Style
@@ -34,10 +35,12 @@ func newStyles(color bool) (base, composer styles) {
 	if !color {
 		plain := lipgloss.NewStyle()
 		base = styles{text: plain, muted: plain, rail: plain, panel: plain, cursor: plain, heading: plain, code: plain,
-			warn: plain, bad: plain, bold: plain, selected: plain, atom: plain, queued: plain, queuedStripe: plain}
+			warn: plain, bad: plain, bold: plain, selected: plain, atom: plain, queued: plain, queuedStripe: plain,
+			badge: lipgloss.NewStyle().Reverse(true)}
 		return base, base
 	}
 	base = styles{
+		badge: lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#875faf")),
 		text:  lipgloss.NewStyle().Foreground(textColor),
 		muted: lipgloss.NewStyle().Foreground(mutedColor),
 		rail:  lipgloss.NewStyle().Foreground(lipgloss.Color("#5c9cf5")),

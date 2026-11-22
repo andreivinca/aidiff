@@ -103,6 +103,9 @@ type Questions struct {
 	ID        string // the prompt's id, as Answer and Dismiss take it
 	Questions []Question
 	Pending   bool // still waiting for the answers
+	// Answers are the answers the prompt got, by question id, wherever it
+	// was answered; empty while it waits or when it was dismissed
+	Answers map[string]Answer
 }
 
 // Question is one question of a Questions prompt.

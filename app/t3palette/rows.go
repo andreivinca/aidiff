@@ -35,7 +35,7 @@ func threadItems(sh t3client.Shell, threads []t3client.Thread, current string) [
 		if th.ID == current {
 			label = "▸ " + label
 		}
-		items = append(items, splitview.PickerItem{Label: label, Detail: threadDetail(sh, th), Value: th})
+		items = append(items, splitview.PickerItem{Label: label, Detail: threadDetail(sh, th), Badge: sideChatBadge(sh, th), Value: th})
 	}
 	return items
 }
@@ -53,6 +53,22 @@ func projectItems(sh t3client.Shell) []splitview.PickerItem {
 		return strings.ToLower(items[i].Label) < strings.ToLower(items[j].Label)
 	})
 	return items
+}
+
+// sideChatBadge marks a side chat with the thread it was forked from, as
+// "side chat · test": T3's own clients list a side chat only under that
+// thread, so the label says where to find it there; "" for any other.
+func sideChatBadge(sh t3client.Shell, th t3client.Thread) string {
+	if !th.Lineage.SideChat {
+		return ""
+	}
+	parent := th.SideChatOf()
+	for _, p := range sh.Threads {
+		if p.ID == parent {
+			return "side chat · " + threadTitle(p)
+		}
+	}
+	return "side chat"
 }
 
 // threadTitle names a thread for the palette.

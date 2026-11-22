@@ -38,6 +38,11 @@ func (p *Pane) selectionMouse(event vt.Mouse) {
 			p.closeSelfLocked()
 			return
 		}
+		if m.Button == uv.MouseLeft && p.scroll > 0 && p.frame.valid && m.Y == p.frame.layout.statusY {
+			p.scroll, p.selection = 0, textSelection{} // the row says what is below: a click goes there
+			p.gen++
+			return
+		}
 		if p.clickStickyLocked(m) {
 			return
 		}

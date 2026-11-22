@@ -170,3 +170,30 @@ func TestPane_SideChatClosesByCommandOrHeaderButton(t *testing.T) {
 	other.SendText("/close\r")
 	assert.True(t, other.Exited(), "/close closes a side chat too")
 }
+
+func TestPane_AnsweredQuestionShowsItsAnswer(t *testing.T) {
+	conv := fixture()
+	conv.Entries = append(conv.Entries, Questions{ID: "r1", Questions: []Question{
+		{ID: "fix", Text: "How should I fix it?", Options: []Option{{Label: "Full fix (Recommended)", Value: "full"}, {Label: "Keep the decision", Value: "keep"}}},
+		{ID: "why", Text: "Anything else?"},
+		{ID: "skip", Text: "Skipped one"},
+	}, Answers: map[string]Answer{
+		"fix": {Values: []string{"full"}},
+		"why": {Values: []string{"ohh, it was down because of air"}},
+	}})
+	p, _ := newTestPane(t, 80, 40, conv)
+	v := view(p)
+	assert.Contains(t, v, "question: How should I fix it?")
+	assert.Contains(t, v, "  → Full fix (Recommended)", "an option's label, not its value")
+	assert.Contains(t, v, "  → ohh, it was down because of air", "a typed answer as typed")
+	assert.Contains(t, v, "question: Skipped one")
+	assert.Equal(t, 2, strings.Count(v, "→ "), "a question with no answer shows none")
+}
+
+func TestPane_HeaderBadge(t *testing.T) {
+	side := New(newFakeBackend(fixture()), "side", 80, 30, Config{Badge: "side chat · test"})
+	t.Cleanup(side.Close)
+	header := strings.Split(ansi.Strip(side.Render(false)), "\n")[0]
+	assert.True(t, strings.HasPrefix(header, "side  side chat · test  · "), "the badge right after the title: %q", header)
+	assert.Equal(t, 80, ansi.StringWidth(header))
+}

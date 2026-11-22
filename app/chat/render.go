@@ -21,6 +21,7 @@ type layout struct {
 	scroll         int // how far up the transcript is shown
 	maxScroll      int // how far up it can go
 	activityScroll int // the first row of the activity list shown
+	statusY        int // the status row above the composer, -1 when none; a click on it while scrolled up goes to the end
 	pin            stickyPin
 }
 
@@ -44,7 +45,7 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, []rowMeta, layout) {
 	if p.stop.turn != "" {
 		return p.stopRowsLocked(w, h), make([]rowMeta, h), layout{}
 	}
-	var l layout
+	l := layout{statusY: -1}
 	gapH := 0
 	if h > 1 {
 		l.headerH = 1
@@ -84,7 +85,8 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, []rowMeta, layout) {
 		rows = append(rows, "")
 	}
 	if gapH > 0 {
-		rows = append(rows, p.styles.muted.Render(ansi.Truncate(inset+p.activityStatusLocked(), w, "…")))
+		l.statusY = len(rows)
+		rows = append(rows, p.statusRowLocked(w))
 	}
 	rows = append(rows, footer...)
 	for len(meta) < h {
@@ -241,6 +243,41 @@ func (p *Pane) onHeaderClose(x, y int) bool {
 	return p.closable && f.valid && f.layout.headerH > 0 && y == 0 && p.width > headerCloseW+4 && x >= p.width-1
 }
 
+// statusRowLocked is the row above the composer: what the agent does and,
+// while the view is scrolled up, what is below it, in the warning color:
+// the messages that arrived since the view left the end, else how many
+// lines lie below, so a transcript that grew past the view does not read
+// as its end (the header's ↑N alone went unseen). A click on it goes to
+// the end (SendMouse). At the end, everything shown counts as read. mu
+// must be held.
+func (p *Pane) statusRowLocked(w int) string {
+	status := inset + p.activityStatusLocked()
+	if p.scroll <= 0 {
+		p.readEntries = len(p.conv.Entries)
+		return p.styles.muted.Render(ansi.Truncate(status, w, "…"))
+	}
+	more := fmt.Sprintf(" · ↓ %d lines below · End", p.scroll)
+	if n := p.newMessagesLocked(); n > 0 {
+		more = fmt.Sprintf(" · ↓ %d new message%s · End", n, plural(n))
+	}
+	room := max(0, w-ansi.StringWidth(more))
+	return p.styles.muted.Render(ansi.Truncate(status, room, "…")) + p.styles.warn.Render(ansi.Truncate(more, w-min(room, ansi.StringWidth(status)), ""))
+}
+
+// newMessagesLocked counts what arrived since the view left the end: the
+// agent's messages, its questions and approvals, failures; its work steps
+// are not messages. mu must be held.
+func (p *Pane) newMessagesLocked() int {
+	n := 0
+	for _, e := range p.conv.Entries[min(p.readEntries, len(p.conv.Entries)):] {
+		switch e.(type) {
+		case AgentMessage, Plan, Questions, Approval, SecretRequest, Failure, UserMessage:
+			n++
+		}
+	}
+	return n
+}
+
 // headerTextLocked is the header without its close button: the title and
 // what the agent does, in w cells; mu must be held.
 func (p *Pane) headerTextLocked(w, scroll int) string {
@@ -258,7 +295,13 @@ func (p *Pane) headerTextLocked(w, scroll int) string {
 		room = max(1, min(ansi.StringWidth(title), max(8, w/3)))
 		state = ansi.Truncate(state, max(1, w-room-3), "…")
 	}
-	return p.styles.bold.Render(ansi.Truncate(title, room, "…")) + " · " + p.styles.muted.Render(state)
+	badge := ""
+	if p.badge != "" && room > 12 {
+		label := ansi.Truncate(" "+p.badge+" ", min(room/2, ansi.StringWidth(p.badge)+2), "…")
+		room -= ansi.StringWidth(label) + 1
+		badge = " " + p.styles.badge.Render(label)
+	}
+	return p.styles.bold.Render(ansi.Truncate(title, room, "…")) + badge + " · " + p.styles.muted.Render(state)
 }
 
 // titleLocked names the conversation: as the backend does, else as the

@@ -281,3 +281,15 @@ func TestBackend_RunningSinceIsTheRunsStart(t *testing.T) {
 	s.b.events(s.b.sub).Run(t3client.Run{ID: "run-2", Ordinal: 2, Status: "completed", StartedAt: "2026-11-21T10:00:00Z"})
 	assert.True(t, s.v.latest().RunningSince.IsZero(), "nothing runs, nothing counts")
 }
+
+func TestGivenAnswers(t *testing.T) {
+	var it t3client.TurnItem
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"user_input_request","requestId":"r","status":"completed",
+		"questions":[{"id":"q1","question":"Which?","multiSelect":true},{"id":"q2","question":"Why?"}],
+		"questionAnswer":{"requestId":"r","answers":{"q1":["API","Docs"],"q2":"because"}}}`), &it))
+	got := givenAnswers(it)
+	assert.Equal(t, chat.Answer{Values: []string{"API", "Docs"}, Multiple: true}, got["q1"])
+	assert.Equal(t, chat.Answer{Values: []string{"because"}}, got["q2"])
+	it.QuestionAnswer = nil
+	assert.Nil(t, givenAnswers(it), "none while it waits")
+}

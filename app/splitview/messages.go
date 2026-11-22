@@ -24,6 +24,9 @@ type OpenTerminalMsg struct{}
 type Command struct {
 	Name   string
 	Detail string // dim text on the right, if any
+	// Badge is a short label drawn in color right after the name, such as
+	// "side chat · test"; the filter matches it too
+	Badge string
 	// Group puts the command in a titled section below the ungrouped ones;
 	// commands of a group are listed together, groups in order of first use.
 	Group string
@@ -36,6 +39,7 @@ type Command struct {
 type PickerItem struct {
 	Label  string // what the user filters on and picks
 	Detail string // dim text on the right, also matched by the filter
+	Badge  string // a short label drawn in color after Label, matched by the filter too
 	Value  any    // handed back to OnPick untouched
 	// Current marks what is in effect now, such as the comparison the
 	// review shows; a dropdown built from the items ticks it

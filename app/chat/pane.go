@@ -32,6 +32,9 @@ type Config struct {
 	// HintsOutside leaves the hint row out of the composer: the host shows
 	// the shortcuts itself (StatusHints), e.g. on its status bar.
 	HintsOutside bool
+	// Badge is a short label drawn in color after the title, such as "side
+	// chat · test"; "" for none
+	Badge string
 	// Closable lets the user close the pane from inside it: /close and a
 	// × on its header. A side chat has it; the chat of the thread under
 	// review closes with its tab.
@@ -55,6 +58,7 @@ type Pane struct {
 	files    Files
 	quitNote string
 	closable bool      // Config.Closable
+	badge    string    // Config.Badge
 	hostKeys []Hint    // the host's shortcuts for the hint row
 	hintsOut bool      // the host shows the hints (Config.HintsOutside)
 	builtins []command // the pane's own slash commands
@@ -84,6 +88,8 @@ type Pane struct {
 	choiceFor      string         // the prompt questionChoice is a row of; another resets it
 	approvalChoice int            // the approval picker's highlighted row: 0 accept, 1 decline
 	approvalFor    string         // the approval approvalChoice is a row of; another resets it
+	askSeen        string         // what the agent asked last (askingLocked); a new ask brings a scrolled view to the end
+	readEntries    int            // the entries shown while the view was at the end; those after them are new
 	showWork       bool           // /work: the agent's steps shown one per line instead of a summary
 	images         []pendingImage // images pasted into the input, each shown there as its token
 	imageSeq       int
@@ -135,6 +141,7 @@ func New(b Backend, title string, width, height int, cfg Config) *Pane {
 		files:    cfg.Files,
 		quitNote: cfg.QuitNote,
 		closable: cfg.Closable,
+		badge:    sanitize(cfg.Badge),
 		hostKeys: cfg.HostKeys,
 		hintsOut: cfg.HintsOutside,
 		box:      newMailbox(),
@@ -266,7 +273,31 @@ func (p *Pane) showLocked(c Conversation) {
 	if id := p.pendingApprovalLocked(); id != p.approvalFor {
 		p.approvalChoice, p.approvalFor = 0, id // a new approval's picker starts on Accept
 	}
+	if ask := p.askingLocked(); ask != p.askSeen {
+		p.askSeen = ask
+		if ask != "" && p.scroll > 0 {
+			// the agent is blocked on the user: a question landing below a
+			// view scrolled up went unseen, so the view goes to it
+			p.scroll, p.selection = 0, textSelection{}
+		}
+	}
 	p.gen++
+}
+
+// askingLocked names what the agent waits on the user for: the newest
+// pending question, approval or secret request, "" for none. mu must be
+// held.
+func (p *Pane) askingLocked() string {
+	switch {
+	case p.conv.Secret != nil:
+		return "secret:" + p.conv.Secret.ID
+	case p.pendingQuestionsLocked() != nil:
+		return "questions:" + p.pendingQuestionsLocked().ID
+	}
+	if id := p.pendingApprovalLocked(); id != "" {
+		return "approval:" + id
+	}
+	return ""
 }
 
 // goLocked runs work on a goroutine of its own and then, with mu held,

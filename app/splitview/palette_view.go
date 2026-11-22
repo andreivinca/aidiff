@@ -68,7 +68,7 @@ func (m Model) paletteView() string {
 			lines = append(lines, groupLine(p.rows[i].group, inner, dim))
 			used++
 		}
-		lines = append(lines, rowLine(p.rows[i], inner, i == p.sel, dim))
+		lines = append(lines, rowLine(p.rows[i], inner, i == p.sel, dim, m.styles.badge))
 		used++
 	}
 	if note != "" {
@@ -128,10 +128,46 @@ func (m Model) inputLine(inner int, dim lipgloss.Style) string {
 	return fitLine(prefix+q+"█", inner)
 }
 
+// badgedRowLine is rowLine for a row with a badge: the label, the badge on
+// its color, then the detail on the right. The label yields room first,
+// then the badge; each part is styled whole, the selected row's label and
+// detail reversed around a badge that keeps its color, since one style
+// wrapped around another would end at its reset.
+func badgedRowLine(label, badge, detail string, inner int, selected bool, dim, badgeStyle lipgloss.Style) string {
+	badge = ansi.Truncate(badge, max(1, inner/2), "…")
+	badgeW := ansi.StringWidth(badge)
+	detailW := 0
+	if detail != "" {
+		detail = ansi.Truncate(detail, max(0, min(ansi.StringWidth(detail), inner-badgeW-rowMinLabel-rowDetailGap)), "…")
+		detailW = ansi.StringWidth(detail)
+	}
+	labelRoom := max(1, inner-badgeW-1-detailW-rowDetailGap)
+	shown := ansi.Truncate(label, labelRoom, "…") + " "
+	pad := max(0, inner-ansi.StringWidth(shown)-badgeW-detailW-1)
+	tail := strings.Repeat(" ", pad) + detail + " "
+	if detail == "" {
+		tail = strings.Repeat(" ", max(0, inner-ansi.StringWidth(shown)-badgeW))
+	}
+	plain := lipgloss.NewStyle()
+	if selected {
+		plain = plain.Reverse(true)
+	} else if detail != "" {
+		tail = strings.Repeat(" ", pad) + dim.Render(detail) + " "
+	}
+	line := plain.Render(shown) + badgeStyle.Render(badge)
+	if selected {
+		return line + plain.Render(tail)
+	}
+	return line + tail
+}
+
 // rowLine renders one row: label left, detail right, reversed when selected.
 // The label keeps its width; a long detail is shortened to the room left.
-func rowLine(r row, inner int, selected bool, dim lipgloss.Style) string {
+func rowLine(r row, inner int, selected bool, dim lipgloss.Style, badgeStyle lipgloss.Style) string {
 	label := "  " + cleanLine(r.label)
+	if badge := cleanLine(r.badge); badge != "" {
+		return badgedRowLine(label, " "+badge+" ", cleanLine(r.detail), inner, selected, dim, badgeStyle)
+	}
 	line := fitLine(label, inner)
 	if detail := cleanLine(r.detail); detail != "" {
 		labelW := ansi.StringWidth(label)
