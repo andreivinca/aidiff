@@ -62,22 +62,53 @@ func withDividerHandle(rendered string) string {
 	return strings.Join(rows, "\n")
 }
 
-// replaceDivider swaps a row's divider glyph for the handle. The divider is
-// the row's last visible cell: the border track, or the navigation
-// scrollbar's thumb drawn over it. A row whose last visible cell is neither
-// is returned unchanged, so pane content is never replaced.
-func replaceDivider(row string) string {
-	for _, glyph := range []string{scrollbarTrackRune, scrollbarThumbGlyph} {
+// tonalThumbGlyph is the scrollbar thumb once the divider line is gone: a
+// thin bar at the right edge of the cell, so it sits against the diff pane.
+const tonalThumbGlyph = "▕"
+
+// tonalDivider takes the divider line out of the rendered tree pane when the
+// tree's background already sets it apart from the diff pane: the track
+// becomes blank tree background, the scrollbar thumb a thin bar, and the drag
+// handle stays. Geometry is unchanged (each glyph is one cell), so mouse hit
+// tests on the divider column still hold. With no distinct tree background
+// the pane is returned as rendered.
+func (m Model) tonalDivider(rendered string) string {
+	tree := m.resolver.Color(style.ColorKeyTreePaneBg)
+	if tree == "" || tree == m.resolver.Color(style.ColorKeyDiffPaneBg) {
+		return rendered
+	}
+	rows := strings.Split(rendered, "\n")
+	for i, row := range rows {
+		rows[i] = replaceLastCell(row, map[string]string{
+			scrollbarTrackRune:  " ",
+			scrollbarThumbGlyph: tonalThumbGlyph,
+		})
+	}
+	return strings.Join(rows, "\n")
+}
+
+// replaceLastCell swaps a row's last visible cell for its replacement in
+// glyphs, when that cell is one of glyphs' keys. Any other row is returned
+// unchanged, so pane content is never replaced.
+func replaceLastCell(row string, glyphs map[string]string) string {
+	for glyph, with := range glyphs {
 		idx := strings.LastIndex(row, glyph)
 		if idx < 0 {
 			continue
 		}
 		rest := row[idx+len(glyph):]
 		if ansi.StringWidth(rest) == 0 {
-			return row[:idx] + dividerHandle + rest
+			return row[:idx] + with + rest
 		}
 	}
 	return row
+}
+
+// replaceDivider swaps a row's divider glyph for the handle. The divider is
+// the row's last visible cell: the border track, or the navigation
+// scrollbar's thumb drawn over it.
+func replaceDivider(row string) string {
+	return replaceLastCell(row, map[string]string{scrollbarTrackRune: dividerHandle, scrollbarThumbGlyph: dividerHandle})
 }
 
 // HasStatusLine reports whether the review draws a status bar as its last

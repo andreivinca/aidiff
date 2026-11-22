@@ -50,7 +50,7 @@ func TestModel_StatusBarFilterIndicator(t *testing.T) {
 		assert.Contains(t, status, "◉", "should show filter icon when filter active")
 	})
 
-	t.Run("filter icon always present", func(t *testing.T) {
+	t.Run("filter icon hidden when inactive", func(t *testing.T) {
 		m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
 		m.tree = testNewFileTree([]string{"a.go"})
 		m.ready = true
@@ -59,33 +59,33 @@ func TestModel_StatusBarFilterIndicator(t *testing.T) {
 		m.layout.width = 200
 
 		status := m.statusBarText()
-		assert.Contains(t, status, "◉", "indicator always shown, muted when inactive")
+		assert.NotContains(t, status, "◉", "an inactive mode leaves its icon out of the bar")
 	})
 }
 
 func TestModel_StatusModeIcons(t *testing.T) {
-	t.Run("all icons always present", func(t *testing.T) {
+	t.Run("only active icons are shown", func(t *testing.T) {
 		m := testModel(nil, nil)
+		m.modes.lineNumbers, m.modes.wordDiff, m.modes.showUntracked = false, false, false
+		assert.Empty(t, m.statusModeIcons(), "no mode on, no icons")
+
+		m.modes.collapsed.enabled = true
+		m.modes.wrap = true
 		icons := m.statusModeIcons()
-		assert.Contains(t, icons, "▼")
-		assert.Contains(t, icons, "◉")
-		assert.Contains(t, icons, "↩")
-		assert.Contains(t, icons, "≋")
+		assert.Equal(t, "▼ ↩", icons)
+		assert.NotContains(t, icons, "◉")
+		assert.NotContains(t, icons, "≋")
 	})
 
-	t.Run("with colors active icons use status fg", func(t *testing.T) {
+	t.Run("icons carry no color of their own", func(t *testing.T) {
 		sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020"}
 		m := testModel(nil, nil)
 		res := style.NewResolver(sc)
 		m.resolver = res
 		m.renderer = style.NewRenderer(res)
+		m.modes.lineNumbers, m.modes.wordDiff, m.modes.showUntracked = false, false, false
 		m.modes.collapsed.enabled = true
-		// filter is off by default
-		icons := m.statusModeIcons()
-		// active collapsed icon should have status fg sequence
-		assert.Contains(t, icons, "\033[38;2;32;32;32m▼")
-		// inactive filter icon should have muted fg sequence
-		assert.Contains(t, icons, "\033[38;2;108;108;108m◉")
+		assert.Equal(t, "▼", m.statusModeIcons(), "drawn in the bar's own foreground")
 	})
 
 	t.Run("mouse indicator hidden while toggle_mouse is unbound", func(t *testing.T) {
@@ -93,20 +93,16 @@ func TestModel_StatusModeIcons(t *testing.T) {
 		assert.NotContains(t, m.statusModeIcons(), "m", "toggle_mouse has no default binding")
 	})
 
-	t.Run("mouse indicator lit while tracking is suspended", func(t *testing.T) {
-		sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020"}
+	t.Run("mouse indicator shown while tracking is suspended", func(t *testing.T) {
 		m := testModel(nil, nil)
-		res := style.NewResolver(sc)
-		m.resolver = res
-		m.renderer = style.NewRenderer(res)
 		m.keymap.Bind("m", keymap.ActionToggleMouse)
 		m.mouseTracking = true
-		assert.Contains(t, m.statusModeIcons(), "\033[38;2;108;108;108mm")
+		assert.NotContains(t, m.statusModeIcons(), "m")
 		toggled, cmd := m.handleMouseToggle()
 		require.NotNil(t, cmd)
 		_ = cmd()
 		m = toggled.(Model)
-		assert.Contains(t, m.statusModeIcons(), "\033[38;2;32;32;32mm")
+		assert.Contains(t, m.statusModeIcons(), "m")
 	})
 }
 
@@ -126,7 +122,7 @@ func TestModel_StatusBarWrapIndicator(t *testing.T) {
 		assert.Contains(t, status, "↩", "should show wrap icon when wrap active")
 	})
 
-	t.Run("wrap icon always present", func(t *testing.T) {
+	t.Run("wrap icon hidden when inactive", func(t *testing.T) {
 		m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
 		m.tree = testNewFileTree([]string{"a.go"})
 		m.ready = true
@@ -135,11 +131,11 @@ func TestModel_StatusBarWrapIndicator(t *testing.T) {
 		m.layout.width = 200
 
 		status := m.statusBarText()
-		assert.Contains(t, status, "↩", "indicator always shown, muted when inactive")
+		assert.NotContains(t, status, "↩", "an inactive mode leaves its icon out of the bar")
 	})
 }
 
-func TestModel_StatusBarShowsFilenameAndStats(t *testing.T) {
+func TestModel_StatusBarShowsStatsNotFilename(t *testing.T) {
 	lines := []diff.DiffLine{
 		{NewNum: 1, Content: "line1", ChangeType: diff.ChangeContext},
 		{NewNum: 2, Content: "added", ChangeType: diff.ChangeAdd},
@@ -153,45 +149,35 @@ func TestModel_StatusBarShowsFilenameAndStats(t *testing.T) {
 	m.layout.focus = paneDiff
 
 	status := m.statusBarText()
-	assert.Contains(t, status, "a.go", "status bar should show filename")
+	assert.NotContains(t, status, "a.go", "the diff pane's header names the file, the bar does not repeat it")
 	assert.Contains(t, status, "+1/-0", "status bar should show diff stats")
 	assert.Contains(t, status, "? help", "status bar should show help hint")
 }
 
-func TestModel_StatusBarFilenameTruncation(t *testing.T) {
-	longFile := "very/long/path/to/some/deeply/nested/file/in/the/project/structure.go"
-	m := testModel(nil, nil)
-	m.file.name = longFile
-	m.file.adds = 3
-	m.file.removes = 1
-	m.layout.focus = paneDiff
-	m.layout.width = 40 // narrow terminal forces truncation
+func TestModel_StatusBarLongFilenameKeepsStats(t *testing.T) {
+	for _, name := range []string{
+		"very/long/path/to/some/deeply/nested/file/in/the/project/structure.go",
+		"path/to/日本語のファイル名/テスト.go",
+	} {
+		m := testModel(nil, nil)
+		m.file.name = name
+		m.file.adds = 3
+		m.file.removes = 1
+		m.layout.focus = paneDiff
+		m.layout.width = 40
 
-	status := m.statusBarText()
-	assert.Contains(t, status, "…", "should truncate filename with ellipsis")
-	assert.Contains(t, status, "+3/-1", "should still show stats after truncation")
-	assert.Contains(t, status, "? help", "should still show help hint")
-}
-
-func TestModel_StatusBarFilenameTruncationWideChars(t *testing.T) {
-	// CJK characters are 2 display cells wide per rune, the truncation must use
-	// display-width measurement, not rune count, to avoid overflowing the status line
-	wideFile := "path/to/日本語のファイル名/テスト.go"
-	m := testModel(nil, nil)
-	m.file.name = wideFile
-	m.file.adds = 1
-	m.file.removes = 0
-	m.layout.focus = paneDiff
-	m.layout.width = 45
-
-	status := m.statusBarText()
-	assert.Contains(t, status, "…", "should truncate wide-char filename with ellipsis")
-	assert.Contains(t, status, "+1/-0", "should still show stats after truncation")
-	assert.LessOrEqual(t, lipgloss.Width(status), m.layout.width-2, "status text must fit within terminal width minus padding")
+		status := m.statusBarText()
+		assert.NotContains(t, status, "structure.go")
+		assert.NotContains(t, status, "テスト")
+		assert.Contains(t, status, "+3/-1")
+		assert.Contains(t, status, "? help")
+		assert.LessOrEqual(t, lipgloss.Width(status), m.layout.width-2, "status text must fit within terminal width minus padding")
+	}
 }
 
 func TestModel_StatusBarModeIndicators(t *testing.T) {
 	m := testModel(nil, nil)
+	m.tree = testNewFileTree([]string{"a.go"}) // the filter needs a file to narrow to
 	m.file.name = "a.go"
 	m.file.lines = []diff.DiffLine{{NewNum: 1, Content: "add", ChangeType: diff.ChangeAdd}}
 	m.nav.diffCursor = 0
@@ -209,14 +195,14 @@ func TestModel_StatusBarModeIndicators(t *testing.T) {
 		assert.Contains(t, status, "◉")
 	})
 
-	t.Run("indicators always present in default mode", func(t *testing.T) {
+	t.Run("indicators hidden in default mode", func(t *testing.T) {
 		m.modes.collapsed.enabled = false
 		if m.tree.FilterActive() {
 			m.tree.ToggleFilter(nil) // toggle filter off
 		}
 		status := m.statusBarText()
-		assert.Contains(t, status, "▼", "always shown, muted when inactive")
-		assert.Contains(t, status, "◉", "always shown, muted when inactive")
+		assert.NotContains(t, status, "▼", "an inactive mode leaves its icon out of the bar")
+		assert.NotContains(t, status, "◉", "an inactive mode leaves its icon out of the bar")
 	})
 }
 
@@ -226,6 +212,7 @@ func TestModel_StatusBarNarrowTerminalDegradation(t *testing.T) {
 		{NewNum: 2, Content: "add", ChangeType: diff.ChangeAdd},
 	}
 	m := testModel(nil, nil)
+	m.tree = testNewFileTree([]string{"a.go"}) // the filter needs a file to narrow to
 	m.file.name = "a.go"
 	m.file.lines = lines
 	m.nav.diffCursor = 1
@@ -240,7 +227,6 @@ func TestModel_StatusBarNarrowTerminalDegradation(t *testing.T) {
 	t.Run("wide terminal shows all segments", func(t *testing.T) {
 		m.layout.width = 200
 		status := m.statusBarText()
-		assert.Contains(t, status, "a.go")
 		assert.Contains(t, status, "+1/-0")
 		assert.Contains(t, status, "hunk 1/1")
 		assert.Contains(t, status, "▼")
@@ -251,7 +237,6 @@ func TestModel_StatusBarNarrowTerminalDegradation(t *testing.T) {
 	t.Run("narrow terminal drops hunk from left first", func(t *testing.T) {
 		m.layout.width = 50
 		status := m.statusBarText()
-		assert.Contains(t, status, "a.go")
 		assert.Contains(t, status, "+1/-0")
 		assert.Contains(t, status, "? help")
 	})
@@ -272,7 +257,7 @@ func TestModel_StatusBarStatsDisplay(t *testing.T) {
 	m.layout.width = 120
 
 	status := m.statusBarText()
-	assert.Contains(t, status, "main.go")
+	assert.NotContains(t, status, "main.go")
 	assert.Contains(t, status, "+10/-5")
 }
 
@@ -298,8 +283,8 @@ func TestModel_StatusBarNoShortcutHintsInDiffPane(t *testing.T) {
 	assert.NotContains(t, status, "[A]")
 	assert.NotContains(t, status, "[Q]")
 	assert.NotContains(t, status, "[q]")
-	// should show filename, stats, annotation count, help hint
-	assert.Contains(t, status, "a.go")
+	// should show stats, annotation count, help hint
+	assert.Contains(t, status, "2 lines")
 	assert.Contains(t, status, "1 annotation")
 	assert.Contains(t, status, "? help")
 }
@@ -494,9 +479,14 @@ func TestModel_StatusBarLineNumberDegradation(t *testing.T) {
 	})
 }
 
-func TestModel_StatusBarPipeSeparators(t *testing.T) {
-	t.Run("plain styles", func(t *testing.T) {
+func TestModel_StatusBarSpacedSeparators(t *testing.T) {
+	for _, colored := range []bool{false, true} {
 		m := testModel(nil, nil)
+		if colored {
+			res := style.NewResolver(style.Colors{Muted: "#6c6c6c", StatusFg: "#202020", StatusBg: "#C5794F", Normal: "#d0d0d0"})
+			m.resolver = res
+			m.renderer = style.NewRenderer(res)
+		}
 		m.file.name = "a.go"
 		m.file.lines = []diff.DiffLine{{NewNum: 1, Content: "add", ChangeType: diff.ChangeAdd}}
 		m.file.adds = 1
@@ -504,28 +494,10 @@ func TestModel_StatusBarPipeSeparators(t *testing.T) {
 		m.layout.focus = paneDiff
 
 		status := m.statusBarText()
-		assert.Contains(t, status, "|", "separator pipe must be present")
-		assert.NotContains(t, status, "\033[0m", "no full ANSI reset in separator")
-	})
-
-	t.Run("with colors", func(t *testing.T) {
-		sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020", StatusBg: "#C5794F", Normal: "#d0d0d0"}
-		m := testModel(nil, nil)
-		res := style.NewResolver(sc)
-		m.resolver = res
-		m.renderer = style.NewRenderer(res)
-		m.file.name = "a.go"
-		m.file.lines = []diff.DiffLine{{NewNum: 1, Content: "add", ChangeType: diff.ChangeAdd}}
-		m.file.adds = 1
-		m.nav.diffCursor = 0
-		m.layout.focus = paneDiff
-
-		status := m.statusBarText()
-		assert.Contains(t, status, "|", "separator pipe must be present")
-		assert.NotContains(t, status, "\033[0m", "separator must use raw ANSI fg, not lipgloss Render")
-		assert.Contains(t, status, "\033[38;2;108;108;108m", "separator should have muted fg ANSI sequence")
-		assert.Contains(t, status, "\033[38;2;32;32;32m", "separator should restore status fg after pipe")
-	})
+		assert.NotContains(t, status, "|", "segments are spaced apart, not piped")
+		assert.Contains(t, status, "+1/-0   hunk 1/1")
+		assert.NotContains(t, status, "\033[0m", "no full ANSI reset in the bar")
+	}
 }
 
 func TestModel_ViewNoStatusBar(t *testing.T) {
@@ -1338,44 +1310,28 @@ func TestModel_StatusModeIconsBlame(t *testing.T) {
 
 func TestModel_StatusModeIconsWordDiff(t *testing.T) {
 	m := testModel(nil, nil)
-	icons := m.statusModeIcons()
-	assert.Contains(t, icons, "±", "word-diff icon should always be present")
+	m.modes.wordDiff = false
+	assert.NotContains(t, m.statusModeIcons(), "±", "word-diff icon hidden while off")
 
 	m.modes.wordDiff = true
-	sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020"}
-	res := style.NewResolver(sc)
-	m.resolver = res
-	m.renderer = style.NewRenderer(res)
-	icons = m.statusModeIcons()
-	assert.Contains(t, icons, "\033[38;2;32;32;32m±", "active word-diff icon uses status fg")
+	assert.Contains(t, m.statusModeIcons(), "±", "word-diff icon shown while on")
 }
 
 func TestModel_StatusModeIconsCompact(t *testing.T) {
 	m := testModel(nil, nil)
-	icons := m.statusModeIcons()
-	assert.Contains(t, icons, "⊂", "compact icon should always be present")
+	assert.NotContains(t, m.statusModeIcons(), "⊂", "compact icon hidden while off")
 
 	m.modes.compact = true
-	sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020"}
-	res := style.NewResolver(sc)
-	m.resolver = res
-	m.renderer = style.NewRenderer(res)
-	icons = m.statusModeIcons()
-	assert.Contains(t, icons, "\033[38;2;32;32;32m⊂", "active compact icon uses status fg")
+	assert.Contains(t, m.statusModeIcons(), "⊂", "compact icon shown while on")
 }
 
 func TestModel_StatusModeIconsCompactWithCollapsed(t *testing.T) {
 	m := testModel(nil, nil)
-	sc := style.Colors{Muted: "#6c6c6c", StatusFg: "#202020"}
-	res := style.NewResolver(sc)
-	m.resolver = res
-	m.renderer = style.NewRenderer(res)
 	m.modes.compact = true
 	m.modes.collapsed.enabled = true
 
 	icons := m.statusModeIcons()
-	assert.Contains(t, icons, "\033[38;2;32;32;32m▼", "collapsed icon active with status fg")
-	assert.Contains(t, icons, "\033[38;2;32;32;32m⊂", "compact icon active with status fg")
+	assert.Contains(t, icons, "▼ ⊂", "both icons shown, in their fixed order")
 }
 
 func TestModel_ReviewedStatusBar(t *testing.T) {
@@ -1408,9 +1364,8 @@ func TestModel_ReviewedModeIcon(t *testing.T) {
 	m.tree = testNewFileTree([]string{"a.go"})
 
 	icons := m.statusModeIcons()
-	assert.Contains(t, icons, "✓", "reviewed icon should always be present")
+	assert.NotContains(t, icons, "✓", "reviewed icon hidden while nothing is reviewed")
 
-	// when no files reviewed, icon should use muted color
 	m.tree.SetReviewed("a.go", "fp-a")
 	icons = m.statusModeIcons()
 	assert.Contains(t, icons, "✓", "reviewed icon should be present when files reviewed")

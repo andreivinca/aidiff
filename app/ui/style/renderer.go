@@ -74,12 +74,10 @@ func (r Renderer) DiffCursor(noColors bool) string {
 	return b.String()
 }
 
-// StatusBarSeparator returns a separator string for the status bar, styled with
-// muted foreground for the pipe and status foreground for the surrounding spaces.
+// StatusBarSeparator returns the gap between status bar segments: aidiff
+// spaces them apart rather than drawing a | between them.
 func (r Renderer) StatusBarSeparator() string {
-	muted := r.res.Color(ColorKeyMutedFg)
-	statusFg := r.res.Color(ColorKeyStatusFg)
-	return " " + string(muted) + "|" + string(statusFg) + " "
+	return "   "
 }
 
 // FileStatusMark returns a colored file status character (A, M, D, ?, etc.)

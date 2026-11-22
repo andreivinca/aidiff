@@ -640,7 +640,7 @@ func TestColorsFromTheme(t *testing.T) {
 			"color-search-fg": "#282a36", "color-search-bg": "#f1fa8c",
 		},
 	}
-	colors := colorsFromTheme(th)
+	colors := colorsFromTheme(th, "")
 	assert.Equal(t, "#bd93f9", colors.Accent)
 	assert.Equal(t, "#6272a4", colors.Border)
 	assert.Equal(t, "#f8f8f2", colors.Normal)

@@ -790,10 +790,10 @@ func TestModel_StatusBarCollapsedIndicator(t *testing.T) {
 	m.layout.focus = paneDiff
 	m.layout.width = 200
 
-	t.Run("collapsed indicator always present", func(t *testing.T) {
+	t.Run("collapsed indicator hidden while off", func(t *testing.T) {
 		m.modes.collapsed.enabled = false
 		status := m.statusBarText()
-		assert.Contains(t, status, "▼", "indicator always shown, muted when inactive")
+		assert.NotContains(t, status, "▼", "an inactive mode leaves its icon out of the bar")
 	})
 
 	t.Run("collapsed mode shows indicator", func(t *testing.T) {

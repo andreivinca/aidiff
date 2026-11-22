@@ -83,6 +83,28 @@ func shiftLightness(hexColor string, amount float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", nr, ng, nb)
 }
 
+// paneTintShift is how far paneTint moves the lightness: enough to tell two
+// panes apart, little enough to read as one surface.
+const paneTintShift = 0.03
+
+// paneTint returns a shade of a background a side pane can sit on: darker
+// for both dark and light backgrounds, lighter only for one too close to
+// black to darken. returns "" for an empty or unparseable color.
+func paneTint(hexColor string) string {
+	r, g, b, ok := parseHexRGB(hexColor)
+	if !ok {
+		return ""
+	}
+	h, s, l := rgbToHSL(r, g, b)
+	if l < paneTintShift*1.5 {
+		l += paneTintShift
+	} else {
+		l -= paneTintShift
+	}
+	nr, ng, nb := hslToRGB(h, s, l)
+	return fmt.Sprintf("#%02x%02x%02x", nr, ng, nb)
+}
+
 // parseHexRGB parses "#RRGGBB" into 0-255 components.
 // returns ok=false if the string is not exactly 7 chars, missing the leading #,
 // or contains any non-hex digits.

@@ -516,7 +516,7 @@ color-border = #6272a4
                 <tr><td><code>--color-modify-fg/bg</code></td><td>Modified line (collapsed mode)</td><td><code>#f5c542</code> / <code>#3D2E00</code></td></tr>
                 <tr><td><code>--color-status-fg/bg</code></td><td>Status bar</td><td><code>#202020</code> / <code>#C5794F</code></td></tr>
                 <tr><td><code>--color-search-fg/bg</code></td><td>Search matches</td><td><code>#1a1a1a</code> / <code>#4a4a00</code></td></tr>
-                <tr><td><code>--color-tree-bg</code></td><td>File tree background</td><td>terminal default</td></tr>
+                <tr><td><code>--color-tree-bg</code></td><td>File tree background</td><td>a shade of the diff background</td></tr>
                 <tr><td><code>--color-diff-bg</code></td><td>Diff pane background</td><td>terminal default</td></tr>
             </tbody>
         </table>
@@ -615,7 +615,7 @@ printf '\033]52;c;%s\007' "$data" > /dev/tty</code></div>
         </table>
 
         <h2 id="status-bar-icons">Status bar icons</h2>
-        <p>The status bar shows a fixed row of mode indicators on the right side. All slots are always rendered &mdash; active modes use the status bar foreground color, inactive modes use muted gray, so the row occupies the same width regardless of what's toggled on. The help overlay (<code>?</code>) shows each icon beside the key that controls it.</p>
+        <p>The status bar shows the indicators of the modes that are on, on the right side; a mode that is off leaves its icon out. The help overlay (<code>?</code>) shows each icon beside the key that controls it.</p>
         <table>
             <thead><tr><th>Icon</th><th>Toggle</th><th>Meaning</th></tr></thead>
             <tbody>

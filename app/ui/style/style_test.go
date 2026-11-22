@@ -110,3 +110,32 @@ func TestNormalizeColors(t *testing.T) {
 		assert.Equal(t, "#223344", c.SearchBg)
 	})
 }
+
+func TestNormalizeDerivesTreeBg(t *testing.T) {
+	tests := []struct {
+		name string
+		in   Colors
+		want string
+	}{
+		{name: "shade of the diff background", in: Colors{DiffBg: "#282a36"}, want: "#21232d"},
+		{name: "a tree equal to the diff is shaded too", in: Colors{TreeBg: "#282a36", DiffBg: "#282a36"}, want: "#21232d"},
+		{name: "terminal background when the theme paints none", in: Colors{TermBg: "#282a36"}, want: "#21232d"},
+		{name: "the diff background wins over the terminal's", in: Colors{DiffBg: "#282a36", TermBg: "#ffffff"}, want: "#21232d"},
+		{name: "a tree of its own is kept", in: Colors{TreeBg: "#e6e9ef", DiffBg: "#eff1f5"}, want: "#e6e9ef"},
+		{name: "nothing to shade", in: Colors{}, want: ""},
+		{name: "unparseable base", in: Colors{DiffBg: "blue"}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.in.normalize().TreeBg)
+		})
+	}
+}
+
+func TestPaneTint(t *testing.T) {
+	assert.Equal(t, "#21232d", paneTint("#282a36"), "dark backgrounds get darker")
+	assert.Equal(t, "#e6e9ef", paneTint("#eff1f5"), "light backgrounds get darker")
+	assert.Equal(t, "#0f0f0f", paneTint("#070707"), "a near-black background gets lighter")
+	assert.Empty(t, paneTint(""))
+	assert.Empty(t, paneTint("#xyz"))
+}

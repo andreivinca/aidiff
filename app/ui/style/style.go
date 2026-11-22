@@ -27,6 +27,11 @@ type Colors struct {
 	StatusBg     string // status bar background
 	SearchFg     string // search match foreground
 	SearchBg     string // search match background
+
+	// TermBg is the terminal's own background, detected at startup. It is not
+	// a theme color: normalize uses it as the base of the derived TreeBg when
+	// the theme leaves DiffBg unset.
+	TermBg string
 }
 
 // normalize ensures all color values have # prefix where needed and
@@ -64,6 +69,20 @@ func (c Colors) normalize() Colors {
 	c.ModifyBg = normalizeColor(c.ModifyBg)
 	c.TreeBg = normalizeColor(c.TreeBg)
 	c.DiffBg = normalizeColor(c.DiffBg)
+	c.TermBg = normalizeColor(c.TermBg)
+	// aidiff separates the tree from the diff by tone rather than a divider
+	// line: a tree that has no background of its own, or the diff's, gets a
+	// shade of the diff background, or of the terminal's when the theme
+	// paints none.
+	if c.TreeBg == "" || c.TreeBg == c.DiffBg {
+		base := c.DiffBg
+		if base == "" {
+			base = c.TermBg
+		}
+		if tint := paneTint(base); tint != "" {
+			c.TreeBg = tint
+		}
+	}
 	c.StatusFg = normalizeColor(c.StatusFg)
 	c.StatusBg = normalizeColor(c.StatusBg)
 	c.SearchFg = normalizeColor(c.SearchFg)

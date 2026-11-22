@@ -137,7 +137,7 @@ All color options accept hex values (`#rrggbb`) and have corresponding `REVDIFF_
 | `--color-word-remove-bg` | Intra-line word-diff remove background | auto-derived from remove-bg |
 | `--color-modify-fg` | Modified line text (collapsed mode) | `#f5c542` |
 | `--color-modify-bg` | Modified line background (collapsed mode) | `#3D2E00` |
-| `--color-tree-bg` | File tree pane background | terminal default |
+| `--color-tree-bg` | File tree pane background | a shade of the diff background |
 | `--color-diff-bg` | Diff pane background | terminal default |
 | `--color-status-fg` | Status bar foreground | `#202020` |
 | `--color-status-bg` | Status bar background | `#C5794F` |

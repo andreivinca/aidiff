@@ -104,7 +104,7 @@ func (m Model) renderTwoPaneLayout(leftContent, diffContent string, leftScroll s
 		Height(ph).
 		Render(leftContent)
 	leftPane = m.applyNavigationScrollbar(leftPane, leftScroll)
-	leftPane = withDividerHandle(leftPane)
+	leftPane = m.tonalDivider(withDividerHandle(leftPane))
 
 	diffPane := diffStyle.
 		Width(diffPaneW).
@@ -187,12 +187,10 @@ func (m Model) statusBarText() string {
 	// build left-side segments
 	var segments []string
 
-	// filename and diff stats segments. sanitize the filename so crafted
-	// paths (newline/ESC/bidi controls) cannot break or spoof status-bar
-	// layout — same defense-in-depth applied to the diff header.
-	cleanName := style.SanitizeFilenameForDisplay(m.file.name)
-	if cleanName != "" {
-		segments = append(segments, cleanName, m.fileStatsText())
+	// diff stats of the loaded file. aidiff names the file once, in the
+	// diff pane's header, so the bar does not repeat it.
+	if m.file.name != "" {
+		segments = append(segments, m.fileStatsText())
 	}
 
 	// hunk position (always shown in diff pane when there are hunks)
@@ -222,7 +220,10 @@ func (m Model) statusBarText() string {
 		}
 		rightParts = append(rightParts, fmt.Sprintf("%d %s", cnt, suffix))
 	}
-	rightParts = append(rightParts, m.statusModeIcons(), "? help")
+	if icons := m.statusModeIcons(); icons != "" {
+		rightParts = append(rightParts, icons)
+	}
+	rightParts = append(rightParts, "? help")
 
 	// build separator with muted foreground using raw ANSI (not lipgloss.Render)
 	// to avoid full reset that would break the status bar background
@@ -245,14 +246,6 @@ func (m Model) statusBarText() string {
 		segments = m.statusSegmentsMinimal()
 		left = strings.Join(segments, sep)
 	}
-	if lipgloss.Width(left) > available && cleanName != "" {
-		// truncate filename from left, keeping end of path. uses display-width
-		// measurement to handle wide characters (CJK, emoji)
-		statsStr := m.fileStatsText()
-		nameMax := max(available-lipgloss.Width(statsStr)-lipgloss.Width(sep), 4) // reserve separator between name and stats
-		left = style.TruncateLeftToWidth(cleanName, nameMax) + sep + statsStr
-	}
-
 	return m.joinStatusSections(left, right, sep)
 }
 
@@ -396,10 +389,11 @@ var statusIconForAction = map[keymap.Action]string{
 	keymap.ActionToggleMouse:      "m",
 }
 
-// statusModeIcons returns combined mode indicator icons (one per view toggle).
-// all icons are always shown; active modes use status foreground, inactive use muted color.
-// the mouse indicator is the exception: shown only when toggle_mouse is bound
-// (it has no default binding) and lit while tracking is suspended.
+// statusModeIcons returns the indicator icons of the view toggles that are on,
+// in the status foreground; aidiff leaves the ones that are off out of the bar
+// (the help overlay still lists every icon), and returns "" when none is on.
+// the mouse indicator shows only when toggle_mouse is bound (it has no
+// default binding) and tracking is suspended.
 func (m Model) statusModeIcons() string {
 	type indicator struct {
 		icon   string
@@ -428,25 +422,20 @@ func (m Model) statusModeIcons() string {
 		indicators = append(indicators, indicator{icon(keymap.ActionToggleMouse), !m.mouseTracking})
 	}
 
-	mutedSeq := string(m.resolver.Color(style.ColorKeyMutedFg))
-	activeSeq := string(m.resolver.Color(style.ColorKeyStatusFg))
-
 	icons := make([]string, 0, len(indicators))
 	for _, ind := range indicators {
 		if ind.active {
-			icons = append(icons, activeSeq+ind.icon)
-		} else {
-			icons = append(icons, mutedSeq+ind.icon)
+			icons = append(icons, ind.icon)
 		}
 	}
-	return strings.Join(icons, " ") + activeSeq
+	return strings.Join(icons, " ")
 }
 
 // statusSegmentsNoSearch returns left segments without search position (for narrow terminals).
 func (m Model) statusSegmentsNoSearch() []string {
 	var segments []string
-	if name := style.SanitizeFilenameForDisplay(m.file.name); name != "" {
-		segments = append(segments, name, m.fileStatsText())
+	if m.file.name != "" {
+		segments = append(segments, m.fileStatsText())
 	}
 	if hs := m.hunkSegment(); hs != "" {
 		segments = append(segments, hs)
@@ -457,11 +446,11 @@ func (m Model) statusSegmentsNoSearch() []string {
 	return segments
 }
 
-// statusSegmentsMinimal returns left segments with only filename and stats.
+// statusSegmentsMinimal returns left segments with only the file's stats.
 func (m Model) statusSegmentsMinimal() []string {
 	var segments []string
-	if name := style.SanitizeFilenameForDisplay(m.file.name); name != "" {
-		segments = append(segments, name, m.fileStatsText())
+	if m.file.name != "" {
+		segments = append(segments, m.fileStatsText())
 	}
 	return segments
 }

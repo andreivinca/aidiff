@@ -9,6 +9,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/revdiff/app/ui/style"
 )
 
 func TestModel_ViewSeparatorOnly(t *testing.T) {
@@ -57,6 +59,34 @@ func TestReplaceDivider(t *testing.T) {
 			assert.Equal(t, tt.want, replaceDivider(tt.row))
 		})
 	}
+}
+
+func TestModel_TonalDivider(t *testing.T) {
+	rendered := strings.Join([]string{
+		" a.go \x1b[38;5;1m│\x1b[0m",
+		" b.go " + scrollbarThumbRune,
+		" c.go " + dividerHandle,
+		" a │ b",
+	}, "\n")
+
+	t.Run("a tree shaded apart from the diff loses the line", func(t *testing.T) {
+		m := testModel(nil, nil)
+		m.resolver = style.NewResolver(style.Colors{TreeBg: "#101010", DiffBg: "#202020"})
+		assert.Equal(t, strings.Join([]string{
+			" a.go \x1b[38;5;1m \x1b[0m",
+			" b.go \x1b[1m" + tonalThumbGlyph + "\x1b[22m",
+			" c.go " + dividerHandle,
+			" a │ b",
+		}, "\n"), m.tonalDivider(rendered))
+	})
+
+	t.Run("a tree with no background of its own keeps it", func(t *testing.T) {
+		for _, res := range []style.Resolver{style.NewResolver(style.Colors{}), style.PlainResolver()} {
+			m := testModel(nil, nil)
+			m.resolver = res
+			assert.Equal(t, rendered, m.tonalDivider(rendered))
+		}
+	})
 }
 
 func TestModel_StatusBarMachineIdentity(t *testing.T) {

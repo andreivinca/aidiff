@@ -185,6 +185,7 @@ var _ ui.ThemeCatalog = (*themeCatalog)(nil)
 type themeCatalog struct {
 	catalog    *theme.Catalog
 	configPath string
+	termBg     string // the terminal's own background, for themes without a diff background
 }
 
 // Entries returns the ordered list of available themes as UI-facing ThemeEntry values.
@@ -215,7 +216,7 @@ func (tc *themeCatalog) Resolve(name string) (ui.ThemeSpec, bool) {
 		return ui.ThemeSpec{}, false
 	}
 	return ui.ThemeSpec{
-		Colors:      colorsFromTheme(th),
+		Colors:      colorsFromTheme(th, tc.termBg),
 		ChromaStyle: th.ChromaStyle,
 	}, true
 }
@@ -229,7 +230,8 @@ func (tc *themeCatalog) Persist(name string) error {
 }
 
 // optsToStyleColors converts opts.Colors fields to a style.Colors struct.
-func optsToStyleColors(opts options) style.Colors {
+// termBg is the terminal's own background (detectTerminalBackground).
+func optsToStyleColors(opts options, termBg string) style.Colors {
 	c := opts.Colors
 	return style.Colors{
 		Accent: c.Accent, Border: c.Border, Normal: c.Normal, Muted: c.Muted,
@@ -241,11 +243,13 @@ func optsToStyleColors(opts options) style.Colors {
 		TreeBg: c.TreeBg, DiffBg: c.DiffBg,
 		StatusFg: c.StatusFg, StatusBg: c.StatusBg,
 		SearchFg: c.SearchFg, SearchBg: c.SearchBg,
+		TermBg: termBg,
 	}
 }
 
 // colorsFromTheme converts a theme.Theme color map to a style.Colors struct.
-func colorsFromTheme(th theme.Theme) style.Colors {
+// termBg is the terminal's own background (detectTerminalBackground).
+func colorsFromTheme(th theme.Theme, termBg string) style.Colors {
 	m := th.Colors
 	return style.Colors{
 		Accent: m["color-accent"], Border: m["color-border"], Normal: m["color-normal"], Muted: m["color-muted"],
@@ -257,6 +261,7 @@ func colorsFromTheme(th theme.Theme) style.Colors {
 		TreeBg: m["color-tree-bg"], DiffBg: m["color-diff-bg"],
 		StatusFg: m["color-status-fg"], StatusBg: m["color-status-bg"],
 		SearchFg: m["color-search-fg"], SearchBg: m["color-search-bg"],
+		TermBg: termBg,
 	}
 }
 

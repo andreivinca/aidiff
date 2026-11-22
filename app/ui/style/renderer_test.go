@@ -74,19 +74,9 @@ func TestRenderer_DiffCursor(t *testing.T) {
 }
 
 func TestRenderer_StatusBarSeparator(t *testing.T) {
-	t.Run("colored", func(t *testing.T) {
-		rnd := NewRenderer(NewResolver(fullColorsForTesting))
-		got := rnd.StatusBarSeparator()
-		assert.Contains(t, got, "|", "should contain pipe separator")
-		assert.True(t, strings.HasPrefix(got, " "), "should start with space")
-		assert.True(t, strings.HasSuffix(got, " "), "should end with space")
-	})
-
-	t.Run("plain", func(t *testing.T) {
-		rnd := NewRenderer(PlainResolver())
-		got := rnd.StatusBarSeparator()
-		assert.Equal(t, " | ", got, "plain separator has no ANSI codes")
-	})
+	for _, res := range []Resolver{NewResolver(fullColorsForTesting), PlainResolver()} {
+		assert.Equal(t, "   ", NewRenderer(res).StatusBarSeparator(), "segments are spaced apart, not piped")
+	}
 }
 
 func TestRenderer_FileStatusMark(t *testing.T) {

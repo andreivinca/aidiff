@@ -40,10 +40,12 @@ func newReviewDeps(opts options) reviewDeps {
 	// construct the three style types per D15: Resolver first, Renderer from
 	// Resolver (in newModel), SGR is zero-value
 	var res style.Resolver
+	termBg := ""
 	if opts.NoColors {
 		res = style.PlainResolver()
 	} else {
-		res = style.NewResolver(optsToStyleColors(opts))
+		termBg = detectTerminalBackground()
+		res = style.NewResolver(optsToStyleColors(opts, termBg))
 	}
 	d := reviewDeps{
 		views: &viewSwitch{},
@@ -54,6 +56,7 @@ func newReviewDeps(opts options) reviewDeps {
 		themes: &themeCatalog{
 			catalog:    theme.NewCatalog(defaultThemesDir()),
 			configPath: resolveFlagPath(os.Args[1:], "config", "REVDIFF_CONFIG", defaultConfigPath),
+			termBg:     termBg,
 		},
 	}
 	if host, err := os.Hostname(); err == nil {
