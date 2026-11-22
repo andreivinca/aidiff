@@ -56,7 +56,7 @@ func planStart(opts options, store localhist.Tabs) (runStart, error) {
 	case dir != "":
 		plan.opts.folder = dir
 	case tab != nil:
-		plan.tab = &t3palette.StartTab{Tab: *tab, Terminal: opts.Terminal, Fallback: workDirFolder(cwd)}
+		plan.tab = &t3palette.StartTab{Tab: *tab, Fallback: workDirFolder(cwd)}
 	}
 	return plan, nil
 }

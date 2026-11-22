@@ -34,7 +34,7 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 	tabs, recent := t3p.StartTabs() // the last run's, not opened until shown
 	return splitview.New(review, splitview.Config{
 		WidthPercent: opts.TerminalWidth,
-		OpenOnStart:  !t3p.Opening() && startsWithTerminal(opts, t3p.OnScreen() != nil), // a saved T3 tab's comes once it is on screen (StartTab.Terminal)
+		OpenOnStart:  !t3p.Opening() && startsWithTerminal(opts, t3p.OnScreen() != nil), // a saved T3 tab comes back without one
 		Start:        terminals.start,
 		RefreshMsg:   ui.RefreshMsg{},
 		Commands:     paletteCommands(t3p, local, diffs),

@@ -158,7 +158,6 @@ func TestPlanStart_SavedT3Tab(t *testing.T) {
 	plan := f.plan(t, f.elsewhere, "--terminal")
 	require.NotNil(t, plan.tab, "a T3 project on screen: it opens once its server answers")
 	assert.Equal(t, t3palette.Tab{Server: "ssh://devbox", Machine: "devbox", ProjectID: "p1", ProjectTitle: "Sabra", ThreadID: "th-1"}, plan.tab.Tab)
-	assert.True(t, plan.tab.Terminal, "--terminal opens one with it once it is on screen")
 	assert.Equal(t, f.elsewhere, plan.tab.Fallback, "with nothing left, the working directory")
 	assert.Empty(t, plan.opts.folder)
 

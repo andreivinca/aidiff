@@ -447,7 +447,7 @@ func TestRestore_StartTabOpensOnceTheProgramRuns(t *testing.T) {
 	g := newGatedDial(dev)
 	sabra := Tab{Server: "ssh://dev/", Machine: "dev", ProjectID: "p1", ProjectTitle: "Sabra2", ThreadID: olderID}
 	f := &localFake{}
-	h := startOn(t, g, f, StartTab{Tab: sabra, Terminal: true, Fallback: a}, Tab{Dir: a}, sabra)
+	h := startOn(t, g, f, StartTab{Tab: sabra, Fallback: a}, Tab{Dir: a}, sabra)
 	k := t3Key("ssh://dev", "p1")
 	assert.Equal(t, k, h.p.Workspace(), "the saved tab is the workspace on screen")
 	assert.True(t, h.p.Opening(), "not opened yet: the split shows it opening")
@@ -479,7 +479,7 @@ func TestRestore_StartTabOpensOnceTheProgramRuns(t *testing.T) {
 		}
 	}
 	require.GreaterOrEqual(t, pane, 0, "with its chat")
-	assert.Greater(t, terminal, pane, "and, with --terminal, a terminal after it, once it is on screen")
+	assert.Equal(t, -1, terminal, "and no terminal: a saved tab comes back without one, --terminal or not")
 	show.Done(splitview.WorkspaceSwitch{Created: true}) // opened in place of its stand-in
 	h.settle()
 	assert.Equal(t, olderID, h.p.OnScreen().Target.Thread.ID)

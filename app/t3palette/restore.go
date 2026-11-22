@@ -57,10 +57,7 @@ type Tab struct {
 // is the workspace on screen from the start, said to be connecting, and
 // opens (Open) as soon as the program runs.
 type StartTab struct {
-	Tab Tab
-	// Terminal opens a terminal with it once its review is on screen
-	// (--terminal), as one opens with a T3 review a run names.
-	Terminal bool
+	Tab Tab // it comes back with its chat but no terminal, --terminal or not
 	// Fallback is the folder opened when it cannot come back and no other
 	// tab is left: the working directory, as a run that names nothing opens
 	// it without saved tabs.
@@ -527,26 +524,7 @@ func (t *Palette) restoredOn(s Session, sh t3client.Shell, key string, tab Tab) 
 	default:
 		msg = t.openMsg(s, sh, threads[0].ID)
 	}
-	return t.withStartTerminal(key, msg)
-}
-
-// withStartTerminal is msg, which opens restored tab key, followed by a
-// terminal when key is the tab the run started on and --terminal asked for
-// one (StartTab.Terminal): in order, so it opens in that tab, at its folder.
-func (t *Palette) withStartTerminal(key string, msg tea.Msg) tea.Msg {
-	st := t.cfg.StartTab
-	if _, failed := msg.(splitview.FlashMsg); failed || msg == nil || st == nil || !st.Terminal || key != t.startTabKey() {
-		return msg
-	}
-	return tea.Sequence(func() tea.Msg { return msg }, func() tea.Msg { return splitview.OpenTerminalMsg{} })()
-}
-
-// startTabKey is the workspace of the saved tab the run started on, "" when
-// it started on a target of its own.
-func (t *Palette) startTabKey() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.startTab
+	return msg // no terminal, even with --terminal: terminals are not part of a saved tab
 }
 
 // dropRestored forgets restored tab key, which cannot come back, and closes
