@@ -27,11 +27,16 @@ func twoProjectShell() t3client.Shell {
 	return sh
 }
 
-// pick runs the sidebar's Select(n) and returns the message that puts the
+// digit presses n, a digit, in the focused sidebar: the row it opens.
+func digit(sb splitview.Sidebar, n int) (tea.Cmd, bool) {
+	return sb.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{rune('0' + n)}})
+}
+
+// pick presses digit n in the sidebar and returns the message that puts the
 // project on screen.
 func pick(t *testing.T, sb splitview.Sidebar, n int) splitview.SwitchWorkspaceMsg {
 	t.Helper()
-	cmd, hide := sb.Select(n)
+	cmd, hide := digit(sb, n)
 	require.True(t, hide, "picking a project hides the sidebar")
 	return find[splitview.SwitchWorkspaceMsg](t, run(cmd))
 }
@@ -54,10 +59,12 @@ func TestProjects_SwitchingBringsBackTheWorkspace(t *testing.T) {
 	require.Equal(t, projectKey(a, "p1"), h.p.Workspace(), "a T3 run starts in its project's workspace")
 
 	view := ansi.Strip(sb.View(30, 16, true))
-	assert.Contains(t, view, "3   Zed                      \n\n enter        open project", "the key help sits under the projects")
+	assert.Contains(t, view, "3   Zed                      \n\n enter, 1…9   open project", "the key help sits under the projects")
 	assert.NotContains(t, ansi.Strip(sb.View(30, 8, true)), "open project", "a short panel keeps its rows for the projects")
 	assert.Contains(t, view, "1   Alpha")
 	assert.Contains(t, view, "2 ▸ Sabra2", "projects are numbered by title; the one on screen is marked")
+	assert.Contains(t, view, "alt+1…9      switch tab", "alt+digits pick tabs, not rows")
+	assert.NotContains(t, view, "ctrl/alt+1…9")
 	assert.Contains(t, view, "3   Zed")
 
 	var inner tea.Model = fakeModel{store: startStore, review: start}
@@ -78,7 +85,7 @@ func TestProjects_SwitchingBringsBackTheWorkspace(t *testing.T) {
 	assert.Equal(t, olderID, inner.(fakeModel).review.thread().ID)
 	assert.Equal(t, projectKey(a, "p1"), h.p.Workspace())
 
-	cmd, hide := sb.Select(2)
+	cmd, hide := digit(sb, 2)
 	assert.Nil(t, cmd, "the project on screen stays as it is")
 	assert.True(t, hide)
 
@@ -86,7 +93,7 @@ func TestProjects_SwitchingBringsBackTheWorkspace(t *testing.T) {
 	assert.Nil(t, shown(zed).review.thread(), "a project with no threads opens its root")
 	assert.Equal(t, "/srv/zed", shown(zed).review.Target.Cwd)
 
-	cmd, hide = sb.Select(4)
+	cmd, hide = digit(sb, 4)
 	assert.False(t, hide)
 	assert.Equal(t, []string{"T3: there is no project 4"}, flashes(run(cmd)))
 }
@@ -115,7 +122,7 @@ func TestProjects_ChatsStayInTheirWorkspace(t *testing.T) {
 	h.p.chats = []*openChat{{pane: sabra, ws: h.p.ws}}
 	h.p.mu.Unlock()
 
-	cmd, _ := h.p.Sidebar().Select(1)
+	cmd, _ := digit(h.p.Sidebar(), 1)
 	msgs := run(cmd)
 	find[splitview.OpenPaneMsg](t, msgs) // Alpha has no chat yet: one opens along
 	h.swap(find[splitview.SwitchWorkspaceMsg](t, msgs), fakeModel{store: annotation.NewStore()})

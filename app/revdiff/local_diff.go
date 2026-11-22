@@ -126,8 +126,9 @@ func (l *localDiff) pick(inner tea.Model) tea.Cmd {
 // compareItems are what the review can compare: the uncommitted, unstaged
 // and staged changes, the unpushed ones and the branch's when git knows the
 // upstream and the default branch, and a branch to pick.
-func (l *localDiff) compareItems(ctx context.Context) []splitview.PickerItem {
-	items := []splitview.PickerItem{
+func (l *localDiff) compareItems(ctx context.Context) (items []splitview.PickerItem) {
+	defer l.markCurrent(&items)
+	items = []splitview.PickerItem{
 		{Label: "Uncommitted changes", Detail: "staged and unstaged", Value: localChoice{ref: "HEAD", label: "uncommitted"}},
 		{Label: "Unstaged changes", Detail: "not staged yet", Value: localChoice{label: "unstaged"}},
 		{Label: "Staged changes", Detail: "what the next commit takes", Value: localChoice{staged: true, label: "staged"}},
@@ -142,6 +143,18 @@ func (l *localDiff) compareItems(ctx context.Context) []splitview.PickerItem {
 			Value: localChoice{ref: def, label: "vs " + def}})
 	}
 	return append(items, splitview.PickerItem{Label: "Against a branch…", Detail: "pick the base", Value: againstBranch{}})
+}
+
+// markCurrent marks the row of what the review on screen compares.
+func (l *localDiff) markCurrent(items *[]splitview.PickerItem) {
+	l.mu.Lock()
+	label := l.label
+	l.mu.Unlock()
+	for i, it := range *items {
+		if c, ok := it.Value.(localChoice); ok && c.label == label {
+			(*items)[i].Current = true
+		}
+	}
 }
 
 // onPick does what a Diff View… row says, with the annotations in store.
@@ -164,7 +177,10 @@ func (l *localDiff) onPick(store *annotation.Store) func(it splitview.PickerItem
 // builds, since C, alt+= / alt+- and that dropdown may have changed it.
 func (l *localDiff) viewRows(inner tea.Model) []splitview.PickerItem {
 	l.keepCompact(inner)
-	return []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}}}
+	l.mu.Lock()
+	tree := l.label == "file tree"
+	l.mu.Unlock()
+	return []splitview.PickerItem{{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTree{}, Current: tree}}
 }
 
 // keepCompact records how inner shows its files, whole or the changed blocks

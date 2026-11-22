@@ -28,15 +28,16 @@ type statusHinter interface {
 // footerRows is 1 while the wrapped model has a status line the split draws
 // across the window, else 0.
 func (m Model) footerRows() int {
-	if s, ok := m.inner.(statusLiner); ok && s.HasStatusLine() && m.height > 1 {
+	if s, ok := m.inner.(statusLiner); ok && s.HasStatusLine() && m.paneH() > 1 {
 		return 1
 	}
 	return 0
 }
 
-// bodyH is the height of the columns: the window's, less the status line.
+// bodyH is the height of the columns: the window's, less the tab strip and
+// the status line.
 func (m Model) bodyH() int {
-	return m.height - m.footerRows()
+	return m.paneH() - m.footerRows()
 }
 
 // footerHints are the focused pane's shortcuts for the status line, none

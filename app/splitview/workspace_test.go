@@ -283,7 +283,7 @@ func TestWorkspace_LateReplacementGoesToTheWorkspaceThatAskedForIt(t *testing.T)
 
 	hs.send(SwitchWorkspaceMsg{Key: "a"})
 	assert.IsType(t, initLoader{}, hs.m.inner, "a comes back with the view it asked for")
-	assert.Contains(t, built, tea.WindowSizeMsg{Width: 100, Height: 30}, "sized once on screen")
+	assert.Contains(t, built, tea.WindowSizeMsg{Width: 100, Height: 29}, "sized once on screen, under the tab strip of a and b")
 }
 
 func TestWorkspace_ReplacementForAModelGoneIsDropped(t *testing.T) {

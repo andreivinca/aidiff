@@ -210,3 +210,134 @@ func TestSessions_PassingByFilesAnnotationsOnce(t *testing.T) {
 	require.Len(t, h.history(), 2, "changed, they are")
 	assert.Contains(t, h.history()[1].annotations, "and this")
 }
+
+// addNote adds an annotation to model's store, as the user would, on a
+// line of its own.
+func addNote(model tea.Model, comment string) {
+	store := model.(fakeModel).store
+	store.Add(annotation.Annotation{File: "b.go", Line: store.Count() + 10, Type: "+", Comment: comment})
+}
+
+func TestSessions_ClosedTabFilesAndForgetsAProject(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	s := newFakeSession("ssh://a", twoProjectShell())
+	h.connect(t, "ssh://a", s)
+	_, err := h.p.fetchShell(t.Context(), s)
+	require.NoError(t, err)
+	ss := h.p.Sessions()
+	sabra, alpha := twoProjectShell().Projects[0], twoProjectShell().Projects[1]
+	key := projectKey(s, sabra.ID)
+
+	inner := h.openRoot(t, s, sabra, fakeModel{store: annotation.NewStore()})
+	addNote(inner, "first")
+	sabraModel := inner
+	h.openRoot(t, s, alpha, inner) // sabra parked, its note filed as it left
+	h.settle()
+	require.Len(t, h.history(), 1)
+	assert.Empty(t, ss.CloseNote(key, sabraModel), "filed already: closing loses nothing")
+
+	addNote(sabraModel, "second")
+	assert.Equal(t, "Its 2 annotations go to history; opening it again starts without them.", ss.CloseNote(key, sabraModel))
+
+	ss.Closed(key, sabraModel)
+	delete(h.parked, key) // the split closed it
+	h.settle()
+	saves := h.history()
+	require.Len(t, saves, 2, "the notes not filed yet go to history")
+	assert.Equal(t, sabra.ID, saves[1].review.Target.Project.ID, "filed under its project")
+	assert.Contains(t, saves[1].annotations, "second")
+	h.p.mu.Lock()
+	_, parked := h.p.parked[key]
+	stored := false
+	for _, st := range h.p.stores {
+		stored = stored || st == sabraModel.(fakeModel).store
+	}
+	h.p.mu.Unlock()
+	assert.False(t, parked, "the palette drops its record of the workspace")
+	assert.False(t, stored, "and the annotations it kept for the run")
+	assert.Equal(t, splitview.SessionInfo{}, ss.Describe(key), "the switcher knows it no more")
+
+	again := h.openRoot(t, s, sabra, fakeModel{store: annotation.NewStore()})
+	assert.Zero(t, again.(fakeModel).store.Count(), "opened again: a new workspace, with no annotations")
+	assert.Equal(t, key, h.p.Workspace())
+}
+
+func TestSessions_ClosedTabOnScreenFilesOnce(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	s := newFakeSession("ssh://a", twoProjectShell())
+	h.connect(t, "ssh://a", s)
+	ss := h.p.Sessions()
+	sabra, alpha := twoProjectShell().Projects[0], twoProjectShell().Projects[1]
+
+	inner := h.openRoot(t, s, sabra, fakeModel{store: annotation.NewStore()})
+	inner = h.openRoot(t, s, alpha, inner) // alpha on screen, sabra parked
+	addNote(inner, "on alpha")
+	alphaKey, sabraKey := projectKey(s, alpha.ID), projectKey(s, sabra.ID)
+	assert.NotEmpty(t, ss.CloseNote(alphaKey, inner), "alpha's note is not filed yet")
+
+	// the split closes alpha's tab on screen: sabra comes, alpha is not kept
+	done, ready := ss.Show(sabraKey)
+	require.True(t, ready)
+	done(splitview.WorkspaceSwitch{Left: inner, LeftKept: false})
+	ss.Closed(alphaKey, inner)
+	h.settle()
+	require.Len(t, h.history(), 1, "filed once, as it left the screen")
+	assert.Equal(t, alpha.ID, h.history()[0].review.Target.Project.ID)
+	assert.Equal(t, sabraKey, h.p.Workspace())
+	h.p.mu.Lock()
+	_, parked := h.p.parked[alphaKey]
+	h.p.mu.Unlock()
+	assert.False(t, parked, "nor parked")
+}
+
+func TestSessions_ClosedTabOfAFolder(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "alpha"), filepath.Join(root, "beta")
+	for _, d := range []string{a, b} {
+		require.NoError(t, os.MkdirAll(d, 0o750))
+	}
+	f := &localFake{}
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, NoTerminal: true, Local: f.config(a, a, b)}, nil)
+	ss := h.p.Sessions()
+	aModel := annotatedModel()
+	h.swap(pick(t, h.p.Sidebar(), 2), aModel) // beta comes, alpha parked: its note filed
+	h.settle()
+	require.Equal(t, []string{a}, f.saved)
+
+	addNote(aModel, "more")
+	ss.Closed(localKey(a), aModel)
+	delete(h.parked, localKey(a))
+	h.settle()
+	assert.Equal(t, []string{a, a}, f.saved, "what it had not filed goes to history under its folder")
+	h.p.mu.Lock()
+	_, parked := h.p.parkedLocal[localKey(a)]
+	h.p.mu.Unlock()
+	assert.False(t, parked, "the folder's workspace is forgotten")
+
+	msg := pick(t, h.p.Sidebar(), 1)
+	assert.NotNil(t, msg.Model, "opened again from the history: built anew, a new tab")
+	assert.Equal(t, []string{b, a}, f.opened)
+}
+
+func TestSessions_PeekFetchesNothing(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true}, nil)
+	s := newFakeSession("ssh://devbox", sameNameShell())
+	h.connect(t, "ssh://devbox", s)
+	h.openRoot(t, s, sameNameShell().Projects[0], annotatedModel())
+	h.settle()
+	h.p.mu.Lock()
+	h.p.shellAt = time.Now().Add(-time.Hour) // an old listing
+	h.p.mu.Unlock()
+	fetched := s.server.fetched()
+	ss := h.p.Sessions()
+	peek, ok := ss.(interface {
+		Peek(string) splitview.SessionInfo
+	})
+	require.True(t, ok, "the palette lets the tab strip describe without fetching")
+	assert.Equal(t, "api", peek.Peek(projectKey(s, "one")).Name)
+	h.settle()
+	assert.Equal(t, fetched, s.server.fetched(), "Peek fetches nothing")
+	ss.Describe(projectKey(s, "one"))
+	h.settle()
+	assert.Greater(t, s.server.fetched(), fetched, "Describe fetches an old listing again")
+}

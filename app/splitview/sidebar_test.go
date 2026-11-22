@@ -15,7 +15,6 @@ type fakeSidebar struct {
 	shown     int
 	keys      []string
 	clicks    []int
-	selects   []int
 	hideOn    string // the key that asks to hide it
 }
 
@@ -42,11 +41,6 @@ func (f *fakeSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 func (f *fakeSidebar) Click(y int) (tea.Cmd, bool) {
 	f.clicks = append(f.clicks, y)
-	return nil, true
-}
-
-func (f *fakeSidebar) Select(n int) (tea.Cmd, bool) {
-	f.selects = append(f.selects, n)
 	return nil, true
 }
 
@@ -102,18 +96,22 @@ func TestSidebar_UnavailableLeavesTheKey(t *testing.T) {
 	assert.False(t, hs.m.sideOpen)
 	assert.Contains(t, *hs.inner, tea.KeyMsg{Type: tea.KeyCtrlB}, "without a connection ctrl+b is the focused pane's")
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
-	assert.Empty(t, sb.selects)
+	assert.Empty(t, sb.keys, "alt+1 picks a tab")
 }
 
-func TestSidebar_NumberKeysSelect(t *testing.T) {
+func TestSidebar_DigitsPickRowsOnlyWhileFocused(t *testing.T) {
 	sb := &fakeSidebar{available: true}
 	hs := newSidebarHarness(sb)
 	hs.send(unknownCSIMsg(t, "\x1b[27;5;50~")) // ctrl+2, modifyOtherKeys form
-	hs.send(unknownCSIMsg(t, "\x1b[51;5u"))    // ctrl+3, CSI u form
 	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}, Alt: true})
-	assert.Equal(t, []int{2, 3, 4}, sb.selects, "ctrl or alt with a number selects that row with the sidebar hidden")
-	hs.send(unknownCSIMsg(t, "\x1b[27;5;48~")) // ctrl+0
-	assert.Equal(t, []int{2, 3, 4}, sb.selects, "rows are numbered from 1")
+	assert.Empty(t, sb.keys, "ctrl or alt with a number picks a tab, not a row of the hidden sidebar")
+	assert.Equal(t, "there is no tab 4", hs.m.flash)
+
+	hs.send(ShowSidebarMsg{})
+	hs.key("3")
+	assert.Equal(t, []string{"3"}, sb.keys, "a plain digit in the focused sidebar is its own")
+	hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}, Alt: true})
+	assert.Equal(t, []string{"3"}, sb.keys, "alt+2 is the strip's there too")
 }
 
 func TestSidebar_Mouse(t *testing.T) {

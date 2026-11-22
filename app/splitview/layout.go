@@ -109,9 +109,12 @@ func (m Model) grownWeights() []float64 {
 }
 
 // relayout recomputes the split and pushes sizes to the wrapped model and the
-// terminals. A sidebar the window no longer has room for is hidden, so it
-// does not keep the keys unseen.
+// terminals: the tab strip comes or goes with the open workspaces and the
+// window's height, and everything under it is one row shorter while it is
+// there. A sidebar the window no longer has room for is hidden, so it does
+// not keep the keys unseen.
 func (m Model) relayout() (tea.Model, tea.Cmd) {
+	m.top = m.tabRowsFor()
 	if m.winW > 0 && m.outerOpen && m.outerW() == 0 {
 		m = m.leaveOuter()
 	}
@@ -123,11 +126,12 @@ func (m Model) relayout() (tea.Model, tea.Cmd) {
 	for i, r := range m.termRects() {
 		m.terms[i].Resize(r.w, r.h)
 	}
-	if m.innerSized && m.leftW == m.innerW && m.height == m.innerH {
+	h := m.paneH()
+	if m.innerSized && m.leftW == m.innerW && h == m.innerH {
 		return m, nil // e.g. dragging between terminals: spare the wrapped model a re-render
 	}
-	m.innerW, m.innerH, m.innerSized = m.leftW, m.height, true
-	return m.updateInner(tea.WindowSizeMsg{Width: m.leftW, Height: m.height})
+	m.innerW, m.innerH, m.innerSized = m.leftW, h, true
+	return m.updateInner(tea.WindowSizeMsg{Width: m.leftW, Height: h})
 }
 
 // dragTo moves the main divider to column x, the wrapped model's last one.

@@ -2,12 +2,15 @@ package t3palette
 
 import (
 	"cmp"
+	"fmt"
+	"maps"
 	"path"
 	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/style"
@@ -53,8 +56,15 @@ func (t *Palette) workspaceLocked(key string) (*Review, *LocalWorkspace) {
 // folder by its name, local and its parent folder. Nothing for the unnamed
 // workspace, which the split names itself.
 func (l sessionList) Describe(key string) splitview.SessionInfo {
+	l.t.refreshShell() // the dots follow the listing; an old one is fetched again
+	return l.Peek(key)
+}
+
+// Peek is Describe from the listing at hand, fetching nothing: the tab
+// strip asks on every frame, and its dots follow the listing whenever the
+// switcher, the projects panel or a command fetched it.
+func (l sessionList) Peek(key string) splitview.SessionInfo {
 	t := l.t
-	t.refreshShell() // the dots follow the listing; an old one is fetched again
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	r, local := t.workspaceLocked(key)
@@ -167,6 +177,68 @@ func (l sessionList) Open(key string) tea.Cmd {
 		return tea.Sequence(show, func() tea.Msg { return ui.MachineIdentityMsg{Name: machine, T3: true} })
 	}
 	return show
+}
+
+// CloseNote says what closing workspace key's tab takes off screen: the
+// annotations of its review not filed in history yet. Closing files them
+// (Closed), and the run forgets them, so the split asks first.
+func (l sessionList) CloseNote(_ string, model tea.Model) string {
+	m, ok := model.(annotated)
+	if !ok || m.Store().Count() == 0 {
+		return ""
+	}
+	t := l.t
+	t.mu.Lock()
+	filed := t.filed[m.Store()] == m.Store().FormatOutput()
+	t.mu.Unlock()
+	if filed {
+		return ""
+	}
+	if n := m.Store().Count(); n > 1 {
+		return fmt.Sprintf("Its %d annotations go to history; opening it again starts without them.", n)
+	}
+	return "Its annotation goes to history; opening it again starts without it."
+}
+
+// Closed forgets workspace key, whose tab the user closed, model its
+// review: what the review leaves is filed in history, as when it leaves
+// the screen (a review closed on screen filed it as the split switched
+// away, leaveLocked); its chat panes, which the split closed, are
+// forgotten; the annotations it kept for the run go, so opening it again
+// starts a workspace without them; and the sessions nothing uses any more
+// close.
+func (l sessionList) Closed(key string, model tea.Model) {
+	t := l.t
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || key == t.ws {
+		return // still on screen: the split closes only a workspace it left
+	}
+	var notes []note
+	if r, ok := t.parked[key]; ok {
+		notes = t.unfiledLocked(model, noteOf(r, "", model, nil))
+		delete(t.stale, r)
+	} else if ws, ok := t.parkedLocal[key]; ok {
+		notes = t.unfiledLocked(model, noteOf(nil, ws.Dir, model, nil))
+	}
+	delete(t.parked, key)
+	delete(t.parkedLocal, key)
+	t.dropChatsLocked(key)
+	if m, ok := model.(annotated); ok {
+		t.forgetStoreLocked(m.Store())
+	}
+	unused := t.takeUnusedLocked()
+	t.laterLocked(func() {
+		closeAll(unused)
+		t.saveNotes(notes)
+	})
+}
+
+// forgetStoreLocked drops store from what the run keeps: the reviews it
+// held the annotations of, and what it filed. mu must be held.
+func (t *Palette) forgetStoreLocked(store *annotation.Store) {
+	maps.DeleteFunc(t.stores, func(_ string, s *annotation.Store) bool { return s == store })
+	delete(t.filed, store)
 }
 
 // switchCmd puts workspace key on screen with done as its Done.

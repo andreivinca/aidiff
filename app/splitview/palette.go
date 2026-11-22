@@ -129,6 +129,9 @@ func (m Model) commands() []row {
 	if r, ok := m.switchCommand(); ok {
 		rows = append(rows, r)
 	}
+	if r, ok := m.closeTabCommand(); ok {
+		rows = append(rows, r)
+	}
 	var groups []string
 	byGroup := map[string][]row{}
 	if m.cfg.Commands != nil {

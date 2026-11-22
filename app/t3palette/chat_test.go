@@ -106,3 +106,46 @@ func TestPalette_ClearNeedsTheChatsThreadOnScreen(t *testing.T) {
 	assert.Equal(t, []string{"T3: new thread: the chat's thread is no longer on screen"}, flashes(h.program.msgs))
 	assert.Empty(t, a.server.launches)
 }
+
+func TestSideChat_OpensBesideAndStaysOnItsThread(t *testing.T) {
+	sh := testShell()
+	sh.Threads = append(sh.Threads, t3client.Thread{ID: "side-1", ProjectID: "p1", Title: "Side chat: callers"})
+	a := newFakeSession("ssh://a", sh)
+	h := newHarness(t, Config{NoWatch: true}, threadReview(t, a, loginID))
+	main := &fakeChatPane{}
+	h.p.mu.Lock()
+	h.p.chats = []*openChat{{pane: main, ws: h.p.ws, session: a, th: *h.p.onScreen.thread()}}
+	ws := h.p.ws
+	h.p.mu.Unlock()
+
+	msgs := run(h.p.sideChatCmd(a, ws, t3chat.SideChat{From: loginID, ID: "side-1"}))
+	open := find[splitview.OpenPaneMsg](t, msgs)
+	term, err := open.Start(40, 20)
+	require.NoError(t, err)
+	t.Cleanup(term.Close)
+	h.p.mu.Lock()
+	require.Len(t, h.p.chats, 2, "the side chat opens a pane of its own, beside the chat")
+	side := h.p.chats[1]
+	h.p.mu.Unlock()
+	assert.True(t, side.side)
+	assert.Equal(t, "Side chat: callers", side.th.Title, "on its thread, as the server lists it")
+	assert.Equal(t, ws, side.ws, "in the workspace it was asked in")
+
+	older := threadReview(t, a, olderID)
+	h.p.mu.Lock()
+	h.p.followChatsLocked(older)
+	h.p.mu.Unlock()
+	assert.Equal(t, []string{"Older work"}, main.follows, "the review's chat follows the review")
+	assert.Equal(t, "side-1", side.th.ID, "the side chat stays on its thread")
+
+	main.exited = true
+	h.p.mu.Lock()
+	assert.False(t, h.p.chatOpenLocked(ws), "a side chat is not the workspace's chat: the next thread opens one")
+	h.p.mu.Unlock()
+
+	h.p.mu.Lock()
+	h.p.ws = "elsewhere" // the user moved on before the side chat was listed
+	h.p.mu.Unlock()
+	msgs = run(h.p.sideChatCmd(a, ws, t3chat.SideChat{From: loginID, ID: "side-1"}))
+	assert.Contains(t, flashes(msgs), "T3: side chat started; ctrl+p lists it with the other threads", "no pane where it was not asked")
+}

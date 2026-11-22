@@ -329,3 +329,29 @@ func TestBackend_CatalogFetchInFlightIsShared(t *testing.T) {
 	}
 	assert.Equal(t, 1, f.fetches())
 }
+
+func TestBackend_SideChatOpensThroughTheHost(t *testing.T) {
+	f := newFakeServer(withModel("claude", "claude-opus-4"))
+	chats := newChats(f)
+	var opened []SideChat
+	chats.OnSideChat(func(sc SideChat) { opened = append(opened, sc) })
+	s := subscribeOn(t, chats, f)
+
+	reply, err := s.command(t, "/side").Run("where is this used?")
+	require.NoError(t, err)
+	assert.Equal(t, "side chat started; it opens beside this one", reply.Note)
+	assert.Empty(t, opened, "nothing opens before the fork went through")
+	require.NoError(t, reply.Send(context.Background()))
+	fork := nextCommand(t, f)
+	require.Len(t, opened, 1, "once it did, the host opens the side chat")
+	assert.Equal(t, SideChat{From: "th-1", ID: fork["targetThreadId"].(string)}, opened[0])
+
+	f.mu.Lock()
+	f.fail = errors.New("offline")
+	f.mu.Unlock()
+	reply, err = s.command(t, "/side").Run("again")
+	require.NoError(t, err)
+	require.Error(t, reply.Send(context.Background()))
+	nextCommand(t, f)
+	assert.Len(t, opened, 1, "a fork that failed opens nothing")
+}

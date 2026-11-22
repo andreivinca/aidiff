@@ -44,6 +44,15 @@ type Sessions interface {
 	// Open is the work that puts workspace key on screen once chosen when
 	// Show reported it not ready: reconnecting or rebuilding what it must.
 	Open(key string) tea.Cmd
+	// CloseNote is what closing workspace key, whose wrapped model is
+	// model, would take away in the program's own words (annotations not
+	// filed yet), "" for nothing: the split asks before closing its tab
+	// then.
+	CloseNote(key string, model tea.Model) string
+	// Closed tells that the user closed workspace key's tab: its panes are
+	// closing, model was its wrapped model, and it is not on screen. The
+	// program files what the model leaves and forgets the workspace.
+	Closed(key string, model tea.Model)
 }
 
 // SessionInfo is what a switcher row shows. It may come from the remote

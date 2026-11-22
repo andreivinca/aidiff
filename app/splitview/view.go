@@ -93,6 +93,9 @@ func (m Model) View() string {
 		return m.inner.View()
 	}
 	view := m.columnView(m.leftBlock())
+	if m.dragging && m.dragMoved {
+		view = m.dragGhost(view)
+	}
 	if m.palette.open {
 		view = overlayCenter(view, m.paletteView(), m.winW, m.height)
 	}
@@ -114,10 +117,10 @@ func (m Model) View() string {
 // row. It is cached until the wrapped model receives a message or the column
 // changes size, so a terminal echo does not re-render the wrapped model.
 func (m Model) leftBlock() []string {
-	c := m.leftCache
-	if !c.valid || c.w != m.leftW || c.h != m.height {
-		c.lines = strings.Split(fitBlock(m.inner.View(), m.leftW, m.height), "\n")
-		c.valid, c.w, c.h, c.cut = true, m.leftW, m.height, nil
+	c, h := m.leftCache, m.paneH()
+	if !c.valid || c.w != m.leftW || c.h != h {
+		c.lines = strings.Split(fitBlock(m.inner.View(), m.leftW, h), "\n")
+		c.valid, c.w, c.h, c.cut = true, m.leftW, h, nil
 	}
 	return c.lines
 }
@@ -141,8 +144,9 @@ func (m Model) dropLeftCache() {
 	m.leftCache.footerValid = false
 }
 
-// columnView renders the sidebars, when shown, the wrapped model's lines and
-// the terminals side by side, with a vertical line between neighbors.
+// columnView renders the tab strip, when shown, then the sidebars, the
+// wrapped model's lines and the terminals side by side, with a vertical
+// line between neighbors, then the status line.
 func (m Model) columnView(left []string) string {
 	var outer, side []string
 	if m.outerW() > 0 {
@@ -163,8 +167,12 @@ func (m Model) columnView(left []string) string {
 		cut = m.leftCut()
 	}
 	grips := m.gripGlyphs()
-	rows := make([]string, m.bodyH())
-	for y := range rows {
+	body := m.bodyH()
+	rows := make([]string, m.top, m.top+body+1)
+	if m.top > 0 {
+		rows[0] = m.tabStrip().line
+	}
+	for y := range body {
 		var b strings.Builder
 		b.Grow(2 * m.winW)
 		if outer != nil {
@@ -187,7 +195,7 @@ func (m Model) columnView(left []string) string {
 			}
 			b.WriteString(blocks[i][y])
 		}
-		rows[y] = b.String()
+		rows = append(rows, b.String())
 	}
 	if m.footerRows() > 0 {
 		rows = append(rows, m.withFocusMark(m.footerLine())) // footer_focus.go
@@ -213,6 +221,7 @@ func (m Model) sidebarBlock(slot int, view string, w, h int) []string {
 // a row.
 type gripGlyphs struct {
 	line, mid, activeLine, activeMid string
+	midRow                           int // the row under the strip that shows the grip
 }
 
 // gripGlyphs renders the divider cells for this frame.
@@ -222,21 +231,46 @@ func (m Model) gripGlyphs() gripGlyphs {
 		mid:        m.styles.grip.Render("↔"),
 		activeLine: m.styles.gripActive.Render("│"),
 		activeMid:  m.styles.gripActive.Render("↔"),
+		midRow:     m.paneH() / 2,
 	}
 }
 
 // at marks each wrapper-owned divider on row y and highlights a grabbed one.
 func (g gripGlyphs) at(m Model, y, divider int) string {
-	active := m.dragging && m.dragSep == divider
+	active := m.dragging && m.dragSep == divider && !m.dragMoved // once moved, the highlight is where it goes
 	switch {
-	case y == m.height/2 && active:
+	case y == g.midRow && active:
 		return g.activeMid
-	case y == m.height/2:
+	case y == g.midRow:
 		return g.mid
 	case active:
 		return g.activeLine
 	}
 	return g.line
+}
+
+// dragGhost draws the dragged divider, highlighted, where the pointer took
+// it, over the panes as they still are: they resize on release.
+func (m Model) dragGhost(view string) string {
+	pos, ok := m.dragTarget(m.dragX)
+	if !ok {
+		return view
+	}
+	col := m.leftCols() + pos
+	g := m.gripGlyphs()
+	lines := strings.Split(view, "\n")
+	for y := range min(len(lines)-m.top, m.bodyH()) {
+		if m.dragSep == dragMain && !m.mainGripAt(y) {
+			continue
+		}
+		glyph := g.activeLine
+		if y == g.midRow {
+			glyph = g.activeMid
+		}
+		l := lines[m.top+y]
+		lines[m.top+y] = ansi.Cut(l, 0, col) + glyph + ansi.Cut(l, col+1, m.winW)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // replaceLastLine draws text, cleaned (it may come from the remote side),

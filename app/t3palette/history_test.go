@@ -130,10 +130,10 @@ func TestHistory_FoldersAreWorkspaces(t *testing.T) {
 	assert.Zero(t, f.watches(b), "beta's stopped")
 	assert.Equal(t, []string{b}, f.opened)
 
-	cmd, hide := sb.Select(1)
+	cmd, hide := digit(sb, 1)
 	assert.Nil(t, cmd, "the folder on screen stays as it is")
 	assert.True(t, hide)
-	cmd, hide = sb.Select(3)
+	cmd, hide = digit(sb, 3)
 	assert.False(t, hide)
 	assert.Equal(t, []string{"there is no folder 3 in the history"}, flashes(run(cmd)))
 
@@ -179,7 +179,7 @@ func TestHistory_NewFolderOpensWithATerminal(t *testing.T) {
 		f := &localFake{}
 		h := newHarness(t, Config{NoChat: true, NoTerminal: noTerminal, Local: f.config(a, b, a)}, nil)
 		sb := h.p.Sidebar()
-		cmd, _ := sb.Select(2)
+		cmd, _ := digit(sb, 2)
 		msgs := run(cmd)
 		at := slices.IndexFunc(msgs, func(m tea.Msg) bool { _, ok := m.(splitview.SwitchWorkspaceMsg); return ok })
 		require.GreaterOrEqual(t, at, 0)
@@ -193,7 +193,7 @@ func TestHistory_NewFolderOpensWithATerminal(t *testing.T) {
 		var inner tea.Model = fakeModel{store: annotation.NewStore()}
 		inner = h.swap(find[splitview.SwitchWorkspaceMsg](t, msgs), inner)
 		h.settle()
-		cmd, _ = sb.Select(1)
+		cmd, _ = digit(sb, 1)
 		back := run(cmd)
 		assert.False(t, slices.ContainsFunc(back, func(m tea.Msg) bool { _, ok := m.(splitview.OpenTerminalMsg); return ok }),
 			"a folder coming back keeps the panes it had")

@@ -43,9 +43,7 @@ func (t *Palette) Commands() []splitview.Command {
 	if v.onScreen != nil {
 		cmds = append(cmds, splitview.Command{Name: "T3: Diff View…", Detail: cmp.Or(v.onScreen.sourceLabel(), t.cfg.DiffLabel), Run: t.diffCmd})
 	}
-	if th := v.onScreen.thread(); th != nil {
-		cmds = append(cmds, splitview.Command{Name: "T3: Send annotations to agent", Detail: threadTitle(*th), Run: t.sendAnnotations})
-	}
+	// Send annotations to agent is in the toolbar's ⋯ menu (SendAnnotations)
 	return append(cmds,
 		splitview.Command{Name: "T3: Connect to another server…", Run: t.connectPicker})
 }

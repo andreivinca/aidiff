@@ -43,6 +43,9 @@ type Config struct {
 	Quit QuitText
 	// Colors are the split's own chrome colors; nil fields take the defaults.
 	Colors Colors
+	// NoColors draws the chrome that would color its text by machine (the
+	// tab strip, the switcher's machine names) without colors.
+	NoColors bool
 	// Sidebar, when set, is a column left of the wrapped model that
 	// Keys.Sidebar shows and hides.
 	Sidebar Sidebar
@@ -75,9 +78,14 @@ type Config struct {
 type Keys struct {
 	Focus     string // move focus right without wrapping; alt+right by default
 	FocusLeft string // move focus left without wrapping; alt+left by default
-	Quit      string // quit, asking first; ctrl+q by default
-	Palette   string // open or close the command palette; ctrl+p by default
-	Sidebar   string // show or hide Config.Sidebar; ctrl+b by default
+	// FocusAlt and FocusLeftAlt do the same as Focus and FocusLeft; none by
+	// default. The Linux console never delivers alt+left and alt+right: its
+	// keymap switches virtual consoles with them.
+	FocusAlt     string
+	FocusLeftAlt string
+	Quit         string // quit, asking first; ctrl+q by default
+	Palette      string // open or close the command palette; ctrl+p by default
+	Sidebar      string // show or hide Config.Sidebar; ctrl+b by default
 	// PaletteAlt and SidebarAlt do the same as Palette and Sidebar; alt+p
 	// and alt+b by default, for terminals that keep ctrl+p or ctrl+b
 	PaletteAlt string
@@ -92,6 +100,9 @@ type Keys struct {
 	// SwitchAlt does what Switch does in every terminal, its shifted form
 	// what SwitchBack does while the switcher is open; alt+s by default.
 	SwitchAlt string
+	// CloseTab closes the tab on screen (tabs.go), asking first when that
+	// would lose something; alt+w by default.
+	CloseTab string
 }
 
 // QuitText is what the quit dialog says.
@@ -153,6 +164,9 @@ func (k Keys) withDefaults() Keys {
 	}
 	if k.SwitchAlt == "" {
 		k.SwitchAlt = "alt+s"
+	}
+	if k.CloseTab == "" {
+		k.CloseTab = "alt+w"
 	}
 	return k
 }

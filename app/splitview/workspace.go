@@ -75,6 +75,13 @@ func (m Model) switchWorkspace(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
 // switchTo is switchWorkspace leaving the order of use alone, as the
 // switcher does while the user moves through it.
 func (m Model) switchTo(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
+	return m.switchAway(msg, false)
+}
+
+// switchAway is switchTo; closeLeft closes the workspace left with its
+// panes instead of parking it, as the unnamed one always is: its tab was
+// closed (tabs.go). A workspace that is new gets a tab at the end.
+func (m Model) switchAway(msg SwitchWorkspaceMsg, closeLeft bool) (tea.Model, tea.Cmd) {
 	if msg.Key == m.wsKey {
 		if msg.Model == nil || !msg.Replace {
 			// the review keeps its state; Model, never initialized, is
@@ -104,7 +111,7 @@ func (m Model) switchTo(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
 	if m.parked == nil {
 		m.parked = map[string]workspace{}
 	}
-	if m.wsKey == "" {
+	if m.wsKey == "" || closeLeft {
 		for _, t := range m.terms {
 			m.closing.Go(t.Close)
 		}
@@ -119,6 +126,7 @@ func (m Model) switchTo(msg SwitchWorkspaceMsg) (tea.Model, tea.Cmd) {
 	case !exists:
 		next = workspace{id: nextWorkspaceID(), inner: msg.Model, focus: focusDiff, termRatio: float64(m.cfg.WidthPercent) / 100}
 		sw.Created = true
+		m.tabs = opened(m.tabs, msg.Key)
 	case msg.Model != nil && msg.Replace:
 		sw.Replaced = next.inner
 		next.inner = msg.Model

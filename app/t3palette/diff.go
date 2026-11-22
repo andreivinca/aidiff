@@ -75,6 +75,12 @@ func (r *Review) sourceLabel() string {
 	return r.SourceLabel
 }
 
+// DiffView is T3: Diff View… for inner, the review on screen: a command
+// ending in its picker, which the toolbar's Compare dropdown lists.
+func (t *Palette) DiffView(inner tea.Model) tea.Cmd {
+	return t.diffCmd(inner)
+}
+
 // diffCmd offers what the review on screen can compare: the uncommitted
 // changes, the unpushed ones, the branch against the default branch, or
 // against a branch the user picks. The review's annotations come along.
@@ -102,7 +108,17 @@ func (t *Palette) diffCmd(inner tea.Model) tea.Cmd {
 // dropdown's, on the toolbar.
 func (t *Palette) diffPicker(r *Review, refs []t3client.Ref, store *annotation.Store) tea.Msg {
 	items := compareItems(refs)
-	items = append(items, splitview.PickerItem{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTreeRow{}})
+	current := r.sourceLabel()
+	if current == "" {
+		current = t.cfg.DiffLabel
+	}
+	for i, it := range items {
+		if d, ok := it.Value.(diffChoice); ok && current != "" && d.label == current {
+			items[i].Current = true
+		}
+	}
+	items = append(items, splitview.PickerItem{Label: "File tree", Detail: "every file, each folder listed when opened", Value: fileTreeRow{},
+		Current: r.Source.Kind == t3client.SourceFiles})
 	return splitview.ShowPickerMsg{
 		Title:  "T3 Code: diff of " + r.Target.Label(),
 		Items:  items,

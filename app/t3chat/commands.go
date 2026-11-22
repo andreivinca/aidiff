@@ -181,5 +181,16 @@ func (b *Backend) sideCmd(arg string) (chat.Reply, error) {
 	}
 	reply := b.dispatch("side chat", cmds...)
 	reply.Note = "side chat started; ctrl+p lists it with the other threads"
+	if open := b.sideChat; open != nil {
+		side, send := SideChat{From: b.threadID, ID: newID}, reply.Send
+		reply.Send = func(ctx context.Context) error {
+			if err := send(ctx); err != nil {
+				return err
+			}
+			open(side) // the fork went through: the host shows it
+			return nil
+		}
+		reply.Note = "side chat started; it opens beside this one"
+	}
 	return reply, nil
 }

@@ -45,11 +45,26 @@ type switcherBox struct {
 	shown int      // how many rows are shown
 }
 
+// sessionPeeker is Sessions that can also describe a workspace from what
+// it has at hand, fetching nothing: the tab strip, drawn on every frame,
+// asks it, where Describe may refresh what it describes from.
+type sessionPeeker interface {
+	Peek(key string) SessionInfo
+}
+
 // describeSession is workspace key's row text, cleaned: what Sessions says
 // of it, else its key.
 func (m Model) describeSession(key string) SessionInfo {
+	return m.sessionInfo(key, true)
+}
+
+// sessionInfo is describeSession; without fresh, from what Sessions has at
+// hand when it can say (sessionPeeker).
+func (m Model) sessionInfo(key string, fresh bool) SessionInfo {
 	var info SessionInfo
-	if m.cfg.Sessions != nil {
+	if peeker, ok := m.cfg.Sessions.(sessionPeeker); ok && !fresh {
+		info = peeker.Peek(key)
+	} else if m.cfg.Sessions != nil {
 		info = m.cfg.Sessions.Describe(key)
 	}
 	info.Name, info.Machine, info.Path, info.Note = cleanLine(info.Name), cleanLine(info.Machine), cleanLine(info.Path), cleanLine(info.Note)
@@ -157,6 +172,7 @@ func (m Model) switcherBox() switcherBox {
 	}
 	top := 1 + len(lines) // under the border
 	cols := switcherLayout(rows, inner)
+	cols.badges = !m.cfg.NoColors
 	for i := first; i < first+shown; i++ {
 		lines = append(lines, cols.line(rows[i], i, i == s.sel, dim))
 	}
@@ -231,6 +247,7 @@ func switcherLegend(rows []switcherRow) string {
 type switcherCols struct {
 	inner, name, machine, path int
 	flags                      bool // the glyph columns are drawn
+	badges                     bool // machine names on their tab color (tabs_view.go)
 }
 
 // switcherLayout fits the columns to inner. The name and the machine keep
@@ -311,7 +328,12 @@ func (c switcherCols) line(r switcherRow, i int, selected bool, dim lipgloss.Sty
 	b.WriteString(fitLine(ansi.Truncate(r.info.Name, c.name, "…"), c.name))
 	used := switcherPrefix + c.name
 	if c.machine > 0 {
-		b.WriteString(strings.Repeat(" ", switcherGap) + fitLine(ansi.Truncate(r.info.Machine, c.machine, "…"), c.machine))
+		machine := ansi.Truncate(r.info.Machine, c.machine, "…")
+		pad := strings.Repeat(" ", max(0, c.machine-ansi.StringWidth(machine)))
+		if c.badges && !selected && machine != "" {
+			machine = machineBadge(r.info.Machine, machine) // the color its tabs have
+		}
+		b.WriteString(strings.Repeat(" ", switcherGap) + machine + pad)
 		used += switcherGap + c.machine
 	}
 	if c.path > 0 {

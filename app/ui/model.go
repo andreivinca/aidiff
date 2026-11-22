@@ -625,7 +625,8 @@ type Model struct {
 	openFile    OpenFileMsg       // a file to select once the file list loads (openfile.go)
 	revert      revertState       // x / X waiting for its confirmation (revert.go)
 
-	copyAnnotations func(text string, n int) tea.Cmd // the @ list's copy-all tool (ModelConfig.CopyAnnotations)
+	copyAnnotations func(text string, n int) tea.Cmd // the @ list's copy-all tool and the ⋯ menu's (ModelConfig.CopyAnnotations)
+	sendAnnotations func() tea.Cmd                   // the ⋯ menu's Send annotations to agent (ModelConfig.SendAnnotations)
 
 	remoteEditor func(file string, line int) *exec.Cmd // e / f12 on the files' host (ModelConfig.RemoteEditor)
 
@@ -857,8 +858,9 @@ type ModelConfig struct {
 	T3Mode bool
 	// Toolbar shows the toolbar under the diff header (toolbar.go).
 	Toolbar bool
-	// Compare is what the toolbar's Compare button runs, such as the
-	// palette's Diff View…; nil hides the button.
+	// Compare loads the toolbar's Compare dropdown: its command ends in a
+	// CompareMenuMsg, such as the palette's Diff View… choices; nil hides
+	// the button.
 	Compare func() tea.Cmd
 	// ShowFiles rebuilds the review as a browser of every file in its folder
 	// (files) or as its changes again: the View menu's first rows. nil hides
@@ -883,6 +885,10 @@ type ModelConfig struct {
 	// the clipboard, for the @ list's copy-all tool; nil leaves the tool out
 	// (annotlist_tools.go).
 	CopyAnnotations func(text string, n int) tea.Cmd
+	// SendAnnotations sends the review's annotations to the agent of the
+	// thread it reviews, from the toolbar's ⋯ menu; nil hides the item, as
+	// for a review that is not a T3 thread's.
+	SendAnnotations func() tea.Cmd
 }
 
 // NewModel creates a new Model from the given configuration. All dependencies
@@ -1046,6 +1052,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		reload:               reloadState{applicable: cfg.ReloadApplicable},
 		revert:               revertState{reverter: cfg.Reverter, confirm: cfg.Confirm},
 		copyAnnotations:      cfg.CopyAnnotations,
+		sendAnnotations:      cfg.SendAnnotations,
 		compact:              compactState{applicable: cfg.CompactApplicable},
 		annot:                annotationState{rowCache: make(map[annotCacheKey][]string)},
 		renderCache:          &diffRenderCache{},
@@ -1132,6 +1139,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRevertAskEnded(msg), nil
 	case dividerRenderMsg:
 		return m.handleDividerRender()
+	case CompareMenuMsg:
+		return m.handleCompareMenu(msg)
 	case deleteAllAnnotationsMsg:
 		return m.deleteAllAnnotations()
 	}

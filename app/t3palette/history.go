@@ -58,12 +58,13 @@ const historyHeader = 3
 // historyHelp is the key help drawn under the folders, after a blank row.
 var historyHelp = []string{
 	"",
-	" enter        open folder",
+	" enter, 1…9   open folder",
 	" a            add project",
 	" ctrl/alt+b   show / hide",
-	" ctrl/alt+1…9 switch folder",
+	" alt+1…9      switch tab",
 	" alt+s        switch session",
 	" alt+← alt+→  move focus",
+	" alt+h alt+l  move focus",
 }
 
 // localKey is the split workspace of local folder dir. A T3 key starts with
@@ -472,7 +473,7 @@ func (b *historySidebar) Click(y int) (tea.Cmd, bool) {
 	return b.open(dirs, i)
 }
 
-// Select opens folder n, counted from 1.
+// Select opens folder n, counted from 1: its digit, pressed in the panel.
 func (b *historySidebar) Select(n int) (tea.Cmd, bool) {
 	dirs := b.t.historyDirs()
 	if n < 1 || n > len(dirs) {

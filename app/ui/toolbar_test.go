@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/keymap"
 )
@@ -82,7 +83,11 @@ func TestToolbar_TopRowAboveBothPanes(t *testing.T) {
 	require.Len(t, rows, 30, "the toolbar and the review fill the window")
 	assert.Contains(t, rows[0], "◧ View ▾")
 	assert.Contains(t, rows[0], "↕ Whole files ▾", "compact is off")
-	assert.Contains(t, rows[0], "? Help ?")
+	assert.Contains(t, rows[0], "⋯ ▾", "the tools without a button of their own")
+	plain := ansi.Strip(rows[0])
+	assert.True(t, strings.HasSuffix(plain, "?  ⋯ ▾ "), "? then ⋯ in the right corner, one space in as the row starts: %q", plain)
+	assert.Equal(t, 120, ansi.StringWidth(plain))
+	assert.NotContains(t, rows[0], "Help")
 	assert.True(t, strings.HasPrefix(rows[0], " ◧"), "it starts at the left edge, over the tree")
 	assert.Contains(t, rows[2], "a.go", "the review lies below it, its file header on its second row")
 	assert.Equal(t, 29, m.layout.height, "the review has the rest of the window")
@@ -106,7 +111,7 @@ func TestToolbar_DrawnWhereClicksLand(t *testing.T) {
 	m := toolbarModel(t)
 	m.toolbar.compare = func() tea.Cmd { return nil }
 	row := screenRows(m)[toolbarRow]
-	for _, label := range []string{"View", "Compare", "Notes", "Help"} {
+	for _, label := range []string{"View", "Compare"} {
 		at := strings.Index(row, label)
 		require.GreaterOrEqual(t, at, 0)
 		x := buttonX(t, m, label)
@@ -199,17 +204,70 @@ func TestToolbar_MouseOpensPicksAndCloses(t *testing.T) {
 
 func TestToolbar_PlainButtonRunsAtOnce(t *testing.T) {
 	m := toolbarModel(t)
-	compared := false
+	m, _ = click(t, m, buttonX(t, m, "?"), toolbarRow)
+	assert.True(t, m.overlay.Active(), "? opens the help popup")
+	assert.False(t, m.toolbar.open)
+}
+
+func TestToolbar_CompareIsADropdownFilledAsItLoads(t *testing.T) {
+	m := toolbarModel(t)
+	asked := 0
 	m.toolbar.compare = func() tea.Cmd {
-		compared = true
-		return nil
+		asked++
+		return func() tea.Msg { return nil }
 	}
-	m, _ = click(t, m, buttonX(t, m, "Compare"), toolbarRow)
-	assert.True(t, compared)
+	m, cmd := click(t, m, buttonX(t, m, "Compare"), toolbarRow)
+	assert.Equal(t, 1, asked, "opening the dropdown asks for its choices")
+	assert.NotNil(t, cmd)
+	assert.True(t, m.toolbar.open, "it opens at once")
+	assert.Contains(t, strings.Join(screenRows(m), "\n"), "loading…")
+
+	var picked string
+	run := func(label string) func() tea.Cmd {
+		return func() tea.Cmd {
+			picked = label
+			return nil
+		}
+	}
+	r, _ := m.Update(CompareMenuMsg{Items: []CompareItem{
+		{Label: "Uncommitted changes", Detail: "staged and unstaged", Run: run("uncommitted")},
+		{Label: "Staged changes", Detail: "what the next commit takes", Current: true, Run: run("staged")},
+		{Label: "Against a branch…", Detail: "pick the base", Run: run("branch")},
+	}})
+	m = r.(Model)
+	screen := strings.Join(screenRows(m), "\n")
+	assert.NotContains(t, screen, "loading…")
+	assert.Contains(t, screen, "✓ Staged changes", "what the review compares is ticked")
+	assert.Contains(t, screen, "what the next commit takes", "the detail on the right")
+	assert.Equal(t, 1, m.toolbar.item, "and highlighted")
+
+	r, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	r, _ = r.(Model).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = r.(Model)
+	assert.Equal(t, "uncommitted", picked, "picking a row does what the picker's row does")
 	assert.False(t, m.toolbar.open)
 
-	m, _ = click(t, m, buttonX(t, m, "Help"), toolbarRow)
-	assert.True(t, m.overlay.Active(), "Help opens its popup")
+	m, _ = click(t, m, buttonX(t, m, "Compare"), toolbarRow)
+	r, _ = m.Update(CompareMenuMsg{Err: "T3: sabra is not a git repository: there is no diff to choose"})
+	assert.Contains(t, strings.Join(screenRows(r.(Model)), "\n"), "not a git repository", "no choices say why")
+}
+
+func TestToolbar_MoreMenuHoldsNotesAndReload(t *testing.T) {
+	m := toolbarModel(t)
+	m.reload.applicable = false
+	m, _ = click(t, m, buttonX(t, m, "⋯"), toolbarRow)
+	screen := strings.Join(screenRows(m), "\n")
+	assert.Contains(t, screen, "Notes")
+	assert.NotContains(t, screen, "Reload", "only where a reload applies")
+
+	m.reload.applicable = true
+	screen = strings.Join(screenRows(m), "\n")
+	assert.Contains(t, screen, "Reload")
+	assert.Contains(t, screen, m.toolbarKey(keymap.ActionAnnotList), "each with its key")
+
+	r, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = r.(Model)
+	assert.True(t, m.overlay.Active(), "Notes opens the annotation list")
 	assert.False(t, m.toolbar.open)
 }
 
@@ -217,7 +275,11 @@ func TestToolbar_NarrowPaneDropsDetail(t *testing.T) {
 	m := toolbarModel(t)
 	buttons := m.toolbarButtons()
 	full := m.toolbarLayout(buttons, 200)
-	assert.Contains(t, full[len(full)-1].text, "Help ?")
+	assert.Equal(t, "?", full[len(full)-2].text, "help is its icon alone")
+	assert.Equal(t, "⋯ ▾", full[len(full)-1].text)
+	last := full[len(full)-1]
+	assert.Equal(t, 199, last.x+last.w, "the right group ends one cell short of the right edge")
+	assert.Greater(t, full[len(full)-2].x, full[len(full)-3].x+full[len(full)-3].w+2, "with room between it and the left buttons")
 	short := m.toolbarLayout(buttons, 50)
 	assert.Len(t, short, len(buttons))
 	assert.NotContains(t, short[len(short)-1].text, "?  ", "keys go first")
@@ -315,4 +377,45 @@ func TestToolbar_OpeningFromTheTreeRepaintsTheDiffFocused(t *testing.T) {
 	assert.Equal(t, paneDiff, m.layout.focus)
 	assert.Equal(t, strings.Split(m.renderDiff(), "\n"), m.layout.viewport.lines, "the diff is drawn focused")
 	assert.NotEqual(t, unfocused, m.layout.viewport.lines, "with its cursor")
+}
+
+func TestToolbar_MoreMenuHandlesTheAnnotations(t *testing.T) {
+	m := toolbarModel(t)
+	screen := func(m Model) string { return strings.Join(screenRows(m), "\n") }
+	m, _ = click(t, m, buttonX(t, m, "⋯"), toolbarRow)
+	assert.NotContains(t, screen(m), "Copy annotations", "hidden without a clipboard writer")
+	m.toolbar.open = false
+
+	var copied string
+	sent := 0
+	m.copyAnnotations = func(text string, n int) tea.Cmd {
+		copied = text
+		return nil
+	}
+	m.sendAnnotations = func() tea.Cmd {
+		sent++
+		return nil
+	}
+	m, _ = click(t, m, buttonX(t, m, "⋯"), toolbarRow)
+	assert.Contains(t, screen(m), "Copy annotations")
+	assert.Contains(t, screen(m), "Send annotations to agent")
+	items := m.activeMenu()
+	for _, it := range items[len(items)-2:] {
+		assert.True(t, it.disabled, "%s: greyed while there are no annotations", it.label)
+	}
+
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 1, Type: "+", Comment: "why"})
+	items = m.activeMenu()
+	copyAt, sendAt := len(items)-2, len(items)-1
+	assert.False(t, items[copyAt].disabled)
+	m.toolbar.item = copyAt
+	r, _ := m.activate()
+	assert.Equal(t, m.store.FormatOutput(), copied, "copies them in the output format")
+
+	m = r.(Model)
+	m, _ = click(t, m, buttonX(t, m, "⋯"), toolbarRow)
+	m.toolbar.item = sendAt
+	r, _ = m.activate()
+	assert.Equal(t, 1, sent)
+	assert.False(t, r.(Model).toolbar.open)
 }

@@ -19,14 +19,29 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // routeMouse hands a mouse event to what is under the pointer.
 func (m Model) routeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	cols := m.leftCols()
+	if m.dragging && msg.Action == tea.MouseActionPress && !tea.MouseEvent(msg).IsWheel() {
+		// a fresh press: the drag's release was lost (it happened outside
+		// the window), so the drag ends where it was taken and the press
+		// goes where it points
+		m.dragging = false
+		if m.dragMoved {
+			model, resized := m.commitDrag(m.dragX)
+			next, cmd := model.(Model).routeMouse(msg)
+			return next, tea.Batch(resized, cmd)
+		}
+	}
+	if m.top > 0 {
+		if msg.Y < m.top {
+			if msg.Action == tea.MouseActionPress && !m.dragging {
+				return m.tabsMouse(msg)
+			}
+			msg.Y = m.top // a drag's motion or release over the strip: the row under it
+		}
+		msg.Y -= m.top // from here on y is relative to the rows under the strip
+	}
 	msg.X -= cols // from here on x is relative to the area right of the sidebars
 	if m.dragging {
-		if msg.Action != tea.MouseActionPress || tea.MouseEvent(msg).IsWheel() {
-			return m.dragMouse(msg)
-		}
-		// a fresh press: the drag's release was lost (it happened outside
-		// the window), so the drag ends and the press goes where it points
-		m.dragging = false
+		return m.dragMouse(msg)
 	}
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
 	rects := m.termRects()
@@ -45,7 +60,7 @@ func (m Model) routeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	if press {
 		if sep, ok := m.dividerAt(msg.X, msg.Y, rects); ok {
-			m.dragging, m.dragSep = true, sep
+			m.dragging, m.dragSep, m.dragX, m.dragMoved = true, sep, msg.X, false
 			return m, nil
 		}
 	}
@@ -89,18 +104,56 @@ func (m Model) routeCapturedMouse(msg tea.MouseMsg, rects []rect) bool {
 }
 
 // dragMouse follows a held pointer and commits its release position, even
-// when a terminal coalesces the last motion event. Wheel events do not end it.
+// when a terminal coalesces the last motion event. Wheel events do not end
+// it. While it moves only the divider is drawn where the pointer is
+// (dragGhost): resizing the panes on every motion re-wrapped a chat's whole
+// transcript and re-rendered the review each time, so the drag lagged. They
+// resize once, on release.
 func (m Model) dragMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionMotion && msg.Action != tea.MouseActionRelease {
+	switch msg.Action {
+	case tea.MouseActionMotion:
+		if msg.X != m.dragX {
+			m.dragX, m.dragMoved = msg.X, true
+		}
 		return m, nil
+	case tea.MouseActionRelease:
+		m.dragging, m.dragMoved = false, false
+		return m.commitDrag(msg.X)
 	}
-	if msg.Action == tea.MouseActionRelease {
-		m.dragging = false
-	}
+	return m, nil
+}
+
+// commitDrag moves the dragged divider to column x and resizes the panes
+// beside it.
+func (m Model) commitDrag(x int) (tea.Model, tea.Cmd) {
+	m.dragMoved = false
 	if m.dragSep == dragMain {
-		return m.dragTo(msg.X)
+		return m.dragTo(x)
 	}
-	return m.dragSepTo(m.dragSep, msg.X)
+	return m.dragSepTo(m.dragSep, x)
+}
+
+// dragTarget is the column the dragged divider would land on for pointer
+// column x, kept within the panes' minimum widths as dragTo and dragSepTo
+// keep it; ok is false when the divider cannot move.
+func (m Model) dragTarget(x int) (int, bool) {
+	if m.dragSep == dragMain {
+		if m.width < 2*minPaneWidth {
+			return 0, false
+		}
+		return min(max(x+1, minPaneWidth), m.width-minPaneWidth) - 1, true
+	}
+	rects := m.termRects()
+	k := m.dragSep
+	if k+1 >= len(rects) {
+		return 0, false
+	}
+	a, b := rects[k], rects[k+1]
+	combined := a.w + b.w
+	if combined < 2*minTermWidth {
+		return 0, false
+	}
+	return m.leftW + a.x + min(max(x-m.leftW-a.x, minTermWidth), combined-minTermWidth), true
 }
 
 // dividerAt tells which divider's grip is drawn at (x, y): dragMain for the
@@ -118,8 +171,9 @@ func (m Model) dividerAt(x, y int, rects []rect) (int, bool) {
 	return 0, false
 }
 
-// mainGripAt reports whether row y shows the main divider's grip, drawn over
-// the wrapped model's last column. Its bottom row (a status line) is left whole.
+// mainGripAt reports whether row y under the strip shows the main
+// divider's grip, drawn over the wrapped model's last column. Its bottom row
+// (a status line) is left whole.
 func (m Model) mainGripAt(y int) bool {
-	return len(m.terms) > 0 && y < m.height-1
+	return len(m.terms) > 0 && y < m.paneH()-1
 }

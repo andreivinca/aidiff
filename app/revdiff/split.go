@@ -40,14 +40,40 @@ func newSplit(opts options, review tea.Model, t3p *t3palette.Palette, local *loc
 		Files:        finder.files,
 		Carry:        finder.carry,
 		Quit:         splitview.QuitText{Title: "Quit aidiff?", Idle: "Leaves the review."},
-		Keys:         splitview.Keys{Palette: paletteKey, Sidebar: projectsKey, Switch: switchKey, SwitchAlt: switchAltKey},
+		Keys:         splitKeys(),
 		Sidebar:      t3p.Sidebar(),
 		OuterSidebar: t3p.Connections(),
 		Workspace:    t3p.Workspace(),
 		Sessions:     t3p.Sessions(),
 		Output:       terminalOutput(out),
+		NoColors:     opts.NoColors,
 	})
 }
+
+// splitKeys are the split's keys. alt+h and alt+l move the focus as well
+// as alt+left and alt+right, everywhere: on the Linux console the kernel's
+// keymap takes the arrows to switch virtual consoles and they never reach
+// the program, and the same keys work wherever aidiff runs. A shell in a
+// terminal pane gives up alt+h and alt+l for it.
+func splitKeys() splitview.Keys {
+	return splitview.Keys{Palette: paletteKey, Sidebar: projectsKey, Switch: switchKey, SwitchAlt: switchAltKey,
+		FocusLeftAlt: focusLeftAlt, FocusAlt: focusRightAlt, CloseTab: closeTabKey}
+}
+
+// closeTabKey closes the tab on screen. alt+w is free in the review, the
+// chat's composer and the split, and reaches aidiff in every terminal, the
+// Linux console included; bash leaves it unbound. A shell that binds it
+// (zsh's copy-region-as-kill, fish's whatis) gives it up, as it gives up
+// alt+s and alt+b, and a stray press there costs nothing: a tab with a
+// terminal asks before it closes. ctrl+w, every browser's close-tab key,
+// is the composer's and readline's delete-word.
+const closeTabKey = "alt+w"
+
+// The focus keys besides alt+left and alt+right.
+const (
+	focusLeftAlt  = "alt+h"
+	focusRightAlt = "alt+l"
+)
 
 // terminalOutput writes the split's escape sequences to out while the
 // program runs. Bubble Tea's renderer writes each frame to the same out in
@@ -71,7 +97,7 @@ func startsWithTerminal(opts options, threadOnScreen bool) bool {
 // annotations, then the T3 commands.
 func paletteCommands(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func() []splitview.Command {
 	return func() []splitview.Command {
-		cmds := append([]splitview.Command{copyAnnotationsCommand(systemClipboard)}, t3p.Commands()...)
+		cmds := t3p.Commands() // Copy annotations is in the toolbar's ⋯ menu
 		if t3p.OnScreen() != nil {
 			return cmds
 		}
@@ -102,6 +128,25 @@ func switchView(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) fun
 			return func() tea.Msg { return splitview.FlashMsg{Text: "this review has no other view"} }
 		}
 		return l.showView(inner, files)
+	}
+}
+
+// diffChoices is what the toolbar's Compare dropdown lists: the Diff View…
+// choices of the review on screen, T3's or the local folder's, as
+// paletteCommands picks it.
+func diffChoices(t3p *t3palette.Palette, local *localDiff, diffs *localDiffs) func(inner tea.Model) tea.Cmd {
+	return func(inner tea.Model) tea.Cmd {
+		if t3p.OnScreen() != nil {
+			return t3p.DiffView(inner)
+		}
+		l := local
+		if dir := t3p.LocalDir(); dir != "" {
+			l = diffs.get(dir)
+		}
+		if l == nil {
+			return nil
+		}
+		return l.pick(inner)
 	}
 }
 

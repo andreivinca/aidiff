@@ -24,3 +24,17 @@ func (w *writeLog) Write(p []byte) (int, error) {
 	w.writes = append(w.writes, string(bytes.Clone(p)))
 	return len(p), nil
 }
+
+// TestSplitKeys_AreDistinct: every split key does one thing, close-tab
+// included.
+func TestSplitKeys_AreDistinct(t *testing.T) {
+	k := splitKeys()
+	keys := []string{k.Palette, k.Sidebar, k.Switch, k.SwitchAlt, k.FocusLeftAlt, k.FocusAlt, k.CloseTab}
+	seen := map[string]bool{}
+	for _, key := range keys {
+		assert.NotEmpty(t, key)
+		assert.False(t, seen[key], "%s is bound twice", key)
+		seen[key] = true
+	}
+	assert.Equal(t, "alt+w", k.CloseTab)
+}

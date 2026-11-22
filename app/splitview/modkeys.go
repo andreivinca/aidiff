@@ -344,8 +344,8 @@ func (m Model) handleModifiedKey(k uv.KeyPressEvent, seq []byte, raw tea.Msg) (t
 	if model, cmd, ok := m.switcherModifiedKey(k); ok {
 		return model, cmd
 	}
-	if n, ok := numberKey(k); ok && m.sidebarAvailable() && !m.modal() {
-		return m.selectNumber(n)
+	if n, ok := numberKey(k); ok && !m.modal() {
+		return m.selectTab(n)
 	}
 	if m.focus >= 0 && !m.modal() {
 		if r, ok := m.terms[m.focus].(modifiedKeyReceiver); ok && r.SendModifiedKey(k) {

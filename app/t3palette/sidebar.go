@@ -3,6 +3,7 @@ package t3palette
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -54,13 +55,12 @@ func (p *panelSidebar) View(width, height int, focused bool) string {
 }
 func (p *panelSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) { return p.current().HandleKey(msg) }
 func (p *panelSidebar) Click(y int) (tea.Cmd, bool)              { return p.current().Click(y) }
-func (p *panelSidebar) Select(n int) (tea.Cmd, bool)             { return p.current().Select(n) }
 
 // Available reports whether a server is connected.
 func (b *projectsSidebar) Available() bool {
 	b.t.mu.Lock()
 	defer b.t.mu.Unlock()
-	return b.t.live != nil // a T3 server's projects only
+	return b.t.live != nil || b.t.dialed.spec != "" // a T3 server's projects only, or the one being connected to
 }
 
 // Shown selects the project on screen and refreshes the list when it is
@@ -92,6 +92,9 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 
 	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
+	if v.dial.spec != "" {
+		return dialView(v.dial, width, height)
+	}
 	lines := []string{bold.Render(" T3 Projects"), faint.Render(" " + serverLabel(v.live)), ""}
 	switch {
 	case v.live == nil:
@@ -101,6 +104,8 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 		for _, l := range why[:min(len(why), 3)] {
 			lines = append(lines, faint.Render(" "+l))
 		}
+	case len(list) == 0 && v.shell.Projects == nil && v.retrying:
+		lines = append(lines, faint.Render(" reconnecting…"))
 	case len(list) == 0 && v.shell.Projects == nil:
 		lines = append(lines, faint.Render(" loading…"))
 	case len(list) == 0:
@@ -127,12 +132,13 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 // sidebarHelp is the key help drawn under the projects, after a blank row.
 var sidebarHelp = []string{
 	"",
-	" enter        open project",
+	" enter, 1…9   open project",
 	" a            add project",
 	" ctrl+b       show / hide",
-	" ctrl/alt+1…9 switch project",
+	" alt+1…9      switch tab",
 	" alt+s        switch session",
 	" alt+← alt+→  move focus",
+	" alt+h alt+l  move focus",
 }
 
 // row draws project p, the list's row i.
@@ -165,10 +171,21 @@ func (b *projectsSidebar) row(i int, p t3client.Project, sh t3client.Shell, widt
 	return style.Render(text)
 }
 
+// list is the projects the sidebar lists: none while a server is being
+// connected to, whose listing is not there yet; the one cached is the
+// previous server's, and opening from it would open the wrong one.
+func (b *projectsSidebar) list() []t3client.Project {
+	v := b.t.state()
+	if v.dial.spec != "" {
+		return nil
+	}
+	return projects(v.shell)
+}
+
 // HandleKey moves the selection and opens the selected project; a digit
 // opens its project, esc hides the sidebar.
 func (b *projectsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	list := projects(b.t.state().shell)
+	list := b.list()
 	switch msg.String() {
 	case "up", "k":
 		b.sel = max(0, b.sel-1)
@@ -195,7 +212,7 @@ func (b *projectsSidebar) HandleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 // Click opens the project on row y.
 func (b *projectsSidebar) Click(y int) (tea.Cmd, bool) {
 	i := b.offset + y - sidebarHeader
-	list := projects(b.t.state().shell)
+	list := b.list()
 	if y < sidebarHeader || i >= len(list) {
 		return nil, false
 	}
@@ -203,9 +220,10 @@ func (b *projectsSidebar) Click(y int) (tea.Cmd, bool) {
 	return b.open(list, i)
 }
 
-// Select opens project n, counted from 1.
+// Select opens project n, counted from 1: its digit, pressed in the
+// panel.
 func (b *projectsSidebar) Select(n int) (tea.Cmd, bool) {
-	list := projects(b.t.state().shell)
+	list := b.list()
 	if n < 1 || n > len(list) {
 		return flash(fmt.Sprintf("T3: there is no project %d", n)), false
 	}
@@ -229,6 +247,30 @@ func projectRunning(sh t3client.Shell, p t3client.Project) bool {
 		}
 	}
 	return false
+}
+
+// dialView is the projects sidebar while a server is being connected to:
+// its name, how long the dial has taken, or why it failed. The lists of
+// the server or folders chosen before are not shown: they are not what the
+// user picked.
+func dialView(d dialing, width, height int) string {
+	bold := lipgloss.NewStyle().Bold(true)
+	faint := lipgloss.NewStyle().Faint(true)
+	lines := []string{bold.Render(" T3 Projects"), faint.Render(ansi.Truncate(" "+d.spec, width, "…")), ""}
+	if d.err == nil {
+		secs := int(time.Since(d.since) / time.Second)
+		lines = append(lines, ansi.Truncate(fmt.Sprintf(" connecting… %ds", secs), width, "…"))
+		if secs >= 3 {
+			lines = append(lines, "", faint.Render(" an ssh login can take"), faint.Render(" a few seconds"))
+		}
+	} else {
+		lines = append(lines, " couldn't connect:")
+		for _, l := range strings.Split(ansi.Wrap(d.err.Error(), max(1, width-1), " "), "\n") {
+			lines = append(lines, faint.Render(" "+l))
+		}
+		lines = append(lines, "", faint.Render(" pick another connection"), faint.Render(" with alt+← or alt+h"))
+	}
+	return strings.Join(lines[:min(len(lines), height)], "\n")
 }
 
 // serverLabel names the live server, "" when there is none.

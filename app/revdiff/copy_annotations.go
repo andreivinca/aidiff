@@ -19,22 +19,8 @@ type clipboardWriter interface {
 	Write(ctx context.Context, text string) error
 }
 
-// copyAnnotationsCommand is the palette row that copies the review's
-// annotations, in the output format, to the clipboard, to paste into a
-// terminal pane's agent or anywhere else.
-func copyAnnotationsCommand(cb clipboardWriter) splitview.Command {
-	return splitview.Command{Name: "Copy annotations", Detail: "to the clipboard", Run: func(inner tea.Model) tea.Cmd {
-		store := reviewStore(inner)
-		n := store.Count()
-		if n == 0 {
-			return flashCmd("no annotations to copy")
-		}
-		return copyAnnotations(cb)(store.FormatOutput(), n)
-	}}
-}
-
 // copyAnnotations puts text, n annotations, on cb and says so on the bottom
-// row: the palette's Copy annotations, and the @ list's copy-all tool
+// row: the toolbar's ⋯ menu Copy annotations and the @ list's copy-all tool
 // (ui.ModelConfig.CopyAnnotations).
 func copyAnnotations(cb clipboardWriter) func(text string, n int) tea.Cmd {
 	return func(text string, n int) tea.Cmd {
@@ -47,11 +33,6 @@ func copyAnnotations(cb clipboardWriter) func(text string, n int) tea.Cmd {
 			return splitview.FlashMsg{Text: fmt.Sprintf("%d annotation(s) copied", n)}
 		}
 	}
-}
-
-// flashCmd shows text on the bottom row.
-func flashCmd(text string) tea.Cmd {
-	return func() tea.Msg { return splitview.FlashMsg{Text: text} }
 }
 
 // systemClipboard is this machine's clipboard.

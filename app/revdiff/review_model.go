@@ -6,15 +6,12 @@ import (
 	"os"
 	"os/exec"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/editor"
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
-	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
@@ -103,7 +100,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		MouseTracking:        !opts.NoMouse,
 		NoStatusBar:          opts.NoStatusBar,
 		Toolbar:              !opts.NoToolbar,
-		Compare:              openDiffView,
+		Compare:              d.views.compareFor(d.opts, src),
 		ShowFiles:            d.views.forSource(d.opts, src), // d.opts: opts above counts a folder as every file
 		NoConfirmDiscard:     opts.NoConfirmDiscard,
 		NoConfirmReload:      opts.NoConfirmReload,
@@ -124,6 +121,7 @@ func (d reviewDeps) newModel(src sourceSetup, store *annotation.Store, descripti
 		Reverter:             src.reverter(opts),
 		Confirm:              confirmPopup,
 		CopyAnnotations:      copyAnnotations(systemClipboard),
+		SendAnnotations:      d.views.sendFor(src),
 		WordDiff:             opts.wordDiff(),
 		FilterUnreviewed:     opts.FilterUnreviewed,
 		VimMotion:            opts.VimMotion,
@@ -175,14 +173,6 @@ func compactContextAtStart(opts options, src sourceSetup) int {
 		return src.t3.View.Context
 	}
 	return opts.CompactContext
-}
-
-// openDiffView is the toolbar's Compare button: the palette's Diff View…,
-// the local one or T3's, whichever the review has.
-func openDiffView() tea.Cmd {
-	return func() tea.Msg {
-		return splitview.RunCommandMsg{Suffix: "Diff View…", Missing: "Diff View… is not available for this review"}
-	}
 }
 
 // remoteEditor opens e / f12's editor on a T3 review's host, over the

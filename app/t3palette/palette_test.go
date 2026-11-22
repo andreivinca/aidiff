@@ -83,11 +83,10 @@ func TestPalette_CommandsFollowState(t *testing.T) {
 	h.swap(h.openThread(t, box, loginID), annotatedModel())
 	cmds := h.p.Commands()
 	assert.Equal(t, []string{"T3: New thread…", "T3: Add Project…", "T3: ▸ Fix login", "T3: Older work",
-		"T3: Diff View…", "T3: Send annotations to agent", "T3: Connect to another server…"},
-		commandNames(cmds), "the thread on screen is marked, can change its diff and take the annotations")
+		"T3: Diff View…", "T3: Connect to another server…"},
+		commandNames(cmds), "the thread on screen is marked and can change its diff; its annotations go through the toolbar's ⋯ menu")
 	assert.Equal(t, "Sabra2", cmds[0].Detail, "new threads start in the reviewed project")
 	assert.Equal(t, "Sabra2 · idle · main", cmds[2].Detail)
-	assert.Equal(t, "Fix login", cmds[5].Detail)
 
 	other := t3client.Project{ID: "p2", Title: "Other"}
 	h.p.selectProject(box, other)
@@ -314,7 +313,7 @@ func TestPalette_SendAnnotationsNeedsAThread(t *testing.T) {
 	h.swap(h.openThread(t, a, loginID), fakeModel{store: annotation.NewStore()})
 	assert.Equal(t, []string{"T3: no annotations to send"}, flashes(run(h.p.sendAnnotations(fakeModel{store: annotation.NewStore()}))))
 
-	msgs := run(h.p.sendAnnotations(annotatedModel()))
+	msgs := run(h.p.SendAnnotations(annotatedModel()))
 	assert.Contains(t, flashes(msgs), "T3: 1 annotation(s) sent to Fix login")
 	require.Len(t, a.server.sent, 1)
 	assert.Contains(t, a.server.sent[0], "Review annotations from aidiff:")
@@ -381,4 +380,55 @@ func TestPalette_ConnectLandingAfterAnotherChoiceIsNotUsed(t *testing.T) {
 	require.True(t, h.p.useLive(c), "picking a connection already there counts too")
 	run(slow)
 	assert.Same(t, c, h.p.liveSession())
+}
+
+func TestPalette_PanelsShowTheServerBeingConnectedTo(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, LocalName: "laptop",
+		Local: LocalConfig{History: func() []string { return []string{dir} }}}, nil)
+	panel, conns := h.p.Sidebar(), h.p.Connections()
+	require.Contains(t, panel.View(40, 20, false), "History", "this machine shows its folders")
+
+	a := newFakeSession("ssh://a", testShell())
+	h.dials["ssh://a"] = a
+	pending := h.p.connect("ssh://a")
+	v := panel.View(40, 20, false)
+	assert.Contains(t, v, "ssh://a")
+	assert.Contains(t, v, "connecting… 0s", "from the choice on, the panel says what it waits for")
+	assert.NotContains(t, v, "History", "not the folders of the machine left")
+	assert.Contains(t, conns.View(40, 20, false), "▸ ssh://a connecting…", "the connection chosen is marked, not this machine")
+	assert.NotContains(t, conns.View(40, 20, false), "▸ local")
+	cmd, _ := panel.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Nil(t, cmd, "nothing to open while it connects")
+
+	run(pending)
+	v = panel.View(40, 20, false)
+	assert.NotContains(t, v, "connecting")
+	assert.Contains(t, v, "Sabra2", "then its projects")
+
+	pending = h.p.connect("ssh://nowhere")
+	run(pending)
+	v = panel.View(40, 20, false)
+	assert.Contains(t, v, "couldn't connect:")
+	assert.Contains(t, v, "no such server", "a failed dial says why and stays until the next choice")
+	assert.Contains(t, conns.View(40, 20, false), "ssh://nowhere failed")
+	cmd, _ = panel.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Nil(t, cmd, "the previous server's projects are not what the panel shows")
+
+	require.True(t, h.p.useLive(a), "choosing again ends the failed dial's panel")
+	assert.NotContains(t, panel.View(40, 20, false), "couldn't connect")
+
+	pending = h.p.connect("ssh://a2")
+	h.p.useLocal()
+	assert.Contains(t, panel.View(40, 20, false), "History", "picking this machine meanwhile shows its folders at once")
+	_ = pending
+}
+
+func TestPalette_HelpNamesBothFocusKeys(t *testing.T) {
+	h := newHarness(t, Config{NoWatch: true, NoChat: true, LocalName: "laptop",
+		Local: LocalConfig{History: func() []string { return []string{t.TempDir()} }}}, nil)
+	panel := h.p.Sidebar().View(40, 30, false)
+	assert.Contains(t, panel, " alt+← alt+→  move focus")
+	assert.Contains(t, panel, " alt+h alt+l  move focus", "the pair the Linux console delivers, in the same column")
+	assert.Contains(t, h.p.Connections().View(40, 30, false), " alt+→ alt+l  back")
 }

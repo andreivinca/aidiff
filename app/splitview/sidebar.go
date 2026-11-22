@@ -2,7 +2,6 @@ package splitview
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // defaultSidebarWidth is the sidebar's width, its separator left out, when
@@ -35,9 +34,6 @@ type Sidebar interface {
 	HandleKey(msg tea.KeyMsg) (cmd tea.Cmd, hide bool)
 	// Click acts on a left click on row y of the sidebar.
 	Click(y int) (cmd tea.Cmd, hide bool)
-	// Select acts on the number key n (1-9), pressed with ctrl or alt
-	// anywhere, as on row n of a numbered list.
-	Select(n int) (cmd tea.Cmd, hide bool)
 }
 
 // ShowSidebarMsg shows the sidebar and gives it focus, when it is available.
@@ -151,33 +147,6 @@ func (m Model) sidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.hideSidebar() // e.g. the connection it listed is gone
 	}
 	return m.sidebarResult(m.cfg.Sidebar.HandleKey(msg))
-}
-
-// selectNumber is a ctrl or alt number key for the sidebar's row n.
-func (m Model) selectNumber(n int) (tea.Model, tea.Cmd) {
-	return m.sidebarResult(m.cfg.Sidebar.Select(n))
-}
-
-// numberKey reports whether k is ctrl+1…ctrl+9 (alt+1…alt+9 too), the keys
-// that select a sidebar row by its number, and which.
-func numberKey(k uv.KeyPressEvent) (int, bool) {
-	if k.Code < '1' || k.Code > '9' || k.Mod&(uv.ModCtrl|uv.ModAlt) == 0 {
-		return 0, false
-	}
-	return int(k.Code - '0'), true
-}
-
-// altNumber reports whether msg is alt+1…alt+9, the number keys every
-// terminal sends, and which.
-func altNumber(msg tea.KeyMsg) (int, bool) {
-	if !msg.Alt || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
-		return 0, false
-	}
-	r := msg.Runes[0]
-	if r < '1' || r > '9' {
-		return 0, false
-	}
-	return int(r - '0'), true
 }
 
 // sidebarLines are the sidebar's rows, each followed by its separator.

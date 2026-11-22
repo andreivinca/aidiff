@@ -19,9 +19,9 @@ const connectionsHeader = 2
 // connectionsHelp is the key help drawn under the connections.
 var connectionsHelp = []string{
 	"",
-	" enter   use connection",
-	" x       forget server",
-	" alt+→   back",
+	" enter        use connection",
+	" x            forget server",
+	" alt+→ alt+l  back",
 }
 
 // connectionsSidebar is the split's outer sidebar: this machine, then the T3
@@ -89,7 +89,11 @@ func (t *Palette) connRows() []connRow {
 	if t.live != nil {
 		liveLabel = t.live.Label()
 	}
-	rows := []connRow{{label: localLabel, detail: t.cfg.LocalName, local: true, live: t.live == nil}} // no server selected: this machine is
+	dialed := t.dialed.spec
+	if dialed != "" {
+		liveLabel = "" // the row being connected to is the chosen one
+	}
+	rows := []connRow{{label: localLabel, detail: t.cfg.LocalName, local: true, live: t.live == nil && dialed == ""}} // no server selected: this machine is
 	labels := make([]string, 0, len(byLabel))
 	for l := range byLabel {
 		labels = append(labels, l)
@@ -108,7 +112,27 @@ func (t *Palette) connRows() []connRow {
 		connected[l] = true
 	}
 	rows = append(rows, t.savedRowsLocked(connected)...)
+	if dialed != "" {
+		marked := false
+		for i := range rows {
+			if rows[i].spec == dialed || (rows[i].session != nil && rows[i].session.Label() == dialed) {
+				rows[i].live, rows[i].detail, marked = true, t.dialDetailLocked(), true
+			}
+		}
+		if !marked { // a server not saved yet, typed in the connect picker
+			rows = append(rows, connRow{label: dialed, detail: t.dialDetailLocked(), spec: dialed, live: true})
+		}
+	}
 	return append(rows, connRow{label: "Connect to a server…", connect: true})
+}
+
+// dialDetailLocked is the detail of the row being connected to. mu must be
+// held.
+func (t *Palette) dialDetailLocked() string {
+	if t.dialed.err != nil {
+		return "failed"
+	}
+	return "connecting…"
 }
 
 // View draws the title, the connections and the key help.
@@ -199,11 +223,6 @@ func (b *connectionsSidebar) Click(y int) (tea.Cmd, bool) {
 	}
 	b.sel = i
 	return b.use(rows, i)
-}
-
-// Select does nothing: number keys belong to the projects.
-func (b *connectionsSidebar) Select(int) (tea.Cmd, bool) {
-	return nil, false
 }
 
 // use acts on rows[i]: its connection becomes the selected one, which the

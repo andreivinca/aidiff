@@ -29,9 +29,19 @@ type fakeSessions struct {
 	notReady map[string]bool
 	done     []string // the workspaces whose Done ran
 	opened   []string // the workspaces Open was asked for
+
+	describes    int               // Describe calls, which may fetch; Peek's are not counted
+	closeNote    map[string]string // CloseNote's answers
+	closed       []string          // the workspaces Closed was told of
+	closedModels []tea.Model       // their wrapped models
 }
 
 func (f *fakeSessions) Describe(key string) SessionInfo {
+	f.describes++
+	return f.info[key]
+}
+
+func (f *fakeSessions) Peek(key string) SessionInfo {
 	return f.info[key]
 }
 
@@ -42,6 +52,15 @@ func (f *fakeSessions) Show(key string) (func(WorkspaceSwitch), bool) {
 func (f *fakeSessions) Open(key string) tea.Cmd {
 	f.opened = append(f.opened, key)
 	return func() tea.Msg { return SwitchWorkspaceMsg{Key: key} }
+}
+
+func (f *fakeSessions) CloseNote(key string, _ tea.Model) string {
+	return f.closeNote[key]
+}
+
+func (f *fakeSessions) Closed(key string, model tea.Model) {
+	f.closed = append(f.closed, key)
+	f.closedModels = append(f.closedModels, model)
 }
 
 // newSwitcherHarness is a 100x30 split where workspaces a, b and c were

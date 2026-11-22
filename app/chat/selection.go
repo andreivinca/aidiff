@@ -34,6 +34,9 @@ func (p *Pane) selectionMouse(event vt.Mouse) {
 	m := event.Mouse()
 	switch event.(type) {
 	case uv.MouseClickEvent:
+		if p.clickStickyLocked(m) {
+			return
+		}
 		p.startSelectionLocked(m)
 	case uv.MouseMotionEvent:
 		p.dragSelectionLocked(m)
@@ -41,6 +44,24 @@ func (p *Pane) selectionMouse(event vt.Mouse) {
 		p.dragSelectionLocked(m)
 		p.endSelectionLocked()
 	}
+}
+
+// clickStickyLocked answers a left click on the user's message kept on top
+// of the transcript (stickyRows): the transcript scrolls back to it, so it
+// shows whole, in its place, with the start of what answers it under it.
+// It reports false for a click anywhere else, which may start a drag; mu
+// must be held.
+func (p *Pane) clickStickyLocked(m uv.Mouse) bool {
+	f := p.frame
+	pin := f.layout.pin
+	if m.Button != uv.MouseLeft || !f.valid || pin.rows == 0 || m.Y < f.layout.headerH || m.Y >= f.layout.headerH+pin.rows {
+		return false
+	}
+	p.selection = textSelection{}
+	p.input.deselect()
+	p.scroll = pin.scroll
+	p.gen++
+	return true
 }
 
 // startSelectionLocked begins a drag on the text of the frame on screen; mu

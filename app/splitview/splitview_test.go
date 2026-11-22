@@ -485,15 +485,22 @@ func TestSplit_DragDividerResizes(t *testing.T) {
 	assert.True(t, hs.m.dragging)
 	assert.Equal(t, focusDiff, hs.m.focus, "grabbing the divider does not change focus")
 
+	sizes := len(*hs.inner)
 	hs.send(tea.MouseMsg{X: 39, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	assert.Equal(t, 40, hs.m.leftW, "border follows the mouse")
-	assert.Equal(t, 60, hs.term(0).w, "terminal grows")
-	assert.Equal(t, tea.WindowSizeMsg{Width: 40, Height: 30}, hs.lastInnerSize())
+	assert.Equal(t, 60, hs.m.leftW, "while it moves, the panes keep their size")
+	assert.Equal(t, 40, hs.term(0).w)
+	assert.Len(t, *hs.inner, sizes, "the review gets no resize per motion")
+	rows := strings.Split(ansi.Strip(hs.m.View()), "\n")
+	assert.Equal(t, '│', []rune(rows[3])[39], "the divider is drawn where the pointer is")
+	assert.Equal(t, '↔', []rune(rows[15])[39], "with its grip")
 
 	hs.send(tea.MouseMsg{X: 2, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	assert.Equal(t, minPaneWidth, hs.m.leftW)
+	assert.Equal(t, '│', []rune(strings.Split(ansi.Strip(hs.m.View()), "\n")[3])[minPaneWidth-1],
+		"drawn no further than the review's minimum width")
 	hs.send(tea.MouseMsg{X: 99, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	assert.Equal(t, 100-minPaneWidth, hs.m.leftW)
+	assert.Equal(t, '│', []rune(strings.Split(ansi.Strip(hs.m.View()), "\n")[3])[100-minPaneWidth-1],
+		"nor past the terminals' minimum")
+	assert.Equal(t, 60, hs.m.leftW)
 
 	hs.send(tea.MouseMsg{X: 49, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
 	hs.send(tea.MouseMsg{X: 49, Y: 3, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
@@ -528,14 +535,19 @@ func TestSplit_DragSeparatorBetweenTerminals(t *testing.T) {
 	hs.send(tea.MouseMsg{X: 87, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	require.True(t, hs.m.dragging)
 	hs.send(tea.MouseMsg{X: 80, Y: 4, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	assert.Equal(t, []int{13, 6 + 4, 12 + 3}, []int{hs.term(0).w, hs.term(1).w, hs.term(2).w},
-		"only the two neighbors change, and the left one stops at the 10-column minimum")
-	hs.send(tea.MouseMsg{X: 84, Y: 4, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
-	assert.Equal(t, []int{13, 10, 15}, []int{hs.term(0).w, hs.term(1).w, hs.term(2).w})
-	hs.send(tea.MouseMsg{X: 90, Y: 4, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	assert.Equal(t, []int{13, 13, 12}, []int{hs.term(0).w, hs.term(1).w, hs.term(2).w}, "no pane resizes while it moves")
+	assert.Equal(t, '│', []rune(strings.Split(ansi.Strip(hs.m.View()), "\n")[4])[84],
+		"the separator is drawn where it would land: the left neighbor stops at the 10-column minimum")
+	hs.send(tea.MouseMsg{X: 80, Y: 4, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
+	assert.Equal(t, []int{13, 10, 15}, []int{hs.term(0).w, hs.term(1).w, hs.term(2).w},
+		"on release only the two neighbors change")
+
+	hs.send(tea.MouseMsg{X: 84, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	require.True(t, hs.m.dragging)
+	hs.send(tea.MouseMsg{X: 95, Y: 4, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	hs.send(tea.MouseMsg{X: 95, Y: 4, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
 	assert.Equal(t, []int{13, 15, 10}, []int{hs.term(0).w, hs.term(1).w, hs.term(2).w},
 		"moving right grows the left neighbor until the right one hits the minimum")
-	hs.send(tea.MouseMsg{X: 90, Y: 4, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
 	assert.False(t, hs.m.dragging)
 
 	assert.Equal(t, 60, hs.m.leftW, "the diff is untouched")
@@ -952,4 +964,42 @@ func TestSplit_FreshPressEndsAStaleDrag(t *testing.T) {
 	assert.Equal(t, focusDiff, hs.m.focus, "and goes where it points")
 	assert.Equal(t, 10, lastMouse(t, *hs.inner).X)
 	assert.Equal(t, leftW, hs.m.leftW)
+}
+
+func TestSplit_LostReleaseKeepsWhereTheDividerWasDragged(t *testing.T) {
+	hs := newHarness(t, 100, 30)
+	hs.send(tea.MouseMsg{X: 59, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	hs.send(tea.MouseMsg{X: 44, Y: 3, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft})
+	require.Equal(t, 60, hs.m.leftW)
+	// the release happened outside the window and never came
+	hs.send(tea.MouseMsg{X: 10, Y: 3, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	assert.False(t, hs.m.dragging)
+	assert.Equal(t, 45, hs.m.leftW, "the panes take the size the divider was dragged to")
+	assert.Equal(t, 10, lastMouse(t, *hs.inner).X, "and the press goes where it points")
+	row := []rune(strings.Split(ansi.Strip(hs.m.View()), "\n")[3])
+	assert.Equal(t, '│', row[44], "the divider is drawn at its new place")
+	assert.NotEqual(t, '│', row[59], "not left at the old one")
+}
+
+func TestSplit_ConsoleFocusKeys(t *testing.T) {
+	keyAlt := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: true} }
+	hs := newHarness(t, 100, 30) // no console keys: alt+h and alt+l are the terminal's
+	require.Equal(t, 0, hs.m.focus)
+	hs.send(keyAlt('h'))
+	assert.Equal(t, 0, hs.m.focus)
+	assert.Equal(t, []string{"\x1bh"}, hs.term(0).text, "the shell keeps them")
+
+	hs = newSplit(func(hs *harness) Config {
+		cfg := hs.config()
+		cfg.OpenOnStart = true
+		cfg.Keys.FocusLeftAlt, cfg.Keys.FocusAlt = "alt+h", "alt+l"
+		return cfg
+	})
+	hs.send(tea.WindowSizeMsg{Width: 100, Height: 30})
+	require.Equal(t, 0, hs.m.focus)
+	hs.send(keyAlt('h'))
+	assert.Equal(t, focusDiff, hs.m.focus, "alt+h moves the focus left, as alt+left does")
+	hs.send(keyAlt('l'))
+	assert.Equal(t, 0, hs.m.focus, "alt+l right, as alt+right does")
+	assert.Empty(t, hs.term(0).text, "and neither reaches the terminal")
 }

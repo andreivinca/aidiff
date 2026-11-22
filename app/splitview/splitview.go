@@ -49,6 +49,8 @@ type Model struct {
 	weights       []float64 // each terminal's share of the terminal area, parallel to terms
 	dragging      bool      // a divider is being dragged with the mouse
 	dragSep       int       // which: dragMain, or k for the separator right of terminal k
+	dragX         int       // where the pointer took the divider, in the columns right of the sidebars
+	dragMoved     bool      // the pointer moved it: the divider is drawn there, the panes resize on release
 	innerW        int       // size last sent to the wrapped model
 	innerH        int
 	opened        bool // OpenOnStart has been honored
@@ -66,6 +68,9 @@ type Model struct {
 	parked map[string]workspace // the named workspaces not on screen; shared across copies, cloned on write
 	wsID   int                  // the workspace on screen's wrapped model, as innerMsg names it
 	mru    []string             // the workspaces, most recently used first; replaced, never written in place
+	tabs   []string             // the named workspaces in the order they were opened (tabs.go); replaced, never written in place
+	top    int                  // rows the tab strip takes at the top of the window, as of the last relayout
+	strip  *tabCache            // the strip's last layout; shared across copies, see tabStrip
 
 	sideOpen   bool // the sidebar is shown
 	sideReturn int  // the focus before the sidebar was shown, given back when it hides
@@ -89,6 +94,8 @@ func New(inner tea.Model, cfg Config) Model {
 		wsKey:     cfg.Workspace,
 		wsID:      nextWorkspaceID(),
 		mru:       []string{cfg.Workspace},
+		tabs:      opened(nil, cfg.Workspace),
+		strip:     &tabCache{},
 		keys:      newKeyReports(cfg.Output),
 	}
 }
@@ -197,6 +204,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.replaceInner(msg)
 	case SwitchWorkspaceMsg:
 		return m.switchWorkspace(msg)
+	case closeTabMsg:
+		return m.closeTab(msg.key)
 	case innerMsg:
 		return m.routeInner(msg)
 	case scopedMsg:
@@ -243,22 +252,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case k == m.cfg.Keys.SwitchBack:
 		return m.openSwitcher(-1, heldIn(k))
 	}
-	switch msg.String() {
-	case m.cfg.Keys.Focus:
+	switch k := msg.String(); {
+	case k == m.cfg.Keys.Focus || (k != "" && k == m.cfg.Keys.FocusAlt):
 		return m.focusRight()
-	case m.cfg.Keys.FocusLeft:
+	case k == m.cfg.Keys.FocusLeft || (k != "" && k == m.cfg.Keys.FocusLeftAlt):
 		return m.focusLeft()
+	}
+	switch msg.String() {
 	case m.cfg.Keys.Quit:
 		return m.askQuit()
 	case m.cfg.Keys.Palette, m.cfg.Keys.PaletteAlt:
 		return m.openPalette(), nil
+	case m.cfg.Keys.CloseTab:
+		return m.requestCloseTab(m.wsKey)
+	}
+	if n, ok := altNumber(msg); ok {
+		return m.selectTab(n) // a focused sidebar takes the plain digits for its rows
 	}
 	if m.sidebarAvailable() {
 		if k := msg.String(); k == m.cfg.Keys.Sidebar || k == m.cfg.Keys.SidebarAlt {
 			return m.toggleSidebar()
-		}
-		if n, ok := altNumber(msg); ok {
-			return m.selectNumber(n)
 		}
 	}
 	if m.focus == focusOuter {

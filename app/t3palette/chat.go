@@ -32,9 +32,13 @@ type openChat struct {
 	conn      *t3client.Conn
 	chats     *t3chat.Chats
 	newThread func(t3chat.NewThread) // what /clear in the pane does
+	sideChat  func(t3chat.SideChat)  // what /side in the pane does once it forked
 	ws        string                 // the split workspace the pane is in
 	session   Session                // the session of the thread it follows, for a reconnect to move it (repointLocked)
 	th        t3client.Thread        // the thread it follows
+	// side marks a side chat (/side): it stays on its own thread when the
+	// review's changes, and it is not the workspace's chat
+	side bool
 }
 
 // threads are the threads of conn: the ones the pane followed before, when
@@ -44,6 +48,9 @@ func (c *openChat) threads(conn *t3client.Conn) *t3chat.Chats {
 		c.conn, c.chats = conn, t3chat.NewChats(conn)
 		if c.newThread != nil {
 			c.chats.OnNewThread(c.newThread)
+		}
+		if c.sideChat != nil {
+			c.chats.OnSideChat(c.sideChat)
 		}
 	}
 	return c.chats
@@ -63,11 +70,12 @@ func (c *openChat) followOn(s Session, th t3client.Thread) {
 
 // followChatsLocked points the open chat panes of the workspace on screen
 // at r's thread, when it has one, and forgets the closed ones. The chats of
-// other workspaces stay on their threads. mu must be held.
+// other workspaces stay on their threads, and so do side chats. mu must be
+// held.
 func (t *Palette) followChatsLocked(r *Review) {
 	th := r.thread()
 	for _, c := range t.liveChatsLocked() {
-		if th != nil && c.ws == t.ws {
+		if th != nil && c.ws == t.ws && !c.side {
 			c.followOn(r.Session, *th)
 		}
 	}
@@ -92,10 +100,10 @@ func (t *Palette) dropChatsLocked(ws string) {
 	t.chats = slices.DeleteFunc(t.chats, func(c *openChat) bool { return c.ws == ws })
 }
 
-// chatOpenLocked reports whether workspace ws has a chat pane open. mu must
-// be held.
+// chatOpenLocked reports whether workspace ws has its chat pane open, one
+// that follows the review; a side chat does not count. mu must be held.
 func (t *Palette) chatOpenLocked(ws string) bool {
-	return slices.ContainsFunc(t.liveChatsLocked(), func(c *openChat) bool { return c.ws == ws })
+	return slices.ContainsFunc(t.liveChatsLocked(), func(c *openChat) bool { return c.ws == ws && !c.side })
 }
 
 // autoChatLocked is the request for the chat pane that comes along with r,
@@ -111,8 +119,13 @@ func (t *Palette) autoChatLocked(r *Review) tea.Msg {
 
 // chatPaneMsg is the split's request for a chat pane on th over s.
 func (t *Palette) chatPaneMsg(s Session, th t3client.Thread) tea.Msg {
+	return t.chatPane(s, th, false)
+}
+
+// chatPane is chatPaneMsg; side opens a side chat, which stays on th.
+func (t *Palette) chatPane(s Session, th t3client.Thread, side bool) tea.Msg {
 	return splitview.OpenPaneMsg{Start: func(width, height int) (splitview.Terminal, error) {
-		c := &openChat{newThread: t.clearThread, session: s, th: th}
+		c := &openChat{newThread: t.clearThread, sideChat: t.openSideChat, session: s, th: th, side: side}
 		cfg := t.cfg.Chat
 		cfg.QuitNote = chatQuitNote
 		pane := chat.New(c.threads(s.Conn()).Thread(th.ID), threadTitle(th), width, height, cfg)
@@ -134,8 +147,13 @@ func (t *Palette) threadReview() *Review {
 	return r
 }
 
-// sendAnnotations hands the review's annotations to the agent of the thread
-// on screen.
+// SendAnnotations hands the review's annotations to the agent of the thread
+// on screen: the toolbar's ⋯ menu runs it.
+func (t *Palette) SendAnnotations(inner tea.Model) tea.Cmd {
+	return t.sendAnnotations(inner)
+}
+
+// sendAnnotations is SendAnnotations.
 func (t *Palette) sendAnnotations(inner tea.Model) tea.Cmd {
 	r := t.threadReview()
 	if r == nil {
@@ -193,4 +211,56 @@ func (t *Palette) startClearThread(req t3chat.NewThread) {
 		return t.launchMsg(ctx, r.Session, launch)
 	})
 	p.Send(cmd())
+}
+
+// sideChatTitle names a side chat until its thread is listed.
+const sideChatTitle = "Side chat"
+
+// openSideChat is /side in a chat pane, once the fork went through: the
+// side chat opens in a pane of its own, right of the panes there are, in
+// the workspace of the chat it was asked in, and stays on its thread. The
+// pane's send calls it, so the rest runs on a goroutine of its own, as
+// clearThread does.
+func (t *Palette) openSideChat(sc t3chat.SideChat) {
+	go t.startSideChat(sc)
+}
+
+func (t *Palette) startSideChat(sc t3chat.SideChat) {
+	t.mu.Lock()
+	p, closed := t.program, t.closed
+	var s Session
+	ws := ""
+	for _, c := range t.liveChatsLocked() {
+		if c.th.ID == sc.From {
+			s, ws = c.session, c.ws
+			break
+		}
+	}
+	t.mu.Unlock()
+	if p == nil || closed || s == nil {
+		return
+	}
+	p.Send(t.sideChatCmd(s, ws, sc)())
+}
+
+// sideChatCmd opens side chat sc over s in workspace ws: as the server
+// lists its thread, or, not listed yet, by its id, which is all a chat
+// needs. A workspace that left the screen meanwhile gets no pane: the
+// side chat is listed with the threads.
+func (t *Palette) sideChatCmd(s Session, ws string, sc t3chat.SideChat) tea.Cmd {
+	return asking("opening the side chat", func(ctx context.Context) tea.Msg {
+		th := t3client.Thread{ID: sc.ID, Title: sideChatTitle}
+		if sh, err := t.shellWithThread(ctx, s, sc.ID); err == nil {
+			if i := slices.IndexFunc(sh.Threads, func(x t3client.Thread) bool { return x.ID == sc.ID }); i >= 0 {
+				th = sh.Threads[i]
+			}
+		}
+		t.mu.Lock()
+		here := t.ws == ws && !t.closed
+		t.mu.Unlock()
+		if !here {
+			return splitview.FlashMsg{Text: "T3: side chat started; ctrl+p lists it with the other threads"}
+		}
+		return t.chatPane(s, th, true)
+	})
 }

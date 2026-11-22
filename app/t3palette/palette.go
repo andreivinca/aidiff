@@ -100,6 +100,7 @@ type Palette struct {
 	stores      map[string]*annotation.Store // by reviewKey: the annotations of what was on screen
 	filed       map[*annotation.Store]string // what each store last filed in history as its review left the screen
 	chosen      uint64                       // bumped by every choice of connection: a connect asked for before lands without taking over
+	dialed      dialing                      // the server being connected to, which the sidebars show in place of the last one
 	retrying    map[Session]bool             // the sessions a reconnect runs for
 	incoming    map[Session]bool             // sessions a reconnect reached, on their way to takeOver; Close closes them
 	stale       map[*Review]bool             // parked reviews whose model reads over a session a reconnect replaced; rebuilt when back
@@ -241,13 +242,16 @@ type state struct {
 	shell    t3client.Shell
 	shellErr error
 	project  *t3client.Project
+	dial     dialing // the server being connected to, shown in place of live
+	retrying bool    // live dropped and is being reconnected
 }
 
 // state copies what the commands show.
 func (t *Palette) state() state {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return state{live: t.live, onScreen: t.onScreen, shell: t.shell, shellErr: t.shellErr, project: t.project}
+	return state{live: t.live, onScreen: t.onScreen, shell: t.shell, shellErr: t.shellErr, project: t.project,
+		dial: t.dialed, retrying: t.live != nil && t.retrying[t.live]}
 }
 
 // liveSession is the session the commands use, nil before the first
@@ -300,6 +304,7 @@ func (t *Palette) adoptChosen(s Session, sh t3client.Shell, choice uint64) (ok, 
 	}
 	defer t.mu.Unlock()
 	delete(t.forgotten, s.Label()) // the user connected to it again: it is saved again
+	t.dialed = dialing{}
 	t.adoptLocked(s, sh)
 	t.closeLaterLocked(t.takeUnusedLocked())
 	return true, false
@@ -323,7 +328,19 @@ func (t *Palette) adoptLocked(s Session, sh t3client.Shell) {
 // choice. mu must be held.
 func (t *Palette) chooseLocked() uint64 {
 	t.chosen++
+	t.dialed = dialing{} // whatever was being dialed is no longer what the panels show
 	return t.chosen
+}
+
+// dialing is a connection the user asked for and is waiting on: from the
+// choice until it lands, the sidebars show it, not the server or the folders
+// chosen before, so a slow ssh login does not leave the old lists looking
+// current. A dial that failed stays shown with why until the next choice.
+type dialing struct {
+	spec   string    // what is dialed; "" when nothing is
+	choice uint64    // the choice it belongs to
+	since  time.Time // when it started
+	err    error     // why it failed; nil while it goes on
 }
 
 // repointLocked moves what still came over old to s, the session that

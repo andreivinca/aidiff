@@ -56,7 +56,7 @@ func TestSaved_ListedConnectedAndForgotten(t *testing.T) {
 	view := ansi.Strip(sb.View(40, 14, true))
 	assert.Contains(t, view, "   ssh://old oldbox", "a server saved before is listed, not connected")
 	assert.Contains(t, view, "   local T3 Code andrei-pc")
-	assert.Contains(t, view, "x       forget server")
+	assert.Contains(t, view, "x            forget server")
 
 	// local, ssh://old, local T3 Code, connect: Enter on ssh://old connects to it
 	old := newFakeSession("ssh://old", testShell())

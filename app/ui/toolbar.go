@@ -27,9 +27,12 @@ import (
 
 // toolbarState is the toolbar's state.
 type toolbarState struct {
-	on      bool           // the row is wanted (ModelConfig.Toolbar)
-	shown   bool           // the row is drawn: on, and the window has room for it
-	compare func() tea.Cmd // what the Compare button runs; nil hides it
+	on    bool // the row is wanted (ModelConfig.Toolbar)
+	shown bool // the row is drawn: on, and the window has room for it
+	// compare loads the Compare dropdown: its command ends in a
+	// CompareMenuMsg, the choices or why there are none; nil hides the button
+	compare func() tea.Cmd
+	choices compareChoices // what the Compare dropdown lists, once loaded
 	// showFiles switches the review to every file of its folder, or back to
 	// its changes; nil hides the View menu's rows for it
 	showFiles func(files bool) tea.Cmd
@@ -45,9 +48,13 @@ type tbButton struct {
 	action      keymap.Action                      // the action opening a dropdown; "" for none
 	menu        func(m Model) []tbItem             // a dropdown's items; nil for a plain button
 	run         func(m Model) (tea.Model, tea.Cmd) // a plain button's tool
+	load        func(m *Model) tea.Cmd             // fetches a dropdown's items as it opens; nil when they are at hand
 	// segment draws the button as its icon alone, one of a toggle's
 	// segments beside each other; on marks the segment in effect
 	segment, on bool
+	// right puts the button in the group at the row's right end; those come
+	// last in toolbarButtons, in the order they stand
+	right bool
 }
 
 // tbItem is one item of a dropdown menu.
@@ -135,17 +142,45 @@ func (m Model) toolbarButtons() []tbButton {
 			key: m.toolbarKey(keymap.ActionContextMenu)})
 	}
 	if m.toolbar.compare != nil {
-		compare := m.toolbar.compare
-		buttons = append(buttons, tbButton{icon: "⇄", label: "Compare…", run: func(m Model) (tea.Model, tea.Cmd) {
-			return m, compare()
+		buttons = append(buttons, tbButton{icon: "⇄", label: "Compare", menu: Model.compareMenu, load: (*Model).loadCompareMenu})
+	}
+	help := m.actionButton("?", "", keymap.ActionHelp)
+	help.key, help.right = "", true                                                      // the icon is its key
+	return append(buttons, help, tbButton{icon: "⋯", menu: Model.moreMenu, right: true}) // ⋯ in the corner
+}
+
+// moreMenu is the ⋯ dropdown: the tools that do not need a button of their
+// own, then what to do with the review's annotations, greyed while there
+// are none.
+func (m Model) moreMenu() []tbItem {
+	items := []tbItem{m.actionItem("Notes", keymap.ActionAnnotList)}
+	if m.reload.applicable {
+		items = append(items, m.actionItem("Reload", keymap.ActionReload))
+	}
+	if m.copyAnnotations == nil && m.sendAnnotations == nil {
+		return items
+	}
+	none := m.store.Count() == 0
+	items = append(items, tbItem{sep: true})
+	if m.copyAnnotations != nil {
+		items = append(items, tbItem{label: "Copy annotations", disabled: none, run: func(m Model) (tea.Model, tea.Cmd) {
+			return m, m.copyAnnotations(m.store.FormatOutput(), m.store.Count())
 		}})
 	}
-	if m.reload.applicable {
-		buttons = append(buttons, m.actionButton("⟳", "Reload", keymap.ActionReload))
+	if m.sendAnnotations != nil {
+		send := m.sendAnnotations
+		items = append(items, tbItem{label: "Send annotations to agent", disabled: none, run: func(m Model) (tea.Model, tea.Cmd) {
+			return m, send()
+		}})
 	}
-	return append(buttons,
-		m.actionButton("✎", "Notes", keymap.ActionAnnotList),
-		m.actionButton("?", "Help", keymap.ActionHelp))
+	return items
+}
+
+// actionItem is a menu item running action, its key on the right.
+func (m Model) actionItem(label string, action keymap.Action) tbItem {
+	return tbItem{label: label, key: m.toolbarKey(action), run: func(m Model) (tea.Model, tea.Cmd) {
+		return m.dispatchAction(action)
+	}}
 }
 
 // actionButton is a plain button running action, its key shown after it.
@@ -313,20 +348,13 @@ func (m Model) layoutAt(buttons []tbButton, width int, d toolbarDetail) ([]tbSpa
 	var spans []tbSpan
 	x := 1 // the header's leading space
 	for i, b := range buttons {
+		if b.right {
+			return m.layoutRight(spans, buttons[i:], x, width, d)
+		}
 		if i > 0 && b.segment && buttons[i-1].segment {
 			x -= gap - 1 // a toggle's segments sit one cell apart
 		}
-		text, key := b.icon, ""
-		if d != tbIconOnly && !b.segment {
-			text += " " + b.label
-			if b.menu != nil {
-				text += " ▾"
-			}
-			if d == tbFull && b.key != "" {
-				key = b.key
-				text += " " + key
-			}
-		}
+		text, key := m.buttonText(b, d)
 		w := lipgloss.Width(text)
 		if x+w > width {
 			return spans, false
@@ -335,6 +363,49 @@ func (m Model) layoutAt(buttons []tbButton, width int, d toolbarDetail) ([]tbSpa
 		x += w + gap
 	}
 	return spans, true
+}
+
+// layoutRight places the right group of buttons against the row's right
+// end, one space short of it as the row starts one space in, after spans,
+// the left buttons, which end at x. They do not fit when they would come
+// closer to the left ones than the gap between buttons.
+func (m Model) layoutRight(spans []tbSpan, right []tbButton, x, width int, d toolbarDetail) ([]tbSpan, bool) {
+	const gap = 2
+	texts := make([]string, len(right))
+	keys := make([]string, len(right))
+	total := gap * (len(right) - 1)
+	for i, b := range right {
+		texts[i], keys[i] = m.buttonText(b, d)
+		total += lipgloss.Width(texts[i])
+	}
+	start := width - 1 - total
+	if start < x {
+		return spans, false
+	}
+	for i, b := range right {
+		w := lipgloss.Width(texts[i])
+		spans = append(spans, tbSpan{x: start, w: w, text: texts[i], key: keys[i], segment: b.segment, on: b.on})
+		start += w + gap
+	}
+	return spans, true
+}
+
+// buttonText is the button as drawn at detail d, and the key shown in it.
+func (m Model) buttonText(b tbButton, d toolbarDetail) (text, key string) {
+	text = b.icon
+	if d != tbIconOnly && !b.segment {
+		if b.label != "" {
+			text += " " + b.label
+		}
+		if b.menu != nil {
+			text += " ▾"
+		}
+		if d == tbFull && b.key != "" {
+			key = b.key
+			text += " " + key
+		}
+	}
+	return text, key
 }
 
 // renderToolbar is the toolbar row, width cells wide, on the diff pane's
@@ -492,6 +563,10 @@ func (m Model) composeMenu(screen string) string {
 func (m *Model) openToolbar(button int) tea.Cmd {
 	m.clearPendingInputState()
 	m.toolbar.open, m.toolbar.button, m.toolbar.item = true, button, -1
+	var load tea.Cmd
+	if buttons := m.toolbarButtons(); button < len(buttons) && buttons[button].load != nil {
+		load = buttons[button].load(m)
+	}
 	if m.layout.focus != paneDiff {
 		m.layout.focus = paneDiff
 		if m.filesLoaded {
@@ -499,7 +574,7 @@ func (m *Model) openToolbar(button int) tea.Cmd {
 		}
 	}
 	m.moveMenuItem(1)
-	return nil
+	return load
 }
 
 // closeToolbar closes the open menu.

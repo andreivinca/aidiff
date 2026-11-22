@@ -20,6 +20,16 @@ type layout struct {
 	scroll         int // how far up the transcript is shown
 	maxScroll      int // how far up it can go
 	activityScroll int // the first row of the activity list shown
+	pin            stickyPin
+}
+
+// stickyPin is the user's message kept on top of the transcript as a frame
+// drew it: the rows it covers, under the header, and the scroll that
+// brings it back in its place, whole, with the start of what answers it
+// under it. A click on it scrolls there (clickStickyLocked).
+type stickyPin struct {
+	rows   int // 0: none on top
+	scroll int
 }
 
 // renderLocked lays the pane out: header, transcript, queued messages,
@@ -55,7 +65,7 @@ func (p *Pane) renderLocked(showCursor bool) ([]string, []rowMeta, layout) {
 	if p.activity.open {
 		body, l.activityScroll = p.activityRowsLocked(w, l.bodyH)
 	} else {
-		body, bodyMeta, l.scroll, l.maxScroll = p.transcriptWindowLocked(w, l.bodyH)
+		body, bodyMeta, l.scroll, l.maxScroll, l.pin = p.transcriptWindowLocked(w, l.bodyH)
 	}
 
 	rows := make([]string, 0, h)
@@ -98,8 +108,8 @@ func fitRows(rows []string, w, h int) []string {
 // the scroll asked for, with blank rows above a short transcript, and the
 // scroll it shows within the most there is. The user's message the rows
 // below it answer stays on top once it scrolled out of view (see
-// stickyRows). mu must be held.
-func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, meta []rowMeta, scroll, maxScroll int) {
+// stickyRows), and pin says where. mu must be held.
+func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, meta []rowMeta, scroll, maxScroll int, pin stickyPin) {
 	lines, spans := p.transcriptPanelsLocked(w)
 	n := len(lines.rows)
 	p.anchorScrollLocked(w, n)
@@ -111,14 +121,18 @@ func (p *Pane) transcriptWindowLocked(w, h int) (rows []string, meta []rowMeta, 
 	rows = append(rows, lines.rows[start:end]...)
 	meta = make([]rowMeta, h-(end-start), h)
 	meta = append(meta, lines.meta[start:end]...)
-	if sticky := p.stickyLocked(lines, spans, start, w); len(sticky.rows) > 0 && len(sticky.rows)+minBelowSticky <= h {
+	if sticky, span := p.stickyLocked(lines, spans, start, w, h); len(sticky.rows) > 0 {
 		copy(rows, sticky.rows)
 		copy(meta, sticky.meta)
 		if k := len(sticky.rows); k < len(meta) {
 			meta[k].cont = false // the row under the sticky message no longer goes on from the one above it
 		}
+		// its first row at the top, or, when it and the start of the answer
+		// do not fit, its end and that start
+		top := max(span.start, span.start+span.n+minBelowSticky-h)
+		pin = stickyPin{rows: len(sticky.rows), scroll: max(0, min(maxScroll, n-h-max(0, top)))}
 	}
-	return rows, meta, scroll, maxScroll
+	return rows, meta, scroll, maxScroll, pin
 }
 
 // seenLines is the transcript's size as the last frame laid it out.
@@ -145,18 +159,33 @@ const (
 	minBelowSticky = 3
 )
 
-// stickyLocked is the user's message to keep on top of a window whose first
-// row is transcript row top: the last one whose panel starts above it. No
-// rows when none does. mu must be held.
-func (p *Pane) stickyLocked(lines block, spans []panelSpan, top, w int) block {
+// stickyLocked is the user's message to keep on top of an h-row window
+// whose first row is transcript row top, and where its panel is: the last
+// one whose panel starts above it. Like a heading under CSS's position: sticky, it stays within
+// what answers it: once the next message's panel comes up under it, that
+// panel pushes it up, a row a row, until it reaches the top and is the one
+// kept there, so a message is never drawn over by the one before it. No
+// rows when there is none, or when a window too short to keep
+// minBelowSticky rows under it would show nothing else. mu must be held.
+func (p *Pane) stickyLocked(lines block, spans []panelSpan, top, w, h int) (block, panelSpan) {
 	for i := len(spans) - 1; i >= 0; i-- {
 		s := spans[i]
-		if s.start < top {
-			panel := block{rows: lines.rows[s.start : s.start+s.n], meta: lines.meta[s.start : s.start+s.n]}
-			return stickyRows(panel, top-s.start, w, p.styles)
+		if s.start >= top {
+			continue
 		}
+		panel := block{rows: lines.rows[s.start : s.start+s.n], meta: lines.meta[s.start : s.start+s.n]}
+		sticky := stickyRows(panel, top-s.start, w, p.styles)
+		if len(sticky.rows)+minBelowSticky > h {
+			return block{}, panelSpan{}
+		}
+		if i+1 < len(spans) { // the next one starts at the window's top or under it
+			if pushed := len(sticky.rows) - (spans[i+1].start - top); pushed > 0 {
+				sticky = block{rows: sticky.rows[pushed:], meta: sticky.meta[pushed:]}
+			}
+		}
+		return sticky, s
 	}
-	return block{}
+	return block{}, panelSpan{}
 }
 
 // stickyRows is a user's message kept on top of the transcript, its text

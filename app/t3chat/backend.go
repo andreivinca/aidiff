@@ -38,6 +38,7 @@ type Chats struct {
 	srv       server // nil when there is no connection
 	catalog   *catalog
 	newThread func(NewThread) // /clear's; nil keeps T3's fresh session
+	sideChat  func(SideChat)  // /side's; nil leaves the side chat to the thread list
 }
 
 // NewThread is the thread /clear asks for in place of the one it was typed
@@ -54,6 +55,19 @@ type NewThread struct {
 // the backends opened afterwards.
 func (c *Chats) OnNewThread(start func(NewThread)) {
 	c.newThread = start
+}
+
+// SideChat is the side chat /side forked from thread From: the thread ID,
+// which the client named.
+type SideChat struct {
+	From, ID string
+}
+
+// OnSideChat makes /side hand the side chat it forked to open, which must
+// not block, once the fork went through, so the host can show it. It
+// applies to the backends opened afterwards.
+func (c *Chats) OnSideChat(open func(SideChat)) {
+	c.sideChat = open
 }
 
 // NewChats serves the threads reached over conn, which may be nil.
@@ -76,6 +90,7 @@ func (c *Chats) Thread(threadID string) chat.Backend {
 		return nil
 	}
 	b := newBackend(c.srv, c.catalog, threadID)
+	b.sideChat = c.sideChat
 	if c.newThread != nil {
 		b.newThread = c.newThread
 		b.commands = b.ownCommands() // /clear says what it does now
@@ -93,6 +108,9 @@ type Backend struct {
 	commands []chat.Command // T3's own slash commands
 	// newThread starts the thread /clear asks for; nil arms a fresh session
 	newThread func(NewThread)
+	// sideChat opens the side chat /side forked; nil when the host shows
+	// none
+	sideChat func(SideChat)
 
 	mu     sync.Mutex
 	sub    uint64      // the current subscription; events of older ones are dropped

@@ -28,7 +28,7 @@ func TestConnections_LocalThenServers(t *testing.T) {
 	assert.Contains(t, view, " ▸ ssh://a", "a connected server is listed, and marked once selected")
 	assert.Contains(t, view, "   local andrei-pc", "this machine is no longer the selected one")
 	assert.NotContains(t, view, "active", "the mark says it, no word")
-	assert.Contains(t, view, "enter   use connection")
+	assert.Contains(t, view, "enter        use connection")
 }
 
 func TestConnections_UseAnotherServer(t *testing.T) {

@@ -3,6 +3,7 @@ package t3palette
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -72,8 +73,11 @@ func serverSpec(s string) string {
 func (t *Palette) connect(spec string) tea.Cmd {
 	t.mu.Lock()
 	choice := t.chooseLocked()
+	t.dialed = dialing{spec: spec, choice: choice, since: time.Now()}
+	t.dialTickLocked(choice)
 	t.mu.Unlock()
-	return tea.Batch(flash("T3: connecting to "+spec+"…"), func() tea.Msg {
+	show := func() tea.Msg { return splitview.ShowSidebarMsg{} } // the panel says it connects, at once
+	return tea.Batch(flash("T3: connecting to "+spec+"…"), show, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
 		defer cancel()
 		dial := func(ctx context.Context) (Session, error) {
@@ -81,6 +85,7 @@ func (t *Palette) connect(spec string) tea.Cmd {
 		}
 		s, sh, err := reach(ctx, dial)
 		if err != nil {
+			t.dialFailed(choice, err)
 			return t3Failed(err)
 		}
 		ok, stale := t.adoptChosen(s, sh, choice)
@@ -99,6 +104,46 @@ func (t *Palette) connect(spec string) tea.Cmd {
 			},
 		}
 		return withNotices(s, connected)
+	})
+}
+
+// dialFailed keeps why the dial of choice failed for the panels, unless
+// the user chose something else meanwhile.
+func (t *Palette) dialFailed(choice uint64, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dialed.choice == choice && t.dialed.spec != "" {
+		t.dialed.err = err
+	}
+}
+
+// dialTickLocked redraws the panels each second while the dial of choice
+// goes on, so its elapsed time counts on and nothing looks stuck; Close ends
+// it. mu must be held.
+func (t *Palette) dialTickLocked(choice uint64) {
+	if t.closed {
+		return
+	}
+	t.loops.Go(func() {
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-t.ctx.Done():
+				return
+			case <-tick.C:
+			}
+			t.mu.Lock()
+			going := t.dialed.choice == choice && t.dialed.spec != "" && t.dialed.err == nil
+			p := t.program
+			t.mu.Unlock()
+			if !going {
+				return
+			}
+			if p != nil {
+				p.Send(shellRefreshedMsg{})
+			}
+		}
 	})
 }
 
