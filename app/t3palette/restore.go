@@ -369,7 +369,7 @@ func (t *Palette) openRestoredFolder(key, dir string) tea.Cmd {
 		t.mu.Lock()
 		t.rememberDirLocked(dir)
 		t.mu.Unlock()
-		return t.folderMsg(key, dir)
+		return t.folderMsg(key, dir, false) // a saved tab comes back without terminals
 	}))
 }
 
@@ -576,7 +576,7 @@ func (t *Palette) dropRestored(key, text string) tea.Msg {
 	// in order: the drop leaves the tab's stand-in to close once left, then
 	// the folder takes the screen, then the note, which a switch would clear
 	return tea.Sequence(drop, func() tea.Msg {
-		return t.folderMsg(localKey(fallback), fallback)
+		return t.folderMsg(localKey(fallback), fallback, true) // as a run opens the working directory
 	}, flash(text))()
 }
 

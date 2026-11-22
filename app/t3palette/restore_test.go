@@ -178,7 +178,10 @@ func TestRestore_FolderIsBuiltOnlyWhenShown(t *testing.T) {
 	show := find[splitview.SwitchWorkspaceMsg](t, msgs)
 	assert.Equal(t, localKey(b), show.Key, "in its own workspace, which its tab stands for")
 	assert.NotNil(t, show.Model)
-	find[splitview.OpenTerminalMsg](t, msgs) // with a terminal, as a folder of the history panel opens
+	for _, m := range msgs {
+		_, isTerm := m.(splitview.OpenTerminalMsg)
+		assert.False(t, isTerm, "no terminal: a saved tab comes back without one, and the build may finish under another tab")
+	}
 	assert.Eventually(t, func() bool { return f.wasRemembered(b) }, time.Second, time.Millisecond, "recorded as opened now")
 
 	h.swap(show, annotatedModel())

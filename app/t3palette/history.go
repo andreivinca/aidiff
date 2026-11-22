@@ -212,7 +212,7 @@ func (t *Palette) openLocal(dir string) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(flash("opening "+filepath.Base(dir)+"…"), func() tea.Msg {
-		return t.folderMsg(key, dir)
+		return t.folderMsg(key, dir, true)
 	})
 }
 
@@ -227,9 +227,11 @@ func (t *Palette) rememberDirLocked(dir string) {
 }
 
 // folderMsg builds the review of local folder dir and the message that
-// puts it on screen in a new workspace, key, with a terminal unless
-// NoTerminal.
-func (t *Palette) folderMsg(key, dir string) tea.Msg {
+// puts it on screen in a new workspace, key, with a terminal when
+// withTerminal and not NoTerminal. A restored tab passes false: terminals
+// are not part of what a tab saves, and the background build may finish
+// after another tab took the screen, where the terminal would land.
+func (t *Palette) folderMsg(key, dir string, withTerminal bool) tea.Msg {
 	if t.cfg.Local.Open == nil {
 		return nil
 	}
@@ -241,7 +243,7 @@ func (t *Palette) folderMsg(key, dir string) tea.Msg {
 	show := splitview.SwitchWorkspaceMsg{Key: key, Model: r.Model, Done: func(sw splitview.WorkspaceSwitch) {
 		t.switchedLocal(key, ws, sw)
 	}}
-	if t.cfg.NoTerminal {
+	if t.cfg.NoTerminal || !withTerminal {
 		return show
 	}
 	// in order: the terminal opens in the folder's new workspace, there,
