@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	textColor          = lipgloss.Color("#eeeeee")
-	composerBackground = lipgloss.Color("#202020")
-	panelBackground    = lipgloss.Color("#141414") // the user's messages
-	mutedColor         = lipgloss.Color("#808080") // hints, and a queued message, not sent yet
+	textColor          = lipgloss.Color("#e4e4e4") // the bright neutral
+	composerBackground = lipgloss.Color("#262626") // a quiet band, one step off the terminal's
+	panelBackground    = lipgloss.Color("#262626") // the user's messages, the same band
+	mutedColor         = lipgloss.Color("#7a7a7a") // hints, and a queued message, not sent yet
 )
 
-// styles are the pane's colors, OpenCode's default palette; plain when color
+// styles are the pane's colors, neutral greys (Omarchy plain); plain when color
 // is off. selected marks the input's selected text and atom its blocks (a
 // pasted image's token); both keep their own
 // background on the composer's.
@@ -40,24 +40,26 @@ func newStyles(color bool) (base, composer styles) {
 		return base, base
 	}
 	base = styles{
-		badge: lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#875faf")),
+		// badge: a quiet label in the purple, never a filled pill
+		badge: lipgloss.NewStyle().Foreground(lipgloss.Color("#bb9af7")),
 		text:  lipgloss.NewStyle().Foreground(textColor),
 		muted: lipgloss.NewStyle().Foreground(mutedColor),
-		rail:  lipgloss.NewStyle().Foreground(lipgloss.Color("#5c9cf5")),
+		rail:  lipgloss.NewStyle().Foreground(lipgloss.Color("#5a5a5a")),
 		panel: lipgloss.NewStyle().Foreground(textColor).Background(panelBackground),
 		// queued: the text muted, as its state row, on the panel and a barely lighter stripe
 		queued:       lipgloss.NewStyle().Foreground(mutedColor).Background(panelBackground),
-		queuedStripe: lipgloss.NewStyle().Foreground(mutedColor).Background(lipgloss.Color("#161616")),
+		queuedStripe: lipgloss.NewStyle().Foreground(mutedColor).Background(lipgloss.Color("#2c2c2c")),
 		cursor:       lipgloss.NewStyle().Reverse(true),
-		heading:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9d7cd8")),
-		code:         lipgloss.NewStyle().Foreground(lipgloss.Color("#7fd88f")),
-		warn:         lipgloss.NewStyle().Foreground(lipgloss.Color("#f5a742")),
-		bad:          lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75")),
-		bold:         lipgloss.NewStyle().Bold(true),
-		// selected: OpenCode's selection color, the same on any background
-		selected: lipgloss.NewStyle().Foreground(textColor).Background(lipgloss.Color("#3a4a6b")),
-		// atom: a chip in the heading's purple, apart from the selection's blue
-		atom: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#d4c2ff")).Background(lipgloss.Color("#3d3160")),
+		// headings read as bold text, not a color of their own
+		heading: lipgloss.NewStyle().Bold(true).Foreground(textColor),
+		code:    lipgloss.NewStyle().Foreground(lipgloss.Color("#8cb4d8")),
+		warn:    lipgloss.NewStyle().Foreground(lipgloss.Color("#d7b46a")),
+		bad:     lipgloss.NewStyle().Foreground(lipgloss.Color("#e5787f")),
+		bold:    lipgloss.NewStyle().Bold(true).Foreground(textColor),
+		// selected: a neutral selection, the same on any background
+		selected: lipgloss.NewStyle().Foreground(textColor).Background(lipgloss.Color("#3a3a3a")),
+		// atom: a chip in the purple, apart from the selection's blue
+		atom: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#bb9af7")).Background(lipgloss.Color("#2a2a2a")),
 	}
 	return base, base.on(composerBackground)
 }

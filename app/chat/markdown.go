@@ -74,10 +74,29 @@ func markdownRows(text string, w int, st styles) block {
 		if m := bullet.FindStringSubmatchIndex(para); m != nil {
 			lead, para = para[m[2]:m[3]]+"• ", para[m[1]:]
 		}
-		para = linkSpan.ReplaceAllString(para, "$1") // a link shows its text, as OpenCode conceals it
-		b.join(wrapText(lead, para, w, false).styled(func(r string) string {
-			return inset + styleSpans(r, style, st)
-		}))
+		b.join(proseRows(lead, para, w, style, st))
+	}
+	return b
+}
+
+// proseRows is one line of prose after its lead (a bullet, or ""): its
+// inline markdown is read first and what it shows is wrapped, so a **bold**
+// or `code` run cut by a wrap keeps its style on both rows instead of
+// leaving its markers printed (table cells do the same, table.go). Rows
+// after the first hang under the text, past the lead; a copy reads the
+// shown text, as wrapText's rows.
+func proseRows(lead, para string, w int, style lipgloss.Style, st styles) block {
+	leadW := ansi.StringWidth(lead)
+	pad := strings.Repeat(" ", leadW)
+	limit := max(1, w-len(inset)-leadW)
+	firstStart := len(inset) + leadW - ansi.StringWidth(strings.TrimLeft(lead, " "))
+	var b block
+	for i, pc := range wrapSegments(inlineSegments(para), limit, limit, style, st) {
+		head, start := pad, len(inset)+leadW
+		if i == 0 {
+			head, start = lead, firstStart
+		}
+		b.add(inset+style.Render(head)+pc.row, rowMeta{start: start, end: len(inset) + leadW + pc.width, cont: pc.cont, joint: pc.joint})
 	}
 	return b
 }
@@ -104,15 +123,4 @@ func codeRows(line string, w int, st styles) block {
 		b.add(st.code.Render(lead+pc.text), rowMeta{start: start, end: start + ansi.StringWidth(pc.text), cont: pc.cont, joint: pc.joint})
 	}
 	return b
-}
-
-// styleSpans renders inline markdown within one wrapped line.
-func styleSpans(line string, base lipgloss.Style, st styles) string {
-	line = boldSpan.ReplaceAllStringFunc(line, func(m string) string {
-		return st.bold.Render(m[2 : len(m)-2])
-	})
-	line = codeSpan.ReplaceAllStringFunc(line, func(m string) string {
-		return st.code.Render(m[1 : len(m)-1])
-	})
-	return base.Render(line)
 }

@@ -36,7 +36,7 @@ func TestPendingCard_StripedColumns(t *testing.T) {
 		d := func(x, y uint8) bool { return max(x, y)-min(x, y) <= 1 }
 		return d(a.R, b.R) && d(a.G, b.G) && d(a.B, b.B)
 	}
-	panel, stripe := color.RGBA{R: 0x14, G: 0x14, B: 0x14, A: 255}, color.RGBA{R: 0x16, G: 0x16, B: 0x16, A: 255}
+	panel, stripe := color.RGBA{R: 38, G: 38, B: 38, A: 255}, color.RGBA{R: 44, G: 44, B: 44, A: 255}
 	// cell 0 is the rail; the panel starts at cell 1: "  queued 界 text"
 	wide := 1 + len("  queued ")
 	for x := 1; x < 30; x++ {
@@ -50,7 +50,7 @@ func TestPendingCard_StripedColumns(t *testing.T) {
 		assert.True(t, near(want, bg(x)), "cell %d: want %v, got %v", x, want, bg(x))
 	}
 	fg := color.RGBAModel.Convert(emu.CellAt(3, 0).Style.Fg).(color.RGBA)
-	assert.True(t, near(color.RGBA{R: 0x80, G: 0x80, B: 0x80, A: 255}, fg), "the text is muted, as its state row: %v", fg)
+	assert.True(t, near(color.RGBA{R: 0x7a, G: 0x7a, B: 0x7a, A: 255}, fg), "the text is muted, as its state row: %v", fg)
 	assert.Equal(t, "Queued", ansiStripTrim(rows[1]), "the state row keeps the pane's background")
 }
 

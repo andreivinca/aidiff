@@ -99,7 +99,10 @@ func (m Model) drawFocusMark(line string, from, to int, cbg, cfg string) string 
 	mid := ansi.Cut(line, from, to) // each piece carries the escapes of the whole line
 	bg, fg := focusColors(line, cbg, cfg)
 	if bg == "" {
-		return ansi.Cut(line, 0, from) + ansi.ResetStyle + "\x1b[7m" + mid + ansi.ResetStyle + ansi.Cut(line, to, m.winW)
+		// reverse video, kept on past any reset the line's own styling makes
+		// inside the panel's columns, so the whole span reads as one block
+		rev := sgrSeq.ReplaceAllStringFunc(mid, func(seq string) string { return seq + "\x1b[7m" })
+		return ansi.Cut(line, 0, from) + ansi.ResetStyle + "\x1b[7m" + rev + ansi.ResetStyle + ansi.Cut(line, to, m.winW)
 	}
 	mark := "\x1b[" + strings.Trim(bg+";"+fg, ";") + "m"
 	green := func(piece string) string {

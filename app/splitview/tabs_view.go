@@ -24,9 +24,8 @@ const (
 )
 
 // Each tab starts with a bar in its machine's color, so the tabs of one
-// machine read as a group, and only the tab on screen is drawn on that
-// color, bold: the others sit on the row's own background, so the one on
-// screen stands out from all of them. The color is picked from
+// machine read as a group. The tab on screen is filled with that color,
+// bold; the others are quiet text on the row's own background. The color is picked from
 // machinePalette by a hash of the machine's name as the tab shows it, never
 // by the tab's place, so it stays the same in every frame, as tabs open and
 // close, across reconnects and from one run to the next. Two machines may
@@ -68,20 +67,28 @@ func machineColorOf(machine string) machineColor {
 	return machinePalette[h.Sum32()%uint32(len(machinePalette))]
 }
 
+// tabIdleFg is the text of the tabs not on screen: the quiet neutral grey,
+// plain on the row's background, so the one tab filled with
+// its machine's color is found at a glance.
+const tabIdleFg = "#797979"
+
 // tabSGR is the select-graphic-rendition sequence a tab's text starts with:
-// the tab on screen bold, on its machine's color; the others nothing. The
+// the tab on screen bold, filled with its machine's color; the others quiet. The
 // colors go through lipgloss's color profile, the one the program draws
 // with, so a profile of 256 or 16 colors gets the nearest of its own.
-// Without colors the tab on screen is in reverse video; "" for no sequence.
+// Without colors the tab on screen is in reverse video and the others carry
+// nothing; "" for no sequence.
 func tabSGR(machine string, current, noColors bool) string {
 	switch {
-	case !current:
-		return ""
-	case noColors:
+	case noColors && current:
 		return "\x1b[1;7m"
+	case noColors:
+		return ""
+	case current:
+		c := machineColorOf(machine)
+		return colorSGR([]string{"1"}, c.fg, c.bg)
 	}
-	c := machineColorOf(machine)
-	return colorSGR([]string{"1"}, c.fg, c.bg)
+	return colorSGR(nil, tabIdleFg, "")
 }
 
 // tabBarText is the bar a tab starts with, in its machine's color, on the
@@ -106,11 +113,16 @@ func tabBarText(machine string, current, noColors bool) string {
 // (hex) in lipgloss's color profile; "" when it sets nothing.
 func colorSGR(params []string, fg, bg string) string {
 	profile := lipgloss.ColorProfile()
-	if seq := profile.Color(fg).Sequence(false); seq != "" {
-		params = append(params, seq)
+	// an empty color sets nothing (the profile has no color for "")
+	if c := profile.Color(fg); fg != "" && c != nil {
+		if seq := c.Sequence(false); seq != "" {
+			params = append(params, seq)
+		}
 	}
-	if seq := profile.Color(bg).Sequence(true); seq != "" {
-		params = append(params, seq)
+	if c := profile.Color(bg); bg != "" && c != nil {
+		if seq := c.Sequence(true); seq != "" {
+			params = append(params, seq)
+		}
 	}
 	if len(params) == 0 {
 		return ""

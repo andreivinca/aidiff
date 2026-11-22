@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/umputun/revdiff/app/splitview"
@@ -142,14 +141,13 @@ func (b *connectionsSidebar) View(width, height int, focused bool) string {
 	}
 	rows := b.t.connRows()
 	b.sel = min(b.sel, len(rows)-1)
-	faint := lipgloss.NewStyle().Faint(true)
-	lines := []string{lipgloss.NewStyle().Bold(true).Render(" Connections"), ""}
+	lines := []string{paneTitle("Connections", focused), ""}
 	for i, r := range rows {
 		lines = append(lines, b.row(r, width, i == b.sel, focused))
 	}
 	if height >= len(lines)+len(connectionsHelp) {
 		for _, h := range connectionsHelp {
-			lines = append(lines, faint.Render(ansi.Truncate(h, width, "…")))
+			lines = append(lines, hintRow(h, width))
 		}
 	}
 	return strings.Join(lines[:min(len(lines), height)], "\n")
@@ -161,13 +159,7 @@ func (b *connectionsSidebar) row(r connRow, width int, selected, focused bool) s
 	if r.live {
 		mark = "▸ "
 	}
-	style := lipgloss.NewStyle()
-	switch {
-	case selected && focused:
-		style = style.Reverse(true)
-	case selected:
-		style = style.Underline(true)
-	}
+	style := rowStyle(selected, focused)
 	if r.live {
 		style = style.Bold(true)
 	}
@@ -182,7 +174,7 @@ func (b *connectionsSidebar) row(r connRow, width int, selected, focused bool) s
 	}
 	detail += strings.Repeat(" ", max(0, rest-ansi.StringWidth(detail)))
 	// each part styled whole: a style nested in another would end it early
-	return style.Render(label) + style.Faint(true).Render(detail)
+	return edged(style, label, selected, focused) + detailStyle(style).Render(detail)
 }
 
 // HandleKey moves the selection and uses the selected connection; esc hides

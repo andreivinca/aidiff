@@ -158,9 +158,9 @@ func TestDumpThemeOutput(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, th.Dump(&buf))
 	output := buf.String()
-	assert.Contains(t, output, "chroma-style = catppuccin-macchiato")
-	assert.Contains(t, output, "color-accent = #D5895F")
-	assert.Contains(t, output, "color-add-fg = #87d787")
+	assert.Contains(t, output, "chroma-style = github-dark")
+	assert.Contains(t, output, "color-accent = #a8a8a8")
+	assert.Contains(t, output, "color-add-fg = #8fc38a")
 
 	// verify dump output can be loaded back (roundtrip via temp file)
 	tmpDir := t.TempDir()
@@ -176,18 +176,19 @@ func TestListThemesOutput(t *testing.T) {
 	require.NoError(t, theme.NewCatalog(themesDir).InitBundled())
 
 	names := testListThemeFiles(t, themesDir)
-	assert.Equal(t, []string{"basic", "catppuccin-latte", "catppuccin-mocha", "dracula", "gruvbox", "nord", "revdiff", "solarized-dark"}, names)
+	assert.Equal(t, []string{"amber", "basic", "catppuccin-latte", "catppuccin-mocha", "dracula", "gruvbox", "nord", "revdiff", "solarized-dark", "tokyo-night"}, names)
 }
 
 func TestCollectColors(t *testing.T) {
 	opts, err := parseArgs(noConfigArgs(t))
 	require.NoError(t, err)
 	colors := collectColors(opts)
-	assert.Equal(t, "#D5895F", colors["color-accent"])
-	assert.Equal(t, "#585858", colors["color-border"])
-	assert.Equal(t, "#87d787", colors["color-add-fg"])
-	// 5 optional keys (cursor-bg, tree-bg, diff-bg, word-add-bg, word-remove-bg) have no default and are omitted
-	assert.Len(t, colors, 18)
+	assert.Equal(t, "#a8a8a8", colors["color-accent"])
+	assert.Equal(t, "#303030", colors["color-border"])
+	assert.Equal(t, "#8fc38a", colors["color-add-fg"])
+	// 7 optional keys (cursor-bg, tree-bg, diff-bg, word-add-bg, word-remove-bg,
+	// status-fg, status-bg) have no default and are omitted: the status line is plain
+	assert.Len(t, colors, 16)
 	assert.Empty(t, colors["color-cursor-bg"])
 	assert.Empty(t, colors["color-tree-bg"])
 	assert.Empty(t, colors["color-diff-bg"])

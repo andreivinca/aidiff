@@ -1,0 +1,22 @@
+# name: tokyo-night
+# description: Tokyo Night on the terminal background, blue accent
+# author: umputun
+# bundled: true
+
+chroma-style = tokyonight-night
+color-accent = #7aa2f7
+color-border = #292e42
+color-normal = #a9b1d6
+color-muted = #565f89
+color-selected-fg = #c0caf5
+color-selected-bg = #292e42
+color-annotation = #e0af68
+color-cursor-fg = #7aa2f7
+color-add-fg = #9ece6a
+color-add-bg = #20303b
+color-remove-fg = #f7768e
+color-remove-bg = #37222c
+color-modify-fg = #e0af68
+color-modify-bg = #2e2a2d
+color-search-fg = #1a1b26
+color-search-bg = #e0af68

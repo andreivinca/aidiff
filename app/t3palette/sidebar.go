@@ -94,12 +94,11 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 	}
 	b.sel = min(b.sel, max(0, total-1))
 
-	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
 	if v.dial.spec != "" {
 		return dialView(v.dial, width, height)
 	}
-	lines := []string{bold.Render(" T3 Projects"), faint.Render(" " + serverLabel(v.live)), ""}
+	lines := []string{paneTitle("Projects", focused), faint.Render(" " + serverLabel(v.live)), ""}
 	switch {
 	case v.live == nil:
 		lines = append(lines, faint.Render(" not connected"))
@@ -132,7 +131,7 @@ func (b *projectsSidebar) View(width, height int, focused bool) string {
 		lines = append(lines, b.row(i, list[i], v.shell, width, i == b.sel, focused, list[i].ID == current))
 	}
 	for _, h := range help {
-		lines = append(lines, faint.Render(ansi.Truncate(h, width, "…")))
+		lines = append(lines, hintRow(h, width))
 	}
 	return strings.Join(lines[:min(len(lines), height)], "\n")
 }
@@ -166,17 +165,11 @@ func (b *projectsSidebar) row(i int, p t3client.Project, sh t3client.Shell, widt
 	title := ansi.Truncate(p.Title, max(1, width-len(num)-len(mark)-ansi.StringWidth(tail)-2), "…")
 	text := " " + num + " " + mark + title
 	text += strings.Repeat(" ", max(0, width-ansi.StringWidth(text)-ansi.StringWidth(tail))) + tail
-	style := lipgloss.NewStyle()
-	switch {
-	case selected && focused:
-		style = style.Reverse(true)
-	case selected:
-		style = style.Underline(true)
-	}
+	style := rowStyle(selected, focused)
 	if current {
 		style = style.Bold(true)
 	}
-	return style.Render(text)
+	return edged(style, text, selected, focused)
 }
 
 // canAdd reports whether the panel has its Add project… row: a server is
@@ -189,15 +182,12 @@ func (b *projectsSidebar) canAdd() bool {
 // addProjectRow is the row under a panel's list that adds a project, as a
 // does: aligned with the names above it, selectable like them.
 func addProjectRow(width int, selected, focused bool) string {
-	style := lipgloss.NewStyle().Faint(!selected || !focused)
-	switch {
-	case selected && focused:
-		style = style.Reverse(true)
-	case selected:
-		style = style.Underline(true)
+	style := rowStyle(selected, focused)
+	if !selected {
+		style = detailStyle(style)
 	}
 	text := ansi.Truncate("     + Add project…", width, "…")
-	return style.Render(text + strings.Repeat(" ", max(0, width-ansi.StringWidth(text))))
+	return edged(style, text+strings.Repeat(" ", max(0, width-ansi.StringWidth(text))), selected, focused)
 }
 
 // list is the projects the sidebar lists: none while a server is being
@@ -295,9 +285,8 @@ func projectRunning(sh t3client.Shell, p t3client.Project) bool {
 // the server or folders chosen before are not shown: they are not what the
 // user picked.
 func dialView(d dialing, width, height int) string {
-	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
-	lines := []string{bold.Render(" T3 Projects"), faint.Render(ansi.Truncate(" "+d.spec, width, "…")), ""}
+	lines := []string{paneTitle("Projects", true), faint.Render(ansi.Truncate(" "+d.spec, width, "…")), ""}
 	if d.err == nil {
 		secs := int(time.Since(d.since) / time.Second)
 		lines = append(lines, ansi.Truncate(fmt.Sprintf(" connecting… %ds", secs), width, "…"))

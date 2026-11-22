@@ -128,7 +128,7 @@ func TestPane_ComposerBackgroundSurvivesNestedStyles(t *testing.T) {
 				cell := emu.CellAt(x, y)
 				require.NotNil(t, cell)
 				require.NotNil(t, cell.Style.Bg, "draft %q, cell %d,%d", draft, x, y)
-				assert.Equal(t, color.RGBA{R: 32, G: 32, B: 32, A: 255}, color.RGBAModel.Convert(cell.Style.Bg),
+				assert.Equal(t, color.RGBA{R: 38, G: 38, B: 38, A: 255}, color.RGBAModel.Convert(cell.Style.Bg),
 					"draft %q, cell %d,%d", draft, x, y)
 			}
 		}
@@ -254,7 +254,7 @@ func TestPane_BlocksAreDrawnAsChips(t *testing.T) {
 		d := func(x, y uint8) bool { return max(x, y)-min(x, y) <= 1 }
 		return d(a.R, b.R) && d(a.G, b.G) && d(a.B, b.B)
 	}
-	chip, panel := color.RGBA{R: 0x3d, G: 0x31, B: 0x60, A: 255}, color.RGBA{R: 32, G: 32, B: 32, A: 255}
+	chip, panel := color.RGBA{R: 0x2a, G: 0x2a, B: 0x2a, A: 255}, color.RGBA{R: 38, G: 38, B: 38, A: 255}
 	for i := range len("[Image #1]") {
 		assert.True(t, near(chip, bg(x+i)), "the block's cell %d is a chip: %v", i, bg(x+i))
 	}

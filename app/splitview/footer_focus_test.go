@@ -95,6 +95,8 @@ func TestSplit_FocusMarkFollowsTheFocusedPanel(t *testing.T) {
 
 	plain := strings.Repeat("y", 140)
 	assert.Contains(t, hs.m.withFocusMark(plain), "\x1b[7m", "no background to shade: reverse video")
+	styled := "\x1b[38;2;86;95;137m" + strings.Repeat("y", 70) + "\x1b[0m\x1b[38;2;86;95;137m" + strings.Repeat("z", 70) + "\x1b[0m"
+	assert.Contains(t, hs.m.withFocusMark(styled), "\x1b[0m\x1b[7m", "reverse survives the line's own resets")
 }
 
 func TestWithBackground(t *testing.T) {

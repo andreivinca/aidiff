@@ -412,7 +412,9 @@ func (c Colors) contextStyle() lipgloss.Style {
 
 // dirEntryStyle builds the directory entry style, applying TreeBg as background when set.
 func (c Colors) dirEntryStyle() lipgloss.Style {
-	s := lipgloss.NewStyle().Foreground(lipgloss.Color(c.Accent)).Bold(true)
+	// directories are quiet group labels: the muted tone, the accent is kept
+	// for focus and selection
+	s := lipgloss.NewStyle().Foreground(lipgloss.Color(c.Muted))
 	if c.TreeBg != "" {
 		s = s.Background(lipgloss.Color(c.TreeBg))
 	}

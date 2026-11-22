@@ -53,7 +53,7 @@ type options struct {
 	NoTerminal            bool     `long:"no-terminal" ini-name:"no-terminal" env:"REVDIFF_NO_TERMINAL" description:"do not open a terminal pane with a local folder"`
 	TerminalWidth         int      `long:"terminal-width" ini-name:"terminal-width" env:"REVDIFF_TERMINAL_WIDTH" default:"45" description:"terminal pane width in percent"`
 	TerminalCommand       string   `long:"terminal-command" ini-name:"terminal-command" env:"REVDIFF_TERMINAL_COMMAND" description:"command to run in the terminal pane (default: $SHELL)"`
-	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"catppuccin-macchiato" description:"chroma style for syntax highlighting"`
+	ChromaStyle           string   `long:"chroma-style" ini-name:"chroma-style" env:"REVDIFF_CHROMA_STYLE" default:"github-dark" description:"chroma style for syntax highlighting"`
 	AllFiles              bool     `long:"all-files" short:"A" no-ini:"true" description:"browse all files (tracked files in git/jj; default outside a repository)"`
 	CompareOld            string   `long:"compare-old" no-ini:"true" description:"compare mode: old file path (use with --compare-new)"`
 	CompareNew            string   `long:"compare-new" no-ini:"true" description:"compare mode: new file path (use with --compare-old)"`
@@ -89,29 +89,29 @@ type options struct {
 	Version               bool     `short:"V" long:"version" no-ini:"true" description:"show version info"`
 
 	Colors struct {
-		Accent       string `long:"color-accent"      ini-name:"color-accent"      env:"REVDIFF_COLOR_ACCENT"      default:"#D5895F" description:"active pane borders and directory names"`
-		Border       string `long:"color-border"      ini-name:"color-border"      env:"REVDIFF_COLOR_BORDER"      default:"#585858" description:"inactive pane borders"`
-		Normal       string `long:"color-normal"      ini-name:"color-normal"      env:"REVDIFF_COLOR_NORMAL"      default:"#d0d0d0" description:"file entries and context lines"`
-		Muted        string `long:"color-muted"       ini-name:"color-muted"       env:"REVDIFF_COLOR_MUTED"       default:"#585858" description:"line numbers and status bar"`
-		SelectedFg   string `long:"color-selected-fg" ini-name:"color-selected-fg" env:"REVDIFF_COLOR_SELECTED_FG" default:"#ffffaf" description:"selected file text color"`
-		SelectedBg   string `long:"color-selected-bg" ini-name:"color-selected-bg" env:"REVDIFF_COLOR_SELECTED_BG" default:"#D5895F" description:"selected file background color"`
-		Annotation   string `long:"color-annotation"  ini-name:"color-annotation"  env:"REVDIFF_COLOR_ANNOTATION"  default:"#ffd700" description:"annotation text and markers"`
-		CursorFg     string `long:"color-cursor-fg"   ini-name:"color-cursor-fg"   env:"REVDIFF_COLOR_CURSOR_FG"   default:"#bbbb44" description:"diff cursor indicator color"`
+		Accent       string `long:"color-accent"      ini-name:"color-accent"      env:"REVDIFF_COLOR_ACCENT"      default:"#a8a8a8" description:"active pane borders and directory names"`
+		Border       string `long:"color-border"      ini-name:"color-border"      env:"REVDIFF_COLOR_BORDER"      default:"#303030" description:"inactive pane borders"`
+		Normal       string `long:"color-normal"      ini-name:"color-normal"      env:"REVDIFF_COLOR_NORMAL"      default:"#c6c6c6" description:"file entries and context lines"`
+		Muted        string `long:"color-muted"       ini-name:"color-muted"       env:"REVDIFF_COLOR_MUTED"       default:"#7a7a7a" description:"line numbers and status bar"`
+		SelectedFg   string `long:"color-selected-fg" ini-name:"color-selected-fg" env:"REVDIFF_COLOR_SELECTED_FG" default:"#e4e4e4" description:"selected file text color"`
+		SelectedBg   string `long:"color-selected-bg" ini-name:"color-selected-bg" env:"REVDIFF_COLOR_SELECTED_BG" default:"#2a2a2a" description:"selected file background color"`
+		Annotation   string `long:"color-annotation"  ini-name:"color-annotation"  env:"REVDIFF_COLOR_ANNOTATION"  default:"#e0af68" description:"annotation text and markers"`
+		CursorFg     string `long:"color-cursor-fg"   ini-name:"color-cursor-fg"   env:"REVDIFF_COLOR_CURSOR_FG"   default:"#e4e4e4" description:"diff cursor indicator color"`
 		CursorBg     string `long:"color-cursor-bg"   ini-name:"color-cursor-bg"   env:"REVDIFF_COLOR_CURSOR_BG"   description:"diff cursor indicator background"`
-		AddFg        string `long:"color-add-fg"      ini-name:"color-add-fg"      env:"REVDIFF_COLOR_ADD_FG"      default:"#87d787" description:"added line text color"`
-		AddBg        string `long:"color-add-bg"      ini-name:"color-add-bg"      env:"REVDIFF_COLOR_ADD_BG"      default:"#123800" description:"added line background color"`
-		RemoveFg     string `long:"color-remove-fg"   ini-name:"color-remove-fg"   env:"REVDIFF_COLOR_REMOVE_FG"   default:"#ff8787" description:"removed line text color"`
-		RemoveBg     string `long:"color-remove-bg"   ini-name:"color-remove-bg"   env:"REVDIFF_COLOR_REMOVE_BG"   default:"#4D1100" description:"removed line background color"`
+		AddFg        string `long:"color-add-fg"      ini-name:"color-add-fg"      env:"REVDIFF_COLOR_ADD_FG"      default:"#8fc38a" description:"added line text color"`
+		AddBg        string `long:"color-add-bg"      ini-name:"color-add-bg"      env:"REVDIFF_COLOR_ADD_BG"      default:"#1f2a20" description:"added line background color"`
+		RemoveFg     string `long:"color-remove-fg"   ini-name:"color-remove-fg"   env:"REVDIFF_COLOR_REMOVE_FG"   default:"#e5787f" description:"removed line text color"`
+		RemoveBg     string `long:"color-remove-bg"   ini-name:"color-remove-bg"   env:"REVDIFF_COLOR_REMOVE_BG"   default:"#2d1f1f" description:"removed line background color"`
 		WordAddBg    string `long:"color-word-add-bg"    ini-name:"color-word-add-bg"    env:"REVDIFF_COLOR_WORD_ADD_BG"    description:"intra-line word-diff add background (auto-derived if empty)"`
 		WordRemoveBg string `long:"color-word-remove-bg" ini-name:"color-word-remove-bg" env:"REVDIFF_COLOR_WORD_REMOVE_BG" description:"intra-line word-diff remove background (auto-derived if empty)"`
-		ModifyFg     string `long:"color-modify-fg"      ini-name:"color-modify-fg"      env:"REVDIFF_COLOR_MODIFY_FG"      default:"#f5c542" description:"modified line text color (collapsed mode)"`
-		ModifyBg     string `long:"color-modify-bg"   ini-name:"color-modify-bg"   env:"REVDIFF_COLOR_MODIFY_BG"   default:"#3D2E00" description:"modified line background color (collapsed mode)"`
+		ModifyFg     string `long:"color-modify-fg"      ini-name:"color-modify-fg"      env:"REVDIFF_COLOR_MODIFY_FG"      default:"#d7b46a" description:"modified line text color (collapsed mode)"`
+		ModifyBg     string `long:"color-modify-bg"   ini-name:"color-modify-bg"   env:"REVDIFF_COLOR_MODIFY_BG"   default:"#2b2716" description:"modified line background color (collapsed mode)"`
 		TreeBg       string `long:"color-tree-bg"     ini-name:"color-tree-bg"     env:"REVDIFF_COLOR_TREE_BG"     description:"file tree pane background"`
 		DiffBg       string `long:"color-diff-bg"     ini-name:"color-diff-bg"     env:"REVDIFF_COLOR_DIFF_BG"     description:"diff pane background"`
-		StatusFg     string `long:"color-status-fg"   ini-name:"color-status-fg"   env:"REVDIFF_COLOR_STATUS_FG"   default:"#202020" description:"status bar foreground"`
-		StatusBg     string `long:"color-status-bg"   ini-name:"color-status-bg"   env:"REVDIFF_COLOR_STATUS_BG"   default:"#C5794F" description:"status bar background"`
-		SearchFg     string `long:"color-search-fg"   ini-name:"color-search-fg"   env:"REVDIFF_COLOR_SEARCH_FG"   default:"#1a1a1a" description:"search match foreground"`
-		SearchBg     string `long:"color-search-bg"   ini-name:"color-search-bg"   env:"REVDIFF_COLOR_SEARCH_BG"   default:"#4a4a00" description:"search match background"`
+		StatusFg     string `long:"color-status-fg"   ini-name:"color-status-fg"   env:"REVDIFF_COLOR_STATUS_FG"   description:"status bar foreground"`
+		StatusBg     string `long:"color-status-bg"   ini-name:"color-status-bg"   env:"REVDIFF_COLOR_STATUS_BG"   description:"status bar background"`
+		SearchFg     string `long:"color-search-fg"   ini-name:"color-search-fg"   env:"REVDIFF_COLOR_SEARCH_FG"   default:"#121212" description:"search match foreground"`
+		SearchBg     string `long:"color-search-bg"   ini-name:"color-search-bg"   env:"REVDIFF_COLOR_SEARCH_BG"   default:"#e0af68" description:"search match background"`
 	} `group:"color options"`
 
 	compareAbsOld string

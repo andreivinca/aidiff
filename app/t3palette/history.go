@@ -385,9 +385,8 @@ func (b *historySidebar) View(width, height int, focused bool) string {
 	dirs := b.t.historyDirs()
 	total := len(dirs) + 1 // the Add project… row under the folders
 	b.sel = min(b.sel, total-1)
-	bold := lipgloss.NewStyle().Bold(true)
 	faint := lipgloss.NewStyle().Faint(true)
-	lines := []string{bold.Render(" History"), faint.Render(" " + b.t.cfg.LocalName), ""}
+	lines := []string{paneTitle("History", focused), faint.Render(" " + b.t.cfg.LocalName), ""}
 	if len(dirs) == 0 {
 		lines = append(lines, faint.Render(" no folders yet"))
 	}
@@ -407,7 +406,7 @@ func (b *historySidebar) View(width, height int, focused bool) string {
 		lines = append(lines, historyRow(i, dirs[i], width, i == b.sel, focused, dirs[i] == current))
 	}
 	for _, h := range help {
-		lines = append(lines, faint.Render(ansi.Truncate(h, width, "…")))
+		lines = append(lines, hintRow(h, width))
 	}
 	return strings.Join(lines[:min(len(lines), height)], "\n")
 }
@@ -423,13 +422,7 @@ func historyRow(i int, dir string, width int, selected, focused, current bool) s
 	if current {
 		mark = "▸ "
 	}
-	style := lipgloss.NewStyle()
-	switch {
-	case selected && focused:
-		style = style.Reverse(true)
-	case selected:
-		style = style.Underline(true)
-	}
+	style := rowStyle(selected, focused)
 	if current {
 		style = style.Bold(true)
 	}
@@ -444,7 +437,7 @@ func historyRow(i int, dir string, width int, selected, focused, current bool) s
 	}
 	detail += strings.Repeat(" ", max(0, rest-ansi.StringWidth(detail)))
 	// each part styled whole: a style nested in another would end it early
-	return style.Render(label) + style.Faint(true).Render(detail)
+	return edged(style, label, selected, focused) + detailStyle(style).Render(detail)
 }
 
 // homeRelative writes dir under the home folder as ~/….
