@@ -32,6 +32,10 @@ type Config struct {
 	// HintsOutside leaves the hint row out of the composer: the host shows
 	// the shortcuts itself (StatusHints), e.g. on its status bar.
 	HintsOutside bool
+	// Closable lets the user close the pane from inside it: /close and a
+	// × on its header. A side chat has it; the chat of the thread under
+	// review closes with its tab.
+	Closable bool
 }
 
 // Hint is a shortcut as the composer's hint row shows it.
@@ -50,6 +54,7 @@ type Pane struct {
 	clip     Clipboard
 	files    Files
 	quitNote string
+	closable bool      // Config.Closable
 	hostKeys []Hint    // the host's shortcuts for the hint row
 	hintsOut bool      // the host shows the hints (Config.HintsOutside)
 	builtins []command // the pane's own slash commands
@@ -129,6 +134,7 @@ func New(b Backend, title string, width, height int, cfg Config) *Pane {
 		clip:     cfg.Clipboard,
 		files:    cfg.Files,
 		quitNote: cfg.QuitNote,
+		closable: cfg.Closable,
 		hostKeys: cfg.HostKeys,
 		hintsOut: cfg.HintsOutside,
 		box:      newMailbox(),
@@ -145,6 +151,9 @@ func New(b Backend, title string, width, height int, cfg Config) *Pane {
 		p.quitNote = defaultQuitNote
 	}
 	p.builtins = p.builtinCommands()
+	if p.closable {
+		p.builtins = append(p.builtins, p.closeCommand())
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.attachLocked(b, title)
@@ -339,6 +348,23 @@ func (p *Pane) Render(showCursor bool) string {
 func (p *Pane) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closeLocked()
+}
+
+// closeSelfLocked closes the pane from inside it (/close, the header's ×):
+// a last update first, which the split reads to find the pane exited and
+// drop it (a closed Updates alone ends its wait without a word); the thread
+// stays on the server. mu must be held.
+func (p *Pane) closeSelfLocked() {
+	if p.closed {
+		return
+	}
+	p.box.wake()
+	p.closeLocked()
+}
+
+// closeLocked is Close with mu held.
+func (p *Pane) closeLocked() {
 	if p.closed {
 		return
 	}

@@ -34,6 +34,10 @@ func (p *Pane) selectionMouse(event vt.Mouse) {
 	m := event.Mouse()
 	switch event.(type) {
 	case uv.MouseClickEvent:
+		if m.Button == uv.MouseLeft && p.onHeaderClose(m.X, m.Y) {
+			p.closeSelfLocked()
+			return
+		}
 		if p.clickStickyLocked(m) {
 			return
 		}

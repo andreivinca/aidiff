@@ -79,7 +79,7 @@ func TestPane_PopupCompletesAndRuns(t *testing.T) {
 	assert.Contains(t, v, "/help")
 	assert.Contains(t, v, "how the commands work")
 	assert.NotContains(t, v, "/model <model>", "the popup shows a window of rows")
-	for range 10 {
+	for range 10 { // past the pane's own commands
 		p.SendKey(uv.KeyPressEvent{Code: uv.KeyDown})
 	}
 	assert.Contains(t, view(p), "/model <model>", "moving down scrolls the window")

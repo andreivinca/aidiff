@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,4 +135,38 @@ func locked2[T any](p *Pane, f func() T) T {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return f()
+}
+
+func TestPane_SideChatClosesByCommandOrHeaderButton(t *testing.T) {
+	p, _ := newTestPane(t, 80, 30, fixture())
+	header := strings.Split(view(p), "\n")[0]
+	assert.False(t, strings.HasSuffix(strings.TrimRight(ansi.Strip(header), " "), " ×"), "the thread's chat has no close button")
+	p.SendText("/")
+	assert.NotContains(t, view(p), "/close", "nor /close")
+	p.SendMouse(uv.MouseClickEvent{X: 79, Y: 0, Button: uv.MouseLeft})
+	assert.False(t, p.Exited())
+
+	f := newFakeBackend(fixture())
+	side := New(f, "side", 80, 30, Config{Closable: true})
+	t.Cleanup(side.Close)
+	header = strings.Split(ansi.Strip(side.Render(false)), "\n")[0]
+	assert.True(t, strings.HasSuffix(strings.TrimRight(header, " "), " ×"), "a side chat's header ends in ×: %q", header)
+	assert.Equal(t, 80, ansi.StringWidth(header))
+	side.SendMouse(uv.MouseClickEvent{X: 40, Y: 0, Button: uv.MouseLeft})
+	assert.False(t, side.Exited(), "a click elsewhere on the header leaves it open")
+	for len(side.Updates()) > 0 {
+		<-side.Updates()
+	}
+	side.SendMouse(uv.MouseClickEvent{X: 79, Y: 0, Button: uv.MouseLeft})
+	assert.True(t, side.Exited(), "a click on × closes it")
+	_, update := <-side.Updates()
+	assert.True(t, update, "with a last update, which the split reads to find it exited and drop it")
+	_, open := <-side.Updates()
+	assert.False(t, open, "then the updates end")
+
+	other := New(newFakeBackend(fixture()), "side", 80, 30, Config{Closable: true})
+	t.Cleanup(other.Close)
+	other.Render(false)
+	other.SendText("/close\r")
+	assert.True(t, other.Exited(), "/close closes a side chat too")
 }

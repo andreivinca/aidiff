@@ -45,6 +45,18 @@ func (p *Pane) builtinCommands() []command {
 	}
 }
 
+// closeCommand is /close, for a pane that can be closed from inside it
+// (Config.Closable).
+func (p *Pane) closeCommand() command {
+	return command{Command: Command{Name: "/close", Description: "close this side chat; its thread stays on the server"}, run: p.closeCmd}
+}
+
+// closeCmd is /close: the pane closes, as the × on its header does.
+func (p *Pane) closeCmd(string) error {
+	p.closeSelfLocked()
+	return nil
+}
+
 // commandsLocked lists the pane's commands, then the backend's; mu must be
 // held.
 func (p *Pane) commandsLocked() []command {

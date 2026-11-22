@@ -3,6 +3,7 @@ package chat
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -219,6 +220,30 @@ func stickyRows(panel block, off, w int, st styles) block {
 // headerLocked is the title and the agent's state, with how far the
 // transcript is scrolled up; mu must be held.
 func (p *Pane) headerLocked(w, scroll int) string {
+	if p.closable && w > headerCloseW+4 {
+		text := p.headerTextLocked(w-headerCloseW, scroll)
+		pad := max(0, w-headerCloseW-ansi.StringWidth(text))
+		return text + strings.Repeat(" ", pad) + " " + p.styles.muted.Render(headerClose)
+	}
+	return p.headerTextLocked(w, scroll)
+}
+
+// The header's close button: × in its last column, a blank before it.
+const (
+	headerClose  = "×"
+	headerCloseW = 2
+)
+
+// onHeaderClose reports whether a click at (x, y) lands on the header's ×,
+// as the last frame drew it.
+func (p *Pane) onHeaderClose(x, y int) bool {
+	f := p.frame
+	return p.closable && f.valid && f.layout.headerH > 0 && y == 0 && p.width > headerCloseW+4 && x >= p.width-1
+}
+
+// headerTextLocked is the header without its close button: the title and
+// what the agent does, in w cells; mu must be held.
+func (p *Pane) headerTextLocked(w, scroll int) string {
 	state := p.link
 	if state == "" {
 		state = string(p.agentStateLocked())

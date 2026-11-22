@@ -219,6 +219,7 @@ When a send fails, the text and its images and files go back into the input; a f
 | `/mode approval-required\|auto-accept-edits\|auto\|full-access` *(T3)* | Runtime mode |
 | `/clear` *(T3)* | Start a new thread in the same project, with this thread's model, runtime and interaction modes; it takes the screen and the chat |
 | `/side` (`/btw`) `<question>` *(T3)* | Fork a side chat and ask it; once the fork went through it opens in a pane of its own, right of the other panes, and stays on its thread when the review moves to another (it is listed with the threads too) |
+| `/close` | Close a side chat's pane (the `×` on its title row does too); its thread stays on the server. The chat of the thread under review has neither: it closes with its tab |
 | `/attach <path>` | Attach a file, an image as an image; quoted, escaped, `~/`, `file://` and relative paths are taken |
 | `/work` | Toggle between expanded and summarized agent work |
 | `/activity` | Open the activity view |

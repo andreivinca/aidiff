@@ -137,7 +137,7 @@ ctrl+p opens it from anywhere, its query starting with `>`: the commands. Deleti
 - **Chat pane:** opens automatically when a thread is selected, unless `--no-chat` is given. It provides:
   - the transcript, and a status line such as `Working · 2 subagents · 1 process`
   - queued messages
-  - slash commands for approvals, model, effort and mode; `/side <question>` forks a side chat, which opens in a pane of its own to the right of the others and stays on its thread when the review moves to another
+  - slash commands for approvals, model, effort and mode; `/side <question>` forks a side chat, which opens in a pane of its own to the right of the others (`/close` in it, or the `×` on its title row, closes that pane, its thread staying on the server; the thread's own chat has neither) and stays on its thread when the review moves to another
   - your message, once scrolled above the top, stays pinned there until your next one pushes it out; a click on it scrolls back to it, whole, with the start of the answer under it
   - the agent's secret requests (a sudo password, a token): typed masked in the composer and handed to T3 Code, never into the chat
   - attachments: files copied in a file manager and pasted with ctrl+v, a pasted path (quoted, escaped, `~/` or `file://`), or `/attach <path>`, each a token naming it in the input (`[File #1: report.pdf]`, an image as `[Image #1]`); files are uploaded to the T3 server when the message is sent (up to 50 MB each), with progress on the message's card and esc to cancel; sent messages list their attachments
