@@ -28,7 +28,7 @@ github.com/charmbracelet/lipgloss
 ## explicit; go 1.24.2
 github.com/charmbracelet/ultraviolet
 github.com/charmbracelet/ultraviolet/screen
-# github.com/charmbracelet/x/ansi v0.11.9
+# github.com/charmbracelet/x/ansi v0.11.10
 ## explicit; go 1.24.2
 github.com/charmbracelet/x/ansi
 github.com/charmbracelet/x/ansi/kitty
