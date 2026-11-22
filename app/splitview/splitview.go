@@ -263,7 +263,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.askQuit()
 	case m.cfg.Keys.Palette, m.cfg.Keys.PaletteAlt:
 		return m.openPalette(), nil
-	case m.cfg.Keys.CloseTab:
+	case m.cfg.Keys.CloseTab, shifted(m.cfg.Keys.CloseTab):
 		return m.requestCloseTab(m.wsKey)
 	}
 	if n, ok := altNumber(msg); ok {

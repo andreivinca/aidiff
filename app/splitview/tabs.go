@@ -117,8 +117,8 @@ func (m Model) showTab(key string) (tea.Model, tea.Cmd) {
 	return model, tea.Batch(append(cmds, cmd)...)
 }
 
-// requestCloseTab closes tab key, asking first when that would lose
-// something (closeDetails); the last tab stays.
+// requestCloseTab asks to close tab key, every time, saying what closing
+// it would lose (closeDetails); the last tab stays.
 func (m Model) requestCloseTab(key string) (tea.Model, tea.Cmd) {
 	keys := m.tabKeys()
 	switch {
@@ -131,7 +131,7 @@ func (m Model) requestCloseTab(key string) (tea.Model, tea.Cmd) {
 	}
 	details := m.closeDetails(key)
 	if len(details) == 0 {
-		return m.closeTab(key)
+		details = []string{"Opening it again starts a new tab."} // asked anyway: alt+w is one key away from others
 	}
 	yes := func() tea.Msg { return closeTabMsg{key: key} }
 	return m.showConfirm(ConfirmMsg{
@@ -268,6 +268,18 @@ func (m Model) closeTabCommand() (row, bool) {
 		return m.requestCloseTab(m.wsKey)
 	}
 	return row{label: "Close tab", detail: m.sessionInfo(m.wsKey, false).Name + " · " + m.cfg.Keys.CloseTab, run: run}, true
+}
+
+// shifted is an alt+letter key with its letter in upper case, as Bubble
+// Tea names it with shift held or caps lock on ("alt+w" → "alt+W"), so the
+// key works either way; key itself for any other key (a ctrl+letter reads
+// the same shifted or not).
+func shifted(key string) string {
+	letter, ok := strings.CutPrefix(key, "alt+")
+	if !ok || len(letter) != 1 || letter[0] < 'a' || letter[0] > 'z' {
+		return key
+	}
+	return "alt+" + strings.ToUpper(letter)
 }
 
 // tabsMouse handles a press on the strip: a tab's close button closes it,

@@ -139,7 +139,10 @@ func TestTabs_MouseOnTheStrip(t *testing.T) {
 	zc := hs.zoneOf(t, "c", true)
 	assert.Equal(t, "×", string([]rune(hs.stripLine())[zc.from]), "the close zone is where × is drawn")
 	hs.clickAt(zc.from, 0)
-	assert.Equal(t, []string{"a", "b"}, hs.m.tabKeys(), "× closes a parked tab with nothing to lose at once")
+	require.NotNil(t, hs.m.confirm, "× asks first, even with nothing to lose")
+	assert.Contains(t, ansi.Strip(hs.m.View()), "Opening it again starts a new tab.")
+	hs.sendAll(msgsOf(hs.key("y")))
+	assert.Equal(t, []string{"a", "b"}, hs.m.tabKeys(), "and closes once confirmed")
 	assert.Nil(t, hs.m.confirm)
 
 	hs.send(tea.MouseMsg{X: 3, Y: 0, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
@@ -242,6 +245,8 @@ func asModel(model tea.Model, cmd tea.Cmd) (Model, tea.Cmd) {
 func TestTabs_PaletteCloseTab(t *testing.T) {
 	hs := newSwitcherHarness(t, nil)
 	hs.runPalette("close tab")
+	require.NotNil(t, hs.m.confirm, "the palette's Close tab asks first")
+	hs.sendAll(msgsOf(hs.key("y")))
 	assert.Equal(t, []string{"a", "b"}, hs.m.tabKeys(), "the palette's Close tab closes the tab on screen")
 	assert.Equal(t, "b", hs.m.Workspace(), "its neighbor on the left takes the screen")
 
@@ -379,6 +384,7 @@ func TestTabs_ScrolledStripHitTests(t *testing.T) {
 	z := hs.zoneOf(t, cur, true)
 	assert.Equal(t, "×", string([]rune(hs.stripLine())[z.from]))
 	hs.clickAt(z.from, 0)
+	hs.sendAll(msgsOf(hs.key("y")))
 	assert.NotContains(t, hs.m.tabKeys(), cur, "× hit-tests right after a scroll")
 }
 
@@ -551,4 +557,25 @@ func TestTabs_StripIsCached(t *testing.T) {
 	hs.send(SwitchWorkspaceMsg{Key: "a"})
 	assert.NotEqual(t, "cached", hs.m.tabStrip().line, "another tab on screen: laid out again")
 	assert.NotEqual(t, first.line, hs.m.tabStrip().line)
+}
+
+func TestTabs_AltWClosesTheTabOnScreenEitherCase(t *testing.T) {
+	for _, r := range []rune{'w', 'W'} {
+		hs := newSwitcherHarness(t, nil)
+		require.Equal(t, []string{"a", "b", "c"}, hs.m.tabKeys())
+		require.Equal(t, "c", hs.m.Workspace())
+		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: true})
+		require.NotNil(t, hs.m.confirm, "alt+%c asks first", r)
+		assert.Contains(t, ansi.Strip(hs.m.View()), "Close ")
+		hs.key("n")
+		assert.Equal(t, []string{"a", "b", "c"}, hs.m.tabKeys(), "no keeps it")
+		hs.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: true})
+		hs.sendAll(msgsOf(hs.key("y")))
+		assert.Equal(t, []string{"a", "b"}, hs.m.tabKeys(), "alt+%c closes the tab on screen once confirmed", r)
+		assert.Equal(t, "b", hs.m.Workspace())
+	}
+	assert.Equal(t, "alt+W", shifted("alt+w"))
+	assert.Equal(t, "ctrl+q", shifted("ctrl+q"))
+	assert.Equal(t, "alt+left", shifted("alt+left"), "a named key has no upper case")
+	assert.Equal(t, "alt+1", shifted("alt+1"))
 }
