@@ -158,9 +158,10 @@ func sshCommand(ctx context.Context, host, script string) *exec.Cmd {
 	return exec.CommandContext(ctx, "ssh", sshArgv(host, script)...) //nolint:gosec // host validated by validSSHHost
 }
 
-// sshArgv is the arguments of an ssh command running script on host.
+// sshArgv is the arguments of an ssh command running script on host, over
+// its login's connection when it has one (LoginCommand).
 func sshArgv(host, script string) []string {
-	args := append(append([]string{}, sshOptions...), SSHArgs(host)...)
+	args := append(append(append([]string{}, sshOptions...), loginOptions(host)...), SSHArgs(host)...)
 	return append(args, script)
 }
 
@@ -188,6 +189,7 @@ type sshTunnel struct {
 	dir       string // 0700 directory holding the sockets
 	socket    string
 	control   string          // the ControlMaster socket
+	unforward func()          // a tunnel over a login's connection: stops its forward; nil otherwise
 	lifeline  io.Closer       // the watchdog's stdin; the tunnel ends when it closes
 	transport *http.Transport // carries HTTP through the socket
 	stderr    *strings.Builder
@@ -220,9 +222,13 @@ status=$?
 kill "$watch" 2>/dev/null
 exit "$status"`
 
-// startTunnel forwards a fresh local socket to remoteAddr through host. The
-// tunnel outlives the connect timeout, so it is not tied to a context.
+// startTunnel forwards a fresh local socket to remoteAddr through host,
+// over its login's connection when it has one (LoginCommand). The tunnel
+// outlives the connect timeout, so it is not tied to a context.
 func startTunnel(host, remoteAddr string) (*sshTunnel, error) {
+	if control := loginControl(host); control != "" {
+		return startMuxTunnel(host, remoteAddr, control)
+	}
 	dir, err := os.MkdirTemp("", "aidiff-t3-") // created 0700
 	if err != nil {
 		return nil, fmt.Errorf("create ssh tunnel directory: %w", err)
@@ -306,6 +312,9 @@ func (t *sshTunnel) stop() {
 		}
 		_ = t.lifeline.Close() // ends the watchdog, should ssh outlive its shell
 		<-t.exited
+		if t.unforward != nil {
+			t.unforward()
+		}
 		_ = os.RemoveAll(t.dir)
 	})
 }

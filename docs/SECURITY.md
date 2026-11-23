@@ -23,6 +23,7 @@ This document covers the security properties of aidiff's own features: T3 connec
 - The tunnel forwards to a Unix socket in a private (0700) temp directory, not a TCP port, so no other local user or process can reach the server through it. It uses `ExitOnForwardFailure=yes`, so a failed forward is noticed. It runs in its own process group and is killed when the session ends, and the directory is removed.
 - The tunnel's ControlMaster socket lives in the same private directory, with an explicit `ControlPath`, so it never joins a master from the user's own ssh config. Only remote terminal panes use it (`ssh -S`).
 - Discovery and token minting run with `BatchMode=yes`, so ssh never waits on a hidden prompt.
+- A host that wants a password, code or host-key confirmation gets one interactive login, run by the system ssh with the screen handed to it: aidiff never sees or stores what is typed. Its ControlMaster socket lives in a per-user directory that is used only when it is a plain 0700 directory owned by this user (else a fresh private temp directory), and the login exits 60 s after its last session.
 - In remote terminal panes, the `cd` directory is single-quote escaped.
 
 ### Agent control

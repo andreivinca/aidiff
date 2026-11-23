@@ -20,7 +20,7 @@ This document lists the platforms, dependencies and non-functional requirements 
 | T3 Code server | T3 mode; must speak orchestration protocol **2** | For T3 |
 | `t3` CLI (local, or on the SSH host in `PATH`, `~/.local/bin` or `~/.t3/bin`) | Automatic token minting | Optional; `--t3-pair` works without it |
 | `wl-paste` / `wl-copy` or `xclip` | Chat clipboard | Optional |
-| SSH key or agent auth | The tunnel runs with `BatchMode=yes` and cannot prompt | For SSH T3 |
+| SSH key or agent auth, else an interactive login | Background ssh runs with `BatchMode=yes`; a host that wants a password, code or host-key confirmation gets one interactive login when connecting from the palette | For SSH T3 |
 
 Go libraries added by aidiff:
 

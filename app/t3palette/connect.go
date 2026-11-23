@@ -2,6 +2,7 @@ package t3palette
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -129,7 +130,7 @@ func serverSpec(s string) string {
 // chose another one (chooseLocked) is closed instead: the last choice wins,
 // not the last dial to finish. It runs on the UI goroutine, as the choice.
 func (t *Palette) connect(spec string) tea.Cmd {
-	return t.connectWith(spec, func(ctx context.Context) (Session, error) {
+	return t.connectWith(spec, true, func(ctx context.Context) (Session, error) {
 		return t.dial(ctx, spec)
 	})
 }
@@ -142,13 +143,15 @@ func (t *Palette) pairWith(spec, link string) tea.Cmd {
 	if t.pair == nil {
 		return flash("T3: pairing is not available here")
 	}
-	return t.connectWith(spec, func(ctx context.Context) (Session, error) {
+	return t.connectWith(spec, false, func(ctx context.Context) (Session, error) {
 		return t.pair(ctx, link)
 	})
 }
 
-// connectWith is connect, reaching the server named by spec with dial.
-func (t *Palette) connectWith(spec string, dial func(context.Context) (Session, error)) tea.Cmd {
+// connectWith is connect, reaching the server named by spec with dial. With
+// login, an SSH server that wants a password or a host key confirmed gets
+// the user's answer (loginThen) and is dialed once more.
+func (t *Palette) connectWith(spec string, login bool, dial func(context.Context) (Session, error)) tea.Cmd {
 	t.mu.Lock()
 	choice := t.chooseLocked()
 	t.dialed = dialing{spec: spec, choice: choice, since: time.Now()}
@@ -159,6 +162,11 @@ func (t *Palette) connectWith(spec string, dial func(context.Context) (Session, 
 		ctx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
 		defer cancel()
 		s, sh, err := reach(ctx, dial)
+		if err != nil && login && t3client.NeedsLogin(err) && t.login != nil {
+			if cmd := t.loginThen(spec, err); cmd != nil {
+				return cmd()
+			}
+		}
 		if err != nil {
 			t.dialFailed(choice, err)
 			return t3Failed(err)
@@ -179,6 +187,34 @@ func (t *Palette) connectWith(spec string, dial func(context.Context) (Session, 
 			},
 		}
 		return withNotices(s, connected)
+	})
+}
+
+// execProcess hands the screen to a command; a variable for the tests.
+var execProcess = tea.ExecProcess
+
+// loginThen hands the screen to the ssh login to spec, which failed with
+// err for want of an answer, then dials spec once more, without offering a
+// login again: a second refusal is shown as it is. nil when spec has no
+// login (not an SSH server).
+func (t *Palette) loginThen(spec string, err error) tea.Cmd {
+	cmd, cleanup, lerr := t.login(spec)
+	if lerr != nil {
+		return nil
+	}
+	return execProcess(cmd, func(runErr error) tea.Msg {
+		cleanup()
+		if runErr != nil {
+			t.mu.Lock()
+			if t.dialed.spec == spec {
+				t.dialed.err = err
+			}
+			t.mu.Unlock()
+			return t3Failed(fmt.Errorf("ssh login to %s did not complete: %w", spec, runErr))
+		}
+		return tea.BatchMsg{t.connectWith(spec, false, func(ctx context.Context) (Session, error) {
+			return t.dial(ctx, spec)
+		})}
 	})
 }
 

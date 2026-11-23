@@ -6,6 +6,7 @@ package t3palette
 
 import (
 	"context"
+	"os/exec"
 	"slices"
 	"sync"
 	"time"
@@ -74,6 +75,7 @@ type Palette struct {
 	dial   dialFunc
 	pair   dialFunc                                     // pairs with the server a `t3 pair` link names, given the link; nil cannot
 	probe  func(ctx context.Context, spec string) error // whether a server answers, for the connect picker; nil asks none
+	login  func(spec string) (*exec.Cmd, func(), error) // the ssh the user answers to log in to an SSH server (t3client.LoginCommand); nil offers none
 	bg     sync.WaitGroup                               // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
 	loops  sync.WaitGroup                               // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
 	ctx    context.Context                              // canceled by Close: ends the loops, the reconnects' dials and the background fetches
@@ -135,6 +137,7 @@ func New(cfg Config, start *Review) *Palette {
 		return Connect(ctx, "", t3client.ConnectOptions{Store: cfg.Store, Pair: link})
 	}
 	t.probe = t3client.Probe
+	t.login = t3client.LoginCommand
 	return t
 }
 
