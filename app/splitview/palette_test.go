@@ -186,6 +186,29 @@ func TestSplit_Picker(t *testing.T) {
 	}
 }
 
+func TestSplit_UpdatePickerItem(t *testing.T) {
+	hs := newCommandHarness(t, nil)
+	items := []PickerItem{{Label: "local"}, {Label: "ssh://box", Detail: "saved login"}}
+	hs.send(ShowPickerMsg{Title: "Connect to", Items: items})
+	hs.send(tea.KeyMsg{Type: tea.KeyDown})
+	sel := hs.m.palette.sel
+	require.Equal(t, 1, sel)
+
+	hs.send(UpdatePickerItemMsg{Title: "Connect to", Label: "ssh://box", Badge: "online", Detail: "saved login"})
+	view := ansi.Strip(hs.m.View())
+	assert.Contains(t, view, "online", "the badge shows on the open picker")
+	assert.Empty(t, items[1].Badge, "the sender's items are not written to")
+	assert.Equal(t, sel, hs.m.palette.sel, "the selection stays")
+
+	hs.send(UpdatePickerItemMsg{Title: "Threads", Label: "local", Badge: "stale"})
+	hs.send(UpdatePickerItemMsg{Title: "Connect to", Label: "ssh://gone", Badge: "stale"})
+	assert.NotContains(t, ansi.Strip(hs.m.View()), "stale", "another picker's or an unknown row's update is dropped")
+
+	hs.send(tea.KeyMsg{Type: tea.KeyEsc})
+	hs.send(UpdatePickerItemMsg{Title: "Connect to", Label: "local", Badge: "online"})
+	assert.False(t, hs.m.palette.open, "an update does not reopen a closed picker")
+}
+
 func TestSplit_Prompt(t *testing.T) {
 	hs := newCommandHarness(t, nil)
 	var submitted string

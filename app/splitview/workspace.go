@@ -355,7 +355,7 @@ func scopeMsg(id int, msg tea.Msg) tea.Msg {
 		return out
 	}
 	switch msg.(type) {
-	case ReplaceInnerMsg, RunMsg, RunCommandMsg, ShowPickerMsg, ShowPromptMsg, ConfirmMsg, FilesMsg:
+	case ReplaceInnerMsg, RunMsg, RunCommandMsg, ShowPickerMsg, UpdatePickerItemMsg, ShowPromptMsg, ConfirmMsg, FilesMsg:
 		return scopedMsg{ws: id, msg: msg}
 	}
 	return msg

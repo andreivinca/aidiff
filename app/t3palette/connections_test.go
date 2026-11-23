@@ -55,7 +55,7 @@ func TestConnections_UseAnotherServer(t *testing.T) {
 	assert.Zero(t, b.closes(), "b stays connected, to go back to")
 
 	cmd, _ = sb.Click(connectionsHeader + 3) // the connect row, after local, a and b
-	assert.Equal(t, "T3 Code: connect to", find[splitview.ShowPickerMsg](t, run(cmd)).Title)
+	assert.Equal(t, "Connect to", find[splitview.ShowPickerMsg](t, run(cmd)).Title)
 }
 
 func TestConnections_LocalShowsTheHistory(t *testing.T) {

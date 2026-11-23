@@ -72,10 +72,12 @@ type dialFunc func(ctx context.Context, spec string) (Session, error)
 type Palette struct {
 	cfg    Config
 	dial   dialFunc
-	bg     sync.WaitGroup     // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
-	loops  sync.WaitGroup     // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
-	ctx    context.Context    // canceled by Close: ends the loops, the reconnects' dials and the background fetches
-	cancel context.CancelFunc // cancels ctx
+	pair   dialFunc                                     // pairs with the server a `t3 pair` link names, given the link; nil cannot
+	probe  func(ctx context.Context, spec string) error // whether a server answers, for the connect picker; nil asks none
+	bg     sync.WaitGroup                               // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
+	loops  sync.WaitGroup                               // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
+	ctx    context.Context                              // canceled by Close: ends the loops, the reconnects' dials and the background fetches
+	cancel context.CancelFunc                           // cancels ctx
 
 	mu          sync.Mutex
 	closed      bool
@@ -128,7 +130,12 @@ func New(cfg Config, start *Review) *Palette {
 	dial := func(ctx context.Context, spec string) (Session, error) {
 		return Connect(ctx, spec, t3client.ConnectOptions{Store: cfg.Store})
 	}
-	return newPalette(cfg, start, dial)
+	t := newPalette(cfg, start, dial)
+	t.pair = func(ctx context.Context, link string) (Session, error) {
+		return Connect(ctx, "", t3client.ConnectOptions{Store: cfg.Store, Pair: link})
+	}
+	t.probe = t3client.Probe
+	return t
 }
 
 // newPalette is New with the way palette connections are made.

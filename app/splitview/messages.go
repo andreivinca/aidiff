@@ -61,6 +61,16 @@ type ShowPickerMsg struct {
 	TextLabel string
 }
 
+// UpdatePickerItemMsg sets the Badge and Detail of the row labeled Label in
+// the picker titled Title, when that picker is still open, for what was
+// learned after it opened. Anything else open is left as it is.
+type UpdatePickerItemMsg struct {
+	Title  string
+	Label  string
+	Badge  string
+	Detail string
+}
+
 // ShowPromptMsg asks for one line of text in the palette. Enter hands the
 // trimmed text to OnSubmit; an empty line is ignored; esc cancels.
 type ShowPromptMsg struct {
@@ -123,18 +133,19 @@ type splitMsg interface {
 	splitMsg()
 }
 
-func (FilesChangedMsg) splitMsg()    {}
-func (OpenPaneMsg) splitMsg()        {}
-func (OpenTerminalMsg) splitMsg()    {}
-func (ShowPickerMsg) splitMsg()      {}
-func (ShowPromptMsg) splitMsg()      {}
-func (RunCommandMsg) splitMsg()      {}
-func (RunMsg) splitMsg()             {}
-func (FlashMsg) splitMsg()           {}
-func (ReplaceInnerMsg) splitMsg()    {}
-func (ForceQuitMsg) splitMsg()       {}
-func (ConfirmMsg) splitMsg()         {}
-func (FilesMsg) splitMsg()           {}
-func (ShowSidebarMsg) splitMsg()     {}
-func (HideSidebarMsg) splitMsg()     {}
-func (SwitchWorkspaceMsg) splitMsg() {}
+func (FilesChangedMsg) splitMsg()     {}
+func (OpenPaneMsg) splitMsg()         {}
+func (OpenTerminalMsg) splitMsg()     {}
+func (ShowPickerMsg) splitMsg()       {}
+func (ShowPromptMsg) splitMsg()       {}
+func (UpdatePickerItemMsg) splitMsg() {}
+func (RunCommandMsg) splitMsg()       {}
+func (RunMsg) splitMsg()              {}
+func (FlashMsg) splitMsg()            {}
+func (ReplaceInnerMsg) splitMsg()     {}
+func (ForceQuitMsg) splitMsg()        {}
+func (ConfirmMsg) splitMsg()          {}
+func (FilesMsg) splitMsg()            {}
+func (ShowSidebarMsg) splitMsg()      {}
+func (HideSidebarMsg) splitMsg()      {}
+func (SwitchWorkspaceMsg) splitMsg()  {}

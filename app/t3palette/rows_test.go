@@ -1,13 +1,18 @@
 package t3palette
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
 )
 
@@ -27,6 +32,21 @@ func TestServerItems_SavedLoginsListedOnce(t *testing.T) {
 		labels[it.Label] = it.Detail
 	}
 	assert.Equal(t, "saved login", labels["ssh://boxdev"])
+}
+
+func TestServerItems_SSHHostsGroupedApart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host boxdev\nHost workpc\n"), 0o600))
+	store := t3client.TokenStore{Path: filepath.Join(t.TempDir(), "t3-tokens.json")}
+	require.NoError(t, store.Put("ssh://boxdev", "tok"))
+	groups := map[string]string{}
+	for _, it := range serverItems(store) {
+		groups[it.Label] = it.Group
+	}
+	assert.Empty(t, groups["ssh://boxdev"], "a host with a saved login is a T3 server")
+	assert.Equal(t, sshHostsGroup, groups["ssh://workpc"], "a bare ssh host is listed apart")
 }
 
 func TestThreadAndProjectItems(t *testing.T) {
@@ -77,4 +97,84 @@ func TestWriteThreads(t *testing.T) {
 func TestTrunc(t *testing.T) {
 	assert.Equal(t, "short", trunc("short", 10))
 	assert.Equal(t, "abcd…", trunc("abcdefgh", 5))
+}
+
+// connectPickerEnv points the connect picker at an empty T3 home, so no
+// local server is listed, and at an ssh config naming hosts.
+func connectPickerEnv(t *testing.T, hosts ...string) t3client.TokenStore {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("T3CODE_HOME", filepath.Join(home, ".t3"))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0o700))
+	var cfg strings.Builder
+	for _, h := range hosts {
+		cfg.WriteString("Host " + h + "\n")
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte(cfg.String()), 0o600))
+	return t3client.TokenStore{Path: filepath.Join(home, "t3-tokens.json")}
+}
+
+func TestConnectPicker_MarksServersOnlineOrOffline(t *testing.T) {
+	store := connectPickerEnv(t, "workpc")
+	require.NoError(t, store.Put("ssh://box", "tok"))
+	require.NoError(t, store.Put("ssh://boxdev", "tok"))
+	require.NoError(t, store.Put("ssh://live", "tok"))
+	h := newHarness(t, Config{Store: store, NoWatch: true, NoChat: true}, nil)
+	h.connect(t, "ssh://live", newFakeSession("ssh://live", testShell()))
+	var probed []string
+	var mu sync.Mutex
+	h.p.probe = func(_ context.Context, spec string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		probed = append(probed, spec)
+		if spec == "ssh://boxdev" {
+			return errors.New("T3 Code is not running on boxdev")
+		}
+		return nil
+	}
+
+	msgs := run(h.p.connectPicker(nil))
+	assert.Equal(t, connectPickerTitle, find[splitview.ShowPickerMsg](t, msgs).Title)
+	got := map[string]splitview.UpdatePickerItemMsg{}
+	for _, m := range msgs {
+		if u, ok := m.(splitview.UpdatePickerItemMsg); ok {
+			assert.Equal(t, connectPickerTitle, u.Title)
+			got[u.Label] = u
+		}
+	}
+	assert.Equal(t, "online", got["ssh://box"].Badge)
+	assert.Equal(t, "saved login", got["ssh://box"].Detail)
+	assert.Empty(t, got["ssh://boxdev"].Badge)
+	assert.Equal(t, "offline · saved login", got["ssh://boxdev"].Detail)
+	assert.Equal(t, "online", got["ssh://live"].Badge, "a connected server is online")
+	assert.NotContains(t, got, "ssh://workpc", "a bare ssh host is not probed")
+	assert.ElementsMatch(t, []string{"ssh://box", "ssh://boxdev"}, probed, "a connected server is not asked")
+}
+
+func TestConnectPicker_PastedPairingLinkPairs(t *testing.T) {
+	store := connectPickerEnv(t)
+	h := newHarness(t, Config{Store: store, NoWatch: true, NoChat: true}, nil)
+	const link = "https://Box.ts.net:8443/pair#token=secret"
+	var paired string
+	h.p.pair = func(_ context.Context, l string) (Session, error) {
+		paired = l
+		return newFakeSession("https://box.ts.net:8443", testShell()), nil
+	}
+	picker := find[splitview.ShowPickerMsg](t, run(h.p.connectPicker(nil)))
+	msgs := run(picker.OnText(" " + link + " "))
+	assert.Equal(t, link, paired, "the whole link is handed to the pairing")
+	assert.Equal(t, "https://box.ts.net:8443", h.p.liveSession().Label())
+	for _, f := range flashes(msgs) {
+		assert.NotContains(t, f, "secret", "the credential is shown nowhere")
+	}
+	assert.Contains(t, flashes(msgs), "T3: connecting to https://box.ts.net:8443…")
+
+	var dialed string
+	h.p.dial = func(_ context.Context, spec string) (Session, error) {
+		dialed = spec
+		return nil, errors.New("no such server")
+	}
+	run(picker.OnText("boxdev"))
+	assert.Equal(t, "ssh://boxdev", dialed, "a bare name is still an ssh host")
 }

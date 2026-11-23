@@ -184,6 +184,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	case ShowPickerMsg:
 		return m.showPicker(msg)
+	case UpdatePickerItemMsg:
+		return m.updatePickerItem(msg), nil
 	case ShowPromptMsg:
 		return m.showPrompt(msg)
 	case ConfirmMsg:

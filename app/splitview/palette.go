@@ -79,6 +79,25 @@ func (m Model) showPicker(msg ShowPickerMsg) (tea.Model, tea.Cmd) {
 	return m.refilterPalette(), nil
 }
 
+// updatePickerItem carries out msg on the open picker it names. The items
+// are copied first: the slice came with the ShowPickerMsg and may be shared.
+func (m Model) updatePickerItem(msg UpdatePickerItemMsg) Model {
+	p := m.palette
+	if !p.open || p.mode != modePick || p.title != msg.Title {
+		return m
+	}
+	for i, it := range p.items {
+		if it.Label != msg.Label {
+			continue
+		}
+		items := append([]PickerItem(nil), p.items...)
+		items[i].Badge, items[i].Detail = msg.Badge, msg.Detail
+		m.palette.items = items
+		return m.refilterPalette()
+	}
+	return m
+}
+
 // showPrompt opens a ShowPromptMsg text line in the palette.
 func (m Model) showPrompt(msg ShowPromptMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""

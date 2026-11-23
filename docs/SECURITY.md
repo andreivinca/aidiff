@@ -14,7 +14,7 @@ This document covers the security properties of aidiff's own features: T3 connec
 ### T3 tokens
 - Saved per server in `~/.config/revdiff/t3-tokens.json`. The file is written atomically with mode 0600, in a directory with mode 0700.
 - Tokens minted automatically are scoped to `orchestration:read`, `orchestration:operate` and `filesystem:read`, and expire after **30 days**.
-- Automatic minting through the `t3` CLI is limited to `local`, loopback URLs and `ssh://` hosts. A remote http(s) server requires explicit pairing (`--t3-pair`).
+- Automatic minting through the `t3` CLI is limited to `local`, loopback URLs and `ssh://` hosts. A remote http(s) server requires explicit pairing (`--t3-pair`, or a `t3 pair` link pasted into the connect picker, which is not repeated in any flash or status and not kept beyond the exchange). The picker's online check sends no token.
 - A rejected saved token triggers exactly one re-mint, never a loop.
 - The pairing exchange accepts only a `Bearer` token type, and reads at most 1 MiB of response.
 
