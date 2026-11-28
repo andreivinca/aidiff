@@ -12,6 +12,7 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
@@ -182,6 +183,16 @@ func compactContextAtStart(opts options, src sourceSetup) int {
 // session's SSH connection, in the thread's folder; nil for a review whose
 // files are here, or on a host reached without SSH.
 func remoteEditor(src sourceSetup) func(file string, line int) *exec.Cmd {
+	if m := src.machine; m != nil {
+		if shell, ok := t3client.KnownShell(m.Host); !ok || shell.Windows() {
+			return nil // the editor runs through /bin/sh there
+		}
+		p := t3palette.Place{SSHHost: m.Host, SSHControlPath: t3client.LoginControl(m.Host), Dir: m.Path}
+		return func(file string, line int) *exec.Cmd {
+			argv := remoteEditorArgv(p, file, line)
+			return exec.CommandContext(context.Background(), argv[0], argv[1:]...) //nolint:gosec // ssh with the machine's host and quoted paths
+		}
+	}
 	if src.t3 == nil || src.t3.Session.Local() || src.t3.Session.SSHHost() == "" {
 		return nil
 	}
@@ -208,6 +219,9 @@ func editorPolicy(opts options, src sourceSetup) ui.SourceEditorPolicy {
 		// the thread's changes are in its working tree: like a worktree review,
 		// a file with line annotations is not opened for editing
 		return ui.SourceEditorPolicy{Available: true, Root: src.t3.Target.Cwd, DisallowAnnotatedFileEditing: true}
+	}
+	if src.machine != nil {
+		return ui.SourceEditorPolicy{} // its files are not here
 	}
 	return sourceEditorPolicy(opts, src.workDir)
 }

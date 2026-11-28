@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/localhist"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/t3palette"
 )
 
@@ -126,6 +129,21 @@ func newLocalConfig(deps reviewDeps, src sourceSetup, diffs *localDiffs, start *
 			}
 		},
 		Open: func(dir string) (t3palette.LocalReview, error) {
+			if rd, ok := t3client.ParseRemoteDir(dir); ok {
+				// reached, and its shell known before a terminal opens there
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				_, serr := t3client.DetectShell(ctx, rd.Host)
+				cancel()
+				if serr != nil {
+					return t3palette.LocalReview{}, serr
+				}
+				rsrc := remoteFolderSource(rd)
+				model, err := fdeps.newModel(rsrc, annotation.NewStore(), "")
+				if err != nil {
+					return t3palette.LocalReview{}, err
+				}
+				return t3palette.LocalReview{Model: model, Watch: remoteWatch(fdeps.opts, rsrc)}, nil
+			}
 			fsrc, err := setupFolderSource(fdeps.opts, dir)
 			if err != nil {
 				return t3palette.LocalReview{}, err
@@ -140,6 +158,9 @@ func newLocalConfig(deps reviewDeps, src sourceSetup, diffs *localDiffs, start *
 	}
 	startDir := src.historyDir(deps.opts)
 	cfg.SaveHistory = func(dir, annotations string, files []string) {
+		if t3client.IsRemoteDir(dir) {
+			return // history files a review by a folder of this machine
+		}
 		h, err := folderHistory(diffs.get(dir).compared(fdeps.opts), dir)
 		if dir == startDir {
 			h, err = src.history(diffs.get(dir).compared(deps.opts), nil), nil // the run's own source

@@ -22,6 +22,10 @@ import (
 // lacks ~/.local/bin on PATH.
 const remoteT3 = `PATH="$HOME/.local/bin:$HOME/.t3/bin:$PATH" t3`
 
+// ErrNoT3Server is an SSH host that runs no T3 Code: it has no runtime
+// state. The host is still a machine (machine.go).
+var ErrNoT3Server = errors.New("no T3 Code runs there")
+
 // Exit codes of remoteStateScript, apart from ssh's own 255.
 const (
 	exitNoState    = 3 // no runtime state file
@@ -142,6 +146,9 @@ func remoteState(ctx context.Context, host string) (runtimeState, error) {
 	out, err := sshOutput(ctx, host, remoteStateScript)
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == exitNotRunning {
 		return runtimeState{}, fmt.Errorf("T3 Code is not running on %s", host)
+	}
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == exitNoState {
+		return runtimeState{}, fmt.Errorf("%s: %w: %w", host, ErrNoT3Server, err)
 	}
 	if err != nil {
 		return runtimeState{}, fmt.Errorf("read T3 state on %s: %w", host, err)

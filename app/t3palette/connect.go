@@ -167,6 +167,9 @@ func (t *Palette) connectWith(spec string, login bool, dial func(context.Context
 				return cmd()
 			}
 		}
+		if host, isSSH := sshHostOf(spec); err != nil && isSSH && t.isMachine(host, err) {
+			return t.machineOpened(choice, host)
+		}
 		if err != nil {
 			t.dialFailed(choice, err)
 			return t3Failed(err)
@@ -198,6 +201,27 @@ var execProcess = tea.ExecProcess
 // login again: a second refusal is shown as it is. nil when spec has no
 // login (not an SSH server).
 func (t *Palette) loginThen(spec string, err error) tea.Cmd {
+	return t.loginAnd(spec, func(runErr error) tea.Msg {
+		t.mu.Lock()
+		if t.dialed.spec == spec {
+			t.dialed.err = err
+		}
+		t.mu.Unlock()
+		return t3Failed(fmt.Errorf("ssh login to %s did not complete: %w", spec, runErr))
+	}, func() tea.Msg {
+		return tea.BatchMsg{t.connectWith(spec, false, func(ctx context.Context) (Session, error) {
+			return t.dial(ctx, spec)
+		})}
+	})
+}
+
+// loginAnd hands the screen to the ssh login to spec, then runs then; a
+// login that did not complete gets failed instead. nil when spec has no
+// login (not an SSH server) or none can be offered.
+func (t *Palette) loginAnd(spec string, failed func(error) tea.Msg, then func() tea.Msg) tea.Cmd {
+	if t.login == nil {
+		return nil
+	}
 	cmd, cleanup, lerr := t.login(spec)
 	if lerr != nil {
 		return nil
@@ -205,16 +229,9 @@ func (t *Palette) loginThen(spec string, err error) tea.Cmd {
 	return execProcess(cmd, func(runErr error) tea.Msg {
 		cleanup()
 		if runErr != nil {
-			t.mu.Lock()
-			if t.dialed.spec == spec {
-				t.dialed.err = err
-			}
-			t.mu.Unlock()
-			return t3Failed(fmt.Errorf("ssh login to %s did not complete: %w", spec, runErr))
+			return failed(runErr)
 		}
-		return tea.BatchMsg{t.connectWith(spec, false, func(ctx context.Context) (Session, error) {
-			return t.dial(ctx, spec)
-		})}
+		return then()
 	})
 }
 

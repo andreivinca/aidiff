@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/umputun/revdiff/app/fsutil"
@@ -58,8 +59,8 @@ type tabsFile struct {
 // valid reports whether tab names something to reopen.
 func (tab Tab) valid() bool {
 	switch tab.Kind {
-	case TabLocal:
-		return tab.Dir != "" && filepath.IsAbs(tab.Dir)
+	case TabLocal: // a folder of this machine, or one on an SSH machine (ssh:host:path, t3client.RemoteDir)
+		return tab.Dir != "" && (filepath.IsAbs(tab.Dir) || strings.HasPrefix(tab.Dir, "ssh:"))
 	case TabT3:
 		return tab.Server != "" && tab.Project != ""
 	}

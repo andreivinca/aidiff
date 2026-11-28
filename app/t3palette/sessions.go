@@ -74,7 +74,7 @@ func (l sessionList) Peek(key string) splitview.SessionInfo {
 	case local != nil:
 		return splitview.SessionInfo{
 			Name:    display(filepath.Base(local.Dir)),
-			Machine: localLabel,
+			Machine: machineLabel(local.Dir),
 			Path:    display(homeRelative(filepath.Dir(local.Dir))),
 		}
 	case t.restored[key] != nil:

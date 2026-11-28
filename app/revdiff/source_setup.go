@@ -27,6 +27,8 @@ type sourceSetup struct {
 	remote *t3client.FolderReader
 	tty    *os.File          // stdin mode: the terminal to read keys from
 	t3     *t3palette.Review // T3 mode: the thread under review and its session
+	// machine is the folder on an SSH machine under review (remote_folder.go)
+	machine *t3client.RemoteDir
 }
 
 // setupSource picks the diff source for this run. T3 mode connects here,
@@ -119,6 +121,9 @@ func (s sourceSetup) machineName(localHost string) string {
 	if s.t3 != nil {
 		return s.t3.Session.MachineName()
 	}
+	if s.machine != nil {
+		return s.machine.Host
+	}
 	return localHost
 }
 
@@ -131,6 +136,9 @@ func (s sourceSetup) projectName() string {
 			return p.Title
 		}
 		return baseName(p.WorkspaceRoot)
+	}
+	if s.machine != nil {
+		return baseName(s.machine.Path)
 	}
 	if s.gitRoot != "" {
 		return baseName(s.gitRoot)
@@ -181,7 +189,7 @@ func (s sourceSetup) branchName() string {
 // branchLoader re-reads the branch for the status bar, nil when the source
 // has no branch to follow (stdin, a compare pair, a folder outside git).
 func (s sourceSetup) branchLoader() func() (string, error) {
-	if s.t3 == nil && s.vcsType != diff.VCSGit {
+	if s.t3 == nil && s.machine == nil && s.vcsType != diff.VCSGit {
 		return nil
 	}
 	return s.branch
@@ -203,6 +211,9 @@ func (s sourceSetup) branch() (string, error) {
 			}
 		}
 		return "", nil
+	}
+	if s.machine != nil {
+		return remoteBranch(*s.machine)
 	}
 	if s.vcsType != diff.VCSGit {
 		return "", nil

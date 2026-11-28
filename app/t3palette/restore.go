@@ -225,7 +225,7 @@ func (t *Palette) describeRestoredLocked(tab *Tab) splitview.SessionInfo {
 	if tab.Dir != "" {
 		return splitview.SessionInfo{
 			Name:    display(filepath.Base(tab.Dir)),
-			Machine: localLabel,
+			Machine: machineLabel(tab.Dir),
 			Path:    display(homeRelative(filepath.Dir(tab.Dir))),
 		}
 	}
@@ -360,7 +360,7 @@ func (t *Palette) openRestoredFolder(key, dir string) tea.Cmd {
 		if !t.isRestored(key) {
 			return nil // closed, or opened another way, meanwhile
 		}
-		if !reopenable(dir) {
+		if !t3client.IsRemoteDir(dir) && !reopenable(dir) { // a machine's folder fails on opening instead
 			return t.dropRestored(key, name+": the folder is gone or cannot be read; its tab is closed")
 		}
 		t.mu.Lock()
@@ -589,7 +589,7 @@ func (t *Palette) pruneTabsLocked() {
 			if t.ctx.Err() != nil {
 				return
 			}
-			if !isFolder(dir) {
+			if !t3client.IsRemoteDir(dir) && !isFolder(dir) { // a machine's folder fails on opening instead
 				gone = append(gone, key)
 			}
 		}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/chat"
+	"github.com/umputun/revdiff/app/remotegit"
 	"github.com/umputun/revdiff/app/splitview"
 	"github.com/umputun/revdiff/app/t3client"
 )
@@ -71,15 +72,19 @@ type dialFunc func(ctx context.Context, spec string) (Session, error)
 // on screen changes only where the split switches workspaces (switched), so it
 // always matches what the user sees.
 type Palette struct {
-	cfg    Config
-	dial   dialFunc
-	pair   dialFunc                                     // pairs with the server a `t3 pair` link names, given the link; nil cannot
-	probe  func(ctx context.Context, spec string) error // whether a server answers, for the connect picker; nil asks none
-	login  func(spec string) (*exec.Cmd, func(), error) // the ssh the user answers to log in to an SSH server (t3client.LoginCommand); nil offers none
-	bg     sync.WaitGroup                               // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
-	loops  sync.WaitGroup                               // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
-	ctx    context.Context                              // canceled by Close: ends the loops, the reconnects' dials and the background fetches
-	cancel context.CancelFunc                           // cancels ctx
+	cfg   Config
+	dial  dialFunc
+	pair  dialFunc                                     // pairs with the server a `t3 pair` link names, given the link; nil cannot
+	probe func(ctx context.Context, spec string) error // whether a server answers, for the connect picker; nil asks none
+	login func(spec string) (*exec.Cmd, func(), error) // the ssh the user answers to log in to an SSH server (t3client.LoginCommand); nil offers none
+	// machineShell and resolveRemote reach an SSH host with no T3 Code as a
+	// machine (machine.go): the shell it runs, the repository a folder is in
+	machineShell  func(ctx context.Context, host string) (t3client.RemoteShell, error)
+	resolveRemote func(ctx context.Context, host, dir string) (string, error)
+	bg            sync.WaitGroup     // background work: thread watches, closing sessions, stopping refreshes, saving history, fetching listings
+	loops         sync.WaitGroup     // long-lived goroutines: drop watches, reconnects, the history check; Close waits for them a little only
+	ctx           context.Context    // canceled by Close: ends the loops, the reconnects' dials and the background fetches
+	cancel        context.CancelFunc // cancels ctx
 
 	mu          sync.Mutex
 	closed      bool
@@ -138,6 +143,8 @@ func New(cfg Config, start *Review) *Palette {
 	}
 	t.probe = t3client.Probe
 	t.login = t3client.LoginCommand
+	t.machineShell = t3client.DetectShell
+	t.resolveRemote = remotegit.Resolve
 	return t
 }
 
@@ -618,6 +625,7 @@ type Place struct {
 	SSHHost        string // the host to ssh to; empty: this machine
 	SSHControlPath string // shares the T3 tunnel's connection to SSHHost; may be empty
 	Dir            string // the folder; empty: where a terminal starts by default
+	Windows        bool   // SSHHost reads commands with PowerShell or cmd, not a POSIX shell
 }
 
 // TerminalPlace is where a new terminal opens: the machine and folder of the
@@ -634,6 +642,10 @@ func (t *Palette) TerminalPlace() Place {
 	case t.onScreen != nil:
 		s, dir = t.onScreen.Session, t.onScreen.Target.Cwd
 	case t.local != nil:
+		if d, ok := t3client.ParseRemoteDir(t.local.Dir); ok { // a folder on a machine: its shell there
+			shell, _ := t3client.KnownShell(d.Host)
+			return Place{SSHHost: d.Host, SSHControlPath: t3client.LoginControl(d.Host), Dir: d.Path, Windows: shell.Windows()}
+		}
 		return Place{Dir: t.local.Dir}
 	case t.live != nil:
 		s = t.live

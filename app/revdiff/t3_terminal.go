@@ -7,6 +7,7 @@ import (
 
 	"github.com/umputun/revdiff/app/editor"
 	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/t3client"
 	"github.com/umputun/revdiff/app/t3palette"
 	"github.com/umputun/revdiff/app/termpane"
 )
@@ -54,6 +55,15 @@ func (l terminalLauncher) argv() (argv []string, localDir string) {
 // with no second login; when the socket is gone ssh falls back to a
 // connection of its own.
 func (l terminalLauncher) remoteArgv(p t3palette.Place) []string {
+	if p.Windows { // PowerShell or cmd there: a PowerShell, in the folder
+		dest, port := sshDestination(p.SSHHost)
+		argv := []string{"ssh", "-t"}
+		if port != "" {
+			argv = append(argv, "-p", port)
+		}
+		argv = append(argv, editor.SSHOptions(p.SSHControlPath)...)
+		return append(argv, "--", dest, t3client.InteractivePowerShell(p.Dir, l.command))
+	}
 	script := `exec "${SHELL:-/bin/sh}" -l`
 	if l.command != "" {
 		script = l.command

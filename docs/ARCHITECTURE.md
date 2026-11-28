@@ -33,6 +33,7 @@ aidiff is a fork of [revdiff](https://github.com/umputun/revdiff). We use revdif
 | Embedded terminal | `app/termpane` | **aidiff** |
 | Live refresh | `app/watch` | **aidiff** |
 | T3 Code client | `app/t3client` | **aidiff** |
+| SSH machine review (git run on the host) | `app/remotegit` | **aidiff** |
 | Chat pane, a library that knows no agent system | `app/chat` | **aidiff** |
 | T3 side of the chat: a `chat.Backend` over a T3 thread | `app/t3chat` | **aidiff** |
 | Clipboard | `app/clipboard` | **aidiff** |

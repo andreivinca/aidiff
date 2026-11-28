@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/umputun/revdiff/app/splitview"
+	"github.com/umputun/revdiff/app/t3client"
 )
 
 // The history panel is the sidebar while this machine is the selected
@@ -130,7 +131,7 @@ func (t *Palette) pruneHistoryLocked(dirs []string) {
 			if t.ctx.Err() != nil {
 				return
 			}
-			if !isFolder(d) {
+			if !t3client.IsRemoteDir(d) && !isFolder(d) { // a machine's folders are not checked here
 				gone[d] = true
 			}
 		}
@@ -232,10 +233,25 @@ func (t *Palette) rememberDirLocked(dir string) {
 // are not part of what a tab saves, and the background build may finish
 // after another tab took the screen, where the terminal would land.
 func (t *Palette) folderMsg(key, dir string, withTerminal bool) tea.Msg {
+	return t.folderMsgLogin(key, dir, withTerminal, true)
+}
+
+// folderMsgLogin is folderMsg; with login, a folder on an SSH machine that
+// cannot be reached for want of a password (its login ended) gets the
+// user's answer and is opened once more.
+func (t *Palette) folderMsgLogin(key, dir string, withTerminal, login bool) tea.Msg {
 	if t.cfg.Local.Open == nil {
 		return nil
 	}
 	r, err := t.cfg.Local.Open(dir)
+	if d, remote := t3client.ParseRemoteDir(dir); err != nil && login && remote && t3client.NeedsLogin(err) {
+		failed := func(runErr error) tea.Msg {
+			return splitview.FlashMsg{Text: "open " + filepath.Base(dir) + ": ssh login to " + d.Host + " did not complete: " + runErr.Error()}
+		}
+		if cmd := t.loginAnd("ssh://"+d.Host, failed, func() tea.Msg { return t.folderMsgLogin(key, dir, withTerminal, false) }); cmd != nil {
+			return cmd()
+		}
+	}
 	if err != nil {
 		return splitview.FlashMsg{Text: "open " + filepath.Base(dir) + ": " + err.Error()}
 	}
@@ -442,8 +458,12 @@ func historyRow(i int, dir string, width int, selected, focused, current bool) s
 	return edged(style, label, selected, focused) + detailStyle(style).Render(detail)
 }
 
-// homeRelative writes dir under the home folder as ~/….
+// homeRelative writes dir under the home folder as ~/…, and a folder on a
+// machine as host:path.
 func homeRelative(dir string) string {
+	if rest, ok := strings.CutPrefix(dir, "ssh:"); ok {
+		return rest
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return dir

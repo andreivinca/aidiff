@@ -103,7 +103,7 @@ func loginOptions(host string) []string {
 // fails, shows ssh's own messages, which it logs to $2, and waits for enter:
 // the screen goes back to aidiff as soon as it ends.
 const loginScript = `host=$1 log=$2; shift 2
-printf '\naidiff: log in to %s for T3 Code\n\n' "$host"
+printf '\naidiff: log in to %s\n\n' "$host"
 "$@" && exit 0
 status=$?
 cat "$log" 2>/dev/null
